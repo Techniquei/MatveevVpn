@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.4
+
+- Automatically restores the tunnel after Mac sleep, network-interface changes,
+  or an unexpectedly missing TUN interface.
+- Clean restarts remove only stale routes belonging to matveevVpn's own TUN and
+  refresh the macOS DNS cache before recreating the tunnel.
+- Applies routing and node changes transactionally and restores the last working
+  configuration if the new sing-box process cannot start.
+
 ## 1.0.3
 
 - Added native node selection from the saved subscription.

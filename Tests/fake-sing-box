@@ -3,6 +3,9 @@
 case "${1:-}" in
   check) exit 0 ;;
   run)
+    if [[ "${2:-}" == "-c" ]] && /usr/bin/grep -q 'fail_run' "${3:-}" 2>/dev/null; then
+      exit 1
+    fi
     trap 'exit 0' TERM INT
     while true; do /bin/sleep 1; done
     ;;

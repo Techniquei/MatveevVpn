@@ -17,7 +17,7 @@ direct connection.
 
 ## Install
 
-1. Download `matveevVpn-1.0.3-arm64.dmg` from Releases.
+1. Download `matveevVpn-1.0.4-arm64.dmg` from Releases.
 2. Open the DMG and drag `matveevVpn.app` to Applications.
 3. On first launch, right-click the app and choose **Open** if macOS displays a
    Gatekeeper warning.
@@ -63,7 +63,7 @@ MATVEEV_SING_BOX_BINARY=/path/to/sing-box ./Scripts/build-dmg.sh
 Push the repository, then create and push a version tag:
 
 ```bash
-git tag v1.0.3
+git tag v1.0.4
 git push origin main --tags
 ```
 

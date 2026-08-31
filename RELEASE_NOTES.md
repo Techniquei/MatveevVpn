@@ -1,4 +1,11 @@
-# matveevVpn 1.0.3
+# matveevVpn 1.0.4
+
+The system controller now repairs stale routing after sleep or network changes.
+A clean restart removes leftover routes only from matveevVpn's own TUN, refreshes
+the macOS DNS cache, and recreates the tunnel. Routing and node updates also roll
+back automatically if a new configuration cannot start.
+
+## 1.0.3
 
 Nodes from the saved subscription can now be selected directly in the app. The
 new configuration is validated and applied without Terminal or another password.

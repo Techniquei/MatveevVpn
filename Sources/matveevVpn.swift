@@ -114,7 +114,7 @@ final class SpeedMonitor: ObservableObject {
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.0.3"
+    static let releaseVersion = "1.0.4"
 
     @Published var isBusy = false
     @Published var isInstalled = false

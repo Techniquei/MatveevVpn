@@ -42,10 +42,16 @@ wait_for_file_value() {
 
 send_action() {
   local action="$1"
+  send_action_expect "$action" "ok"
+}
+
+send_action_expect() {
+  local action="$1"
+  local expected="$2"
   local token="test-$action-$RANDOM"
   /usr/bin/printf '%s %s\n' "$action" "$token" > "$CONTROL/.command-test"
   /bin/mv -f "$CONTROL/.command-test" "$CONTROL/command"
-  wait_for_file_value "$CONTROL/response-$token" "ok"
+  wait_for_file_value "$CONTROL/response-$token" "$expected"
 }
 
 wait_for_file_value "$CONTROL/runtime-status" "running"
@@ -58,5 +64,12 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 /bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"
 send_action reload
 wait_for_file_value "$CONTROL/runtime-status" "running"
+/usr/bin/printf '{"fail_run":true}\n' > "$CONTROL/pending-config.json"
+send_action_expect reload error
+wait_for_file_value "$CONTROL/runtime-status" "running"
+if /usr/bin/grep -q 'fail_run' "$RUNTIME/config.json"; then
+  echo "Failed configuration was not rolled back." >&2
+  exit 1
+fi
 
 echo "controller protocol: ok"
