@@ -1,0 +1,37 @@
+# matveevVpn
+
+Open the matveevVpn application for all normal controls and routing-rule editing.
+
+matveevVpn is a universal selective-routing client. Edit `routing-rules.json` in
+the app to choose the domain suffixes and application process names that use the
+VPN. The full sing-box JSON is generated automatically. Unmatched traffic uses the
+direct connection.
+
+Private ranges `10.0.0.0/8`, `172.16.0.0/12` and `192.168.0.0/16` are excluded
+from TUN routing for local-network and corporate-VPN compatibility. The TUN uses
+the non-overlapping service network `198.18.0.0/30`.
+
+Reinstalling always asks for a new subscription URL and node. The previous
+recognized `~/VPN` installation is moved to a timestamped backup before new files
+are created.
+
+System service: `com.matveev.vpn`.
+
+The administrator password is required only during initial system setup and full
+uninstall. On, off, restart, and routing-rule updates use the installed local
+controller and do not request the password again.
+
+Active configuration:
+
+```text
+/Library/Application Support/matveevVpn/config.json
+```
+
+Logs:
+
+```text
+/tmp/matveev-vpn.log
+/tmp/matveev-vpn.error.log
+```
+
+Running multiple full-TUN VPN clients at the same time can create route conflicts.

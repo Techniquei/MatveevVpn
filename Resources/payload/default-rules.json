@@ -1,0 +1,42 @@
+{
+  "domains": [
+    "openai.com",
+    "chatgpt.com",
+    "oaistatic.com",
+    "oaiusercontent.com",
+    "oaistatsig.com",
+    "anthropic.com",
+    "claude.ai",
+    "claude.com",
+    "claudeusercontent.com",
+    "telegram.org",
+    "telegram.me",
+    "telegram.dog",
+    "t.me",
+    "telegra.ph",
+    "telesco.pe",
+    "stel.com",
+    "tg.dev",
+    "cdn.openaimerge.com",
+    "cdn.workos.com",
+    "forwarder.workos.com",
+    "images.workoscdn.com",
+    "workos.imgix.net",
+    "challenges.cloudflare.com",
+    "js.intercomcdn.com",
+    "js.stripe.com",
+    "o207216.ingest.sentry.io",
+    "o33249.ingest.sentry.io",
+    "rum.browser-intake-datadoghq.com",
+    "contest.com",
+    "quiz.directory"
+  ],
+  "applications": [
+    "ChatGPT",
+    "Codex",
+    "Claude",
+    "Telegram",
+    "Telegram Lite",
+    "Telegram Desktop"
+  ]
+}

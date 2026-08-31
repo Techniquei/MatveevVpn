@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate
+        run: ./Scripts/validate.sh
+      - name: Build DMG
+        run: ./Scripts/build-dmg.sh
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: matveevVpn 1.0.0
+          body_path: RELEASE_NOTES.md
+          files: dist/matveevVpn-1.0.0-arm64.dmg

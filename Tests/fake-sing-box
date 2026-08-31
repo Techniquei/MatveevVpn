@@ -1,0 +1,10 @@
+#!/bin/bash
+
+case "${1:-}" in
+  check) exit 0 ;;
+  run)
+    trap 'exit 0' TERM INT
+    while true; do /bin/sleep 1; done
+    ;;
+  *) exit 2 ;;
+esac

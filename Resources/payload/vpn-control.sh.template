@@ -1,0 +1,180 @@
+#!/bin/bash
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICE_DIR="$SCRIPT_DIR"
+CONFIG_FILE="$SERVICE_DIR/config.json"
+PRIVATE_DIR="$SERVICE_DIR/private"
+BUILDER="$SERVICE_DIR/tools/build-config.rb"
+NODE_LISTER="$SERVICE_DIR/tools/list-nodes.rb"
+SUBSCRIPTION_FILE="$PRIVATE_DIR/subscription.decoded"
+RULES_FILE="$(cd "$SERVICE_DIR/.." && pwd)/routing-rules.json"
+LABEL="com.matveev.vpn"
+SING_BOX="/Library/Application Support/matveevVpn/bin/sing-box"
+CONTROL_DIR="/Library/Application Support/matveevVpn/control"
+STATUS_FILE="$CONTROL_DIR/runtime-status"
+
+service_running() {
+  [[ -f "$STATUS_FILE" ]] && [[ "$(/usr/bin/head -n 1 "$STATUS_FILE" 2>/dev/null)" == "running" ]]
+}
+
+controller_running() {
+  /bin/launchctl print "system/$LABEL" 2>/dev/null | /usr/bin/grep -q 'state = running'
+}
+
+send_command() {
+  local action="$1"
+  local token response temporary result attempt
+  if [[ ! -d "$CONTROL_DIR" || ! -w "$CONTROL_DIR" || ! controller_running ]]; then
+    echo "The system controller is unavailable. Run setup again."
+    return 1
+  fi
+
+  token="$(/bin/date +%s).$$.$RANDOM"
+  response="$CONTROL_DIR/response-$token"
+  temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.command.XXXXXX")" || return 1
+  /usr/bin/printf '%s %s\n' "$action" "$token" > "$temporary"
+  /bin/chmod 600 "$temporary"
+  /bin/mv -f "$temporary" "$CONTROL_DIR/command"
+
+  attempt=0
+  while [[ "$attempt" -lt 100 ]]; do
+    if [[ -f "$response" ]]; then
+      result="$(/usr/bin/head -n 1 "$response" 2>/dev/null || true)"
+      /bin/rm -f "$response"
+      [[ "$result" == "ok" ]]
+      return $?
+    fi
+    attempt=$((attempt + 1))
+    /bin/sleep 0.1
+  done
+  echo "The controller did not respond."
+  return 1
+}
+
+current_node_label() {
+  if [[ -f "$SERVICE_DIR/current-server.txt" && -f "$SUBSCRIPTION_FILE" ]]; then
+    local index
+    index="$(/usr/bin/tr -d '[:space:]' < "$SERVICE_DIR/current-server.txt")"
+    /usr/bin/ruby "$NODE_LISTER" "$SUBSCRIPTION_FILE" | /usr/bin/awk -F '\t' -v wanted="$index" '$1 == wanted {print $2; exit}'
+  else
+    echo "not selected"
+  fi
+}
+
+turn_on() {
+  if [[ ! -x "$SING_BOX" || ! -f "/Library/Application Support/matveevVpn/config.json" || ! -f "/Library/LaunchDaemons/com.matveev.vpn.plist" || ! -d "$CONTROL_DIR" ]]; then
+    echo "System setup is incomplete. Run setup again."
+    return 1
+  fi
+  if ! send_command "on"; then
+    echo "Could not start the VPN. Check /tmp/matveev-vpn.error.log"
+    return 1
+  fi
+  service_running || return 1
+  echo "VPN is on."
+}
+
+turn_off() {
+  send_command "off" || return 1
+  echo "VPN is off."
+}
+
+restart_service() {
+  send_command "restart" || return 1
+  echo "VPN restarted."
+}
+
+fetch_direct_ip() {
+  local url value
+  for url in "https://checkip.amazonaws.com" "https://api.ipify.org" "https://icanhazip.com"; do
+    value="$(/usr/bin/curl -4fsS --connect-timeout 5 --max-time 15 "$url" 2>/dev/null | /usr/bin/tr -d '[:space:]' || true)"
+    if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      /usr/bin/printf '%s\n' "$value"
+      return 0
+    fi
+  done
+  return 1
+}
+
+fetch_routed_ip() {
+  local value
+  value="$(/usr/bin/curl -4fsS --connect-timeout 5 --max-time 20 https://chatgpt.com/cdn-cgi/trace 2>/dev/null | /usr/bin/awk -F= '$1 == "ip" {print $2; exit}' | /usr/bin/tr -d '[:space:]' || true)"
+  if [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    /usr/bin/printf '%s\n' "$value"
+    return 0
+  fi
+  return 1
+}
+
+show_status() {
+  if service_running; then
+    echo "Service: running"
+  else
+    echo "Service: stopped"
+  fi
+  echo "Node: $(current_node_label)"
+
+  local direct_ip routed_ip
+  direct_ip="$(fetch_direct_ip || true)"
+  routed_ip="$(fetch_routed_ip || true)"
+  echo "Direct IP: ${direct_ip:-unavailable}"
+  echo "Routed IP: ${routed_ip:-unavailable}"
+}
+
+deploy_config() {
+  local generated_config="$1"
+  "$SING_BOX" check -c "$generated_config" || return 1
+  if [[ -f "$CONFIG_FILE" ]]; then
+    /usr/bin/install -m 600 "$CONFIG_FILE" "$SERVICE_DIR/config.previous.json"
+  fi
+  /usr/bin/install -m 600 "$generated_config" "$CONFIG_FILE"
+
+  local pending_temp
+  pending_temp="$(/usr/bin/mktemp "$CONTROL_DIR/.pending-config.XXXXXX")" || return 1
+  /usr/bin/install -m 600 "$generated_config" "$pending_temp"
+  /bin/mv -f "$pending_temp" "$CONTROL_DIR/pending-config.json"
+  if ! send_command "reload"; then
+    /bin/rm -f "$CONTROL_DIR/pending-config.json"
+    echo "Could not install the configuration."
+    return 1
+  fi
+}
+
+apply_rules() {
+  if [[ ! -s "$RULES_FILE" || ! -s "$SUBSCRIPTION_FILE" || ! -s "$SERVICE_DIR/current-server.txt" ]]; then
+    echo "Routing rules or subscription data are missing. Run setup again."
+    return 1
+  fi
+
+  local selected_index stage_dir
+  selected_index="$(/usr/bin/tr -d '[:space:]' < "$SERVICE_DIR/current-server.txt")"
+  stage_dir="$(/usr/bin/mktemp -d /private/tmp/matveev-rules.XXXXXX)"
+  if ! /usr/bin/ruby "$BUILDER" "$SUBSCRIPTION_FILE" "$stage_dir/config.json" "$selected_index" "$RULES_FILE"; then
+    /bin/rm -f "$stage_dir/config.json"
+    /bin/rmdir "$stage_dir" 2>/dev/null || true
+    echo "The rules file is invalid."
+    return 1
+  fi
+  if ! deploy_config "$stage_dir/config.json"; then
+    /bin/rm -f "$stage_dir/config.json"
+    /bin/rmdir "$stage_dir" 2>/dev/null || true
+    return 1
+  fi
+  /bin/rm -f "$stage_dir/config.json"
+  /bin/rmdir "$stage_dir" 2>/dev/null || true
+  echo "Routing rules applied."
+}
+
+case "${1:-}" in
+  on) turn_on ;;
+  off) turn_off ;;
+  restart) restart_service ;;
+  status) show_status ;;
+  apply-rules) apply_rules ;;
+  *)
+    echo "Internal matveevVpn control command." >&2
+    exit 2
+    ;;
+esac
