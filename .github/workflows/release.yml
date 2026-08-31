@@ -20,6 +20,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          name: matveevVpn 1.0.0
+          name: matveevVpn ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
-          files: dist/matveevVpn-1.0.0-arm64.dmg
+          files: dist/*.dmg
+          fail_on_unmatched_files: true
