@@ -109,7 +109,7 @@ final class SpeedMonitor: ObservableObject {
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.0.1"
+    static let releaseVersion = "1.0.2"
 
     @Published var isBusy = false
     @Published var isInstalled = false
@@ -383,7 +383,7 @@ private struct SpeedChartCard: View {
                 Label(speedText(monitor.downloadSpeed), systemImage: "arrow.down")
                     .foregroundStyle(.cyan)
                 Label(speedText(monitor.uploadSpeed), systemImage: "arrow.up")
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(.pink)
             }
 
             Chart(monitor.samples) { point in
@@ -393,15 +393,15 @@ private struct SpeedChartCard: View {
                 )
                 .foregroundStyle(.cyan)
                 .lineStyle(StrokeStyle(lineWidth: 2))
-                .interpolationMethod(.linear)
+                .interpolationMethod(.stepStart)
 
                 LineMark(
                     x: .value("Second", point.slot),
                     y: .value("Upload", point.upload)
                 )
-                .foregroundStyle(.purple)
-                .lineStyle(StrokeStyle(lineWidth: 1.5))
-                .interpolationMethod(.linear)
+                .foregroundStyle(.pink)
+                .lineStyle(StrokeStyle(lineWidth: 2))
+                .interpolationMethod(.stepStart)
             }
             .chartXScale(domain: 0...59)
             .chartYScale(domain: 0...chartMaximum)

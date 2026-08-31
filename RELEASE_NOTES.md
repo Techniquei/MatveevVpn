@@ -1,4 +1,9 @@
-# matveevVpn 1.0.1
+# matveevVpn 1.0.2
+
+Traffic peaks now have vertical edges, and upload traffic is shown as a clear
+pink line matching its live speed label.
+
+## 1.0.1
 
 This patch documents manual YouTube domain rules, refreshes the app automatically
 after Terminal setup, and fixes first-run startup on Macs where launchd or

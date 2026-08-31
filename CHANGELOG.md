@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Changed traffic lines to a step graph so peaks stay vertical instead of
+  leaning between samples.
+- Made upload traffic a distinct pink line matching its speed label.
+
 ## 1.0.1
 
 - Documented the domain rules commonly needed for YouTube.
