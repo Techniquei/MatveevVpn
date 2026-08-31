@@ -1,4 +1,10 @@
-# matveevVpn 1.0.0
+# matveevVpn 1.0.1
+
+This patch documents manual YouTube domain rules, refreshes the app automatically
+after Terminal setup, and fixes first-run startup on Macs where launchd or
+sing-box needs more than three seconds to become ready.
+
+## 1.0.0
 
 The first public release of the universal selective-routing client for Apple
 Silicon Macs.

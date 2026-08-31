@@ -17,7 +17,7 @@ direct connection.
 
 ## Install
 
-1. Download `matveevVpn-1.0.0-arm64.dmg` from Releases.
+1. Download `matveevVpn-1.0.1-arm64.dmg` from Releases.
 2. Open the DMG and drag `matveevVpn.app` to Applications.
 3. On first launch, right-click the app and choose **Open** if macOS displays a
    Gatekeeper warning.
@@ -34,6 +34,10 @@ Open **Routing rules…** in the app. Add one domain suffix or application proce
 name per line, then choose **Save and Apply**. Unmatched traffic remains direct.
 The simple rules are stored at `~/VPN/routing-rules.json`; the full sing-box
 configuration is generated and validated automatically.
+
+For example, YouTube generally needs `youtube.com`, `youtu.be`,
+`youtube-nocookie.com`, `googlevideo.com`, `ytimg.com`, `ggpht.com`,
+`youtubei.googleapis.com`, and `youtube.googleapis.com` in the domain list.
 
 ## Build
 
@@ -57,7 +61,7 @@ MATVEEV_SING_BOX_BINARY=/path/to/sing-box ./Scripts/build-dmg.sh
 Push the repository, then create and push a version tag:
 
 ```bash
-git tag v1.0.0
+git tag v1.0.1
 git push origin main --tags
 ```
 

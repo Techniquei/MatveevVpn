@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+- Documented the domain rules commonly needed for YouTube.
+- The app now detects completed setup automatically when it becomes active.
+- Initial service startup now waits for macOS and sing-box readiness instead of
+  failing after a fixed three-second delay.
+
 ## 1.0.0
 
 - First public release.

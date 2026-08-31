@@ -109,7 +109,7 @@ final class SpeedMonitor: ObservableObject {
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.0.0"
+    static let releaseVersion = "1.0.1"
 
     @Published var isBusy = false
     @Published var isInstalled = false
@@ -126,6 +126,7 @@ final class VPNController: ObservableObject {
     private var commandPath: String { "\(home)/VPN/.service/vpn-control.sh" }
     private var versionPath: String { "\(home)/VPN/.service/package-version.txt" }
     private var rulesPath: String { "\(home)/VPN/routing-rules.json" }
+    private var setupWatchTask: Task<Void, Never>?
 
     init() {
         refresh()
@@ -152,7 +153,7 @@ final class VPNController: ObservableObject {
             if result.status != 0 {
                 message = result.output.isEmpty ? "Could not read VPN status" : result.output
             } else if needsUpgrade {
-                message = "Configuration update 1.0.0 is available"
+                message = "Configuration update \(Self.releaseVersion) is available"
             } else {
                 message = isRunning ? "Selected traffic is routed through the VPN" : "VPN is currently off"
             }
@@ -180,7 +181,35 @@ final class VPNController: ObservableObject {
             return
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: setup))
-        message = "Setup opened"
+        message = "Setup opened in Terminal. This window will update automatically."
+        watchForSetupCompletion()
+    }
+
+    func refreshWhenActive() {
+        if installationIsReady || isInstalled {
+            refresh()
+        }
+    }
+
+    private var installationIsReady: Bool {
+        FileManager.default.fileExists(atPath: commandPath) &&
+            FileManager.default.fileExists(atPath: versionPath) &&
+            FileManager.default.fileExists(atPath: rulesPath)
+    }
+
+    private func watchForSetupCompletion() {
+        setupWatchTask?.cancel()
+        setupWatchTask = Task { [weak self] in
+            for _ in 0..<300 {
+                guard !Task.isCancelled else { return }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self else { return }
+                if self.installationIsReady {
+                    self.refresh()
+                    return
+                }
+            }
+        }
     }
 
     func currentRoutingRules() -> RoutingRules {
@@ -482,6 +511,7 @@ private struct RoutingRulesView: View {
 }
 
 private struct MainView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var controller = VPNController()
     @StateObject private var speedMonitor = SpeedMonitor()
     @State private var confirmRemoval = false
@@ -508,7 +538,7 @@ private struct MainView: View {
                 if controller.needsUpgrade {
                     HStack {
                         Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Configuration 1.0.0 needs to be applied")
+                        Text("Configuration \(VPNController.releaseVersion) needs to be applied")
                         Spacer()
                         Button("Update") { controller.openSetup() }
                     }
@@ -578,6 +608,11 @@ private struct MainView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showRoutingRules) {
             RoutingRulesView(controller: controller)
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                controller.refreshWhenActive()
+            }
         }
         .confirmationDialog("Uninstall matveevVpn?", isPresented: $confirmRemoval) {
             Button("Uninstall and Move to Trash", role: .destructive) { controller.runUninstall() }

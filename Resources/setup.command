@@ -7,7 +7,7 @@ PAYLOAD="$SCRIPT_DIR/.payload"
 USER_DIR="$HOME/VPN"
 SERVICE_DIR="$USER_DIR/.service"
 STAGE_DIR="$(/usr/bin/mktemp -d /private/tmp/matveev-vpn-install.XXXXXX)"
-PACKAGE_VERSION="1.0.0"
+PACKAGE_VERSION="1.0.1"
 
 cleanup() {
   /bin/rm -f "$STAGE_DIR/raw" "$STAGE_DIR/decoded" "$STAGE_DIR/config.json" "$STAGE_DIR/sing-box" "$STAGE_DIR/controller.sh" "$STAGE_DIR/service.plist"
@@ -125,9 +125,16 @@ on run argv
 end run
 APPLESCRIPT
 
-sleep 3
-if ! /bin/launchctl print system/com.matveev.vpn 2>/dev/null | /usr/bin/grep -q 'state = running' || \
-   [[ "$(/usr/bin/head -n 1 '/Library/Application Support/matveevVpn/control/runtime-status' 2>/dev/null || true)" != "running" ]]; then
+SERVICE_READY=false
+for _ in {1..60}; do
+  if /bin/launchctl print system/com.matveev.vpn 2>/dev/null | /usr/bin/grep -q 'state = running' && \
+     [[ "$(/usr/bin/head -n 1 '/Library/Application Support/matveevVpn/control/runtime-status' 2>/dev/null || true)" == "running" ]]; then
+    SERVICE_READY=true
+    break
+  fi
+  /bin/sleep 0.5
+done
+if [[ "$SERVICE_READY" != true ]]; then
   echo "The service did not start. Check /tmp/matveev-vpn.error.log"
   read -r -p "Press Enter..." _
   exit 1
