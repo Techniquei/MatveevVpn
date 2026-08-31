@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- Added native node selection from the saved subscription.
+- Node changes are validated and applied without Terminal or an administrator
+  password.
+
 ## 1.0.2
 
 - Changed traffic lines to a step graph so peaks stay vertical instead of

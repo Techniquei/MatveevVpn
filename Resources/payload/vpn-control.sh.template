@@ -63,6 +63,14 @@ current_node_label() {
   fi
 }
 
+list_nodes() {
+  if [[ ! -s "$SUBSCRIPTION_FILE" ]]; then
+    echo "Subscription data is missing. Run setup again."
+    return 1
+  fi
+  /usr/bin/ruby "$NODE_LISTER" "$SUBSCRIPTION_FILE"
+}
+
 turn_on() {
   if [[ ! -x "$SING_BOX" || ! -f "/Library/Application Support/matveevVpn/config.json" || ! -f "/Library/LaunchDaemons/com.matveev.vpn.plist" || ! -d "$CONTROL_DIR" ]]; then
     echo "System setup is incomplete. Run setup again."
@@ -167,11 +175,45 @@ apply_rules() {
   echo "Routing rules applied."
 }
 
+select_node() {
+  local selected_index="${1:-}" selected_label stage_dir
+  if [[ ! "$selected_index" =~ ^[0-9]+$ ]] || [[ ! -s "$RULES_FILE" ]] || [[ ! -s "$SUBSCRIPTION_FILE" ]]; then
+    echo "The selected node or saved configuration is invalid."
+    return 1
+  fi
+
+  selected_label="$(/usr/bin/ruby "$NODE_LISTER" "$SUBSCRIPTION_FILE" | /usr/bin/awk -F '\t' -v wanted="$selected_index" '$1 == wanted {print $2; exit}')"
+  if [[ -z "$selected_label" ]]; then
+    echo "The selected node does not exist."
+    return 1
+  fi
+
+  stage_dir="$(/usr/bin/mktemp -d /private/tmp/matveev-node.XXXXXX)" || return 1
+  if ! /usr/bin/ruby "$BUILDER" "$SUBSCRIPTION_FILE" "$stage_dir/config.json" "$selected_index" "$RULES_FILE"; then
+    /bin/rm -f "$stage_dir/config.json"
+    /bin/rmdir "$stage_dir" 2>/dev/null || true
+    echo "Could not build a configuration for the selected node."
+    return 1
+  fi
+  if ! deploy_config "$stage_dir/config.json"; then
+    /bin/rm -f "$stage_dir/config.json"
+    /bin/rmdir "$stage_dir" 2>/dev/null || true
+    return 1
+  fi
+  /usr/bin/printf '%s\n' "$selected_index" > "$SERVICE_DIR/current-server.txt"
+  /bin/chmod 600 "$SERVICE_DIR/current-server.txt"
+  /bin/rm -f "$stage_dir/config.json"
+  /bin/rmdir "$stage_dir" 2>/dev/null || true
+  echo "Node changed to $selected_label."
+}
+
 case "${1:-}" in
   on) turn_on ;;
   off) turn_off ;;
   restart) restart_service ;;
   status) show_status ;;
+  list-nodes) list_nodes ;;
+  select-node) select_node "${2:-}" ;;
   apply-rules) apply_rules ;;
   *)
     echo "Internal matveevVpn control command." >&2

@@ -7,7 +7,7 @@ PAYLOAD="$SCRIPT_DIR/.payload"
 USER_DIR="$HOME/VPN"
 SERVICE_DIR="$USER_DIR/.service"
 STAGE_DIR="$(/usr/bin/mktemp -d /private/tmp/matveev-vpn-install.XXXXXX)"
-PACKAGE_VERSION="1.0.2"
+PACKAGE_VERSION="1.0.3"
 
 cleanup() {
   /bin/rm -f "$STAGE_DIR/raw" "$STAGE_DIR/decoded" "$STAGE_DIR/config.json" "$STAGE_DIR/sing-box" "$STAGE_DIR/controller.sh" "$STAGE_DIR/service.plist"

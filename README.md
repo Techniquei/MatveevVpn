@@ -17,7 +17,7 @@ direct connection.
 
 ## Install
 
-1. Download `matveevVpn-1.0.2-arm64.dmg` from Releases.
+1. Download `matveevVpn-1.0.3-arm64.dmg` from Releases.
 2. Open the DMG and drag `matveevVpn.app` to Applications.
 3. On first launch, right-click the app and choose **Open** if macOS displays a
    Gatekeeper warning.
@@ -26,7 +26,9 @@ direct connection.
 
 The app stores user configuration in `~/VPN`. The root controller and sing-box
 runtime are installed in `/Library/Application Support/matveevVpn`.
-Run setup again when you want to replace the subscription or select another node.
+Run setup again only when you want to replace the subscription.
+Use **Change…** beside the current node to switch between nodes from the saved
+subscription without Terminal or another administrator prompt.
 
 ## Routing rules
 
@@ -61,7 +63,7 @@ MATVEEV_SING_BOX_BINARY=/path/to/sing-box ./Scripts/build-dmg.sh
 Push the repository, then create and push a version tag:
 
 ```bash
-git tag v1.0.2
+git tag v1.0.3
 git push origin main --tags
 ```
 

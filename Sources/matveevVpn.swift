@@ -13,6 +13,11 @@ struct RoutingRules: Codable {
     var applications: [String]
 }
 
+struct VPNNode: Identifiable, Hashable {
+    let id: Int
+    let name: String
+}
+
 struct TrafficPoint: Identifiable {
     let slot: Int
     let download: Double
@@ -109,7 +114,7 @@ final class SpeedMonitor: ObservableObject {
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.0.2"
+    static let releaseVersion = "1.0.3"
 
     @Published var isBusy = false
     @Published var isInstalled = false
@@ -120,12 +125,16 @@ final class VPNController: ObservableObject {
     @Published var serviceIP = "—"
     @Published var message = "Checking status…"
     @Published var rulesMessage = ""
+    @Published var availableNodes: [VPNNode] = []
+    @Published var currentNodeIndex: Int?
+    @Published var nodeMessage = ""
 
     private let home = FileManager.default.homeDirectoryForCurrentUser.path
 
     private var commandPath: String { "\(home)/VPN/.service/vpn-control.sh" }
     private var versionPath: String { "\(home)/VPN/.service/package-version.txt" }
     private var rulesPath: String { "\(home)/VPN/routing-rules.json" }
+    private var currentNodePath: String { "\(home)/VPN/.service/current-server.txt" }
     private var setupWatchTask: Task<Void, Never>?
 
     init() {
@@ -140,6 +149,8 @@ final class VPNController: ObservableObject {
             let installedVersion = (try? String(contentsOfFile: versionPath, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             needsUpgrade = isInstalled && installedVersion != Self.releaseVersion
+            currentNodeIndex = Int((try? String(contentsOfFile: currentNodePath, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
 
             guard isInstalled else {
                 isRunning = false
@@ -259,6 +270,44 @@ final class VPNController: ObservableObject {
                 : (result.output.isEmpty ? "Could not apply the rules." : result.output)
             isBusy = false
             refresh()
+        }
+    }
+
+    func loadAvailableNodes() {
+        guard !isBusy, isInstalled else { return }
+        isBusy = true
+        nodeMessage = "Loading nodes…"
+        Task {
+            let result = await Self.execute("/bin/bash", [commandPath, "list-nodes"])
+            if result.status == 0 {
+                availableNodes = result.output.components(separatedBy: .newlines).compactMap { line in
+                    let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+                    guard parts.count == 2, let index = Int(parts[0]) else { return nil }
+                    return VPNNode(id: index, name: String(parts[1]))
+                }
+                nodeMessage = availableNodes.isEmpty ? "No VLESS nodes were found." : ""
+            } else {
+                availableNodes = []
+                nodeMessage = result.output.isEmpty ? "Could not load nodes." : result.output
+            }
+            isBusy = false
+        }
+    }
+
+    func selectNode(_ index: Int) {
+        guard !isBusy, isInstalled else { return }
+        isBusy = true
+        nodeMessage = "Validating and switching node…"
+        Task {
+            let result = await Self.execute("/bin/bash", [commandPath, "select-node", String(index)])
+            nodeMessage = result.status == 0
+                ? (result.output.isEmpty ? "Node changed successfully." : result.output)
+                : (result.output.isEmpty ? "Could not change the node." : result.output)
+            if result.status == 0 {
+                currentNodeIndex = index
+            }
+            isBusy = false
+            if result.status == 0 { refresh() }
         }
     }
 
@@ -510,12 +559,68 @@ private struct RoutingRulesView: View {
     }
 }
 
+private struct NodeSelectionView: View {
+    @ObservedObject var controller: VPNController
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedIndex: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Choose node").font(.title2.bold())
+                    Text("Nodes are loaded from your saved subscription.")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+
+            Picker("Node", selection: $selectedIndex) {
+                ForEach(controller.availableNodes) { node in
+                    Text(node.name).tag(Optional(node.id))
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+
+            HStack {
+                if controller.isBusy { ProgressView().controlSize(.small) }
+                Text(controller.nodeMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer()
+                Button("Switch Node") {
+                    if let selectedIndex { controller.selectNode(selectedIndex) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedIndex == nil || controller.isBusy || controller.availableNodes.isEmpty)
+            }
+        }
+        .padding(22)
+        .frame(width: 520, height: 210)
+        .preferredColorScheme(.dark)
+        .onAppear {
+            selectedIndex = controller.currentNodeIndex
+            controller.nodeMessage = ""
+            controller.loadAvailableNodes()
+        }
+        .onChange(of: controller.availableNodes) { nodes in
+            if selectedIndex == nil {
+                selectedIndex = controller.currentNodeIndex ?? nodes.first?.id
+            }
+        }
+    }
+}
+
 private struct MainView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var controller = VPNController()
     @StateObject private var speedMonitor = SpeedMonitor()
     @State private var confirmRemoval = false
     @State private var showRoutingRules = false
+    @State private var showNodeSelection = false
 
     var body: some View {
         ZStack {
@@ -546,9 +651,16 @@ private struct MainView: View {
                     .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 13))
                 }
 
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Current node").font(.caption).foregroundStyle(.secondary)
-                    Text(controller.node).font(.headline).lineLimit(1)
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Current node").font(.caption).foregroundStyle(.secondary)
+                        Text(controller.node).font(.headline).lineLimit(1)
+                    }
+                    Spacer()
+                    if controller.isInstalled {
+                        Button("Change…") { showNodeSelection = true }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
@@ -608,6 +720,9 @@ private struct MainView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showRoutingRules) {
             RoutingRulesView(controller: controller)
+        }
+        .sheet(isPresented: $showNodeSelection) {
+            NodeSelectionView(controller: controller)
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active {

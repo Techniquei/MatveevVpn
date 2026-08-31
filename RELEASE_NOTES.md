@@ -1,4 +1,9 @@
-# matveevVpn 1.0.2
+# matveevVpn 1.0.3
+
+Nodes from the saved subscription can now be selected directly in the app. The
+new configuration is validated and applied without Terminal or another password.
+
+## 1.0.2
 
 Traffic peaks now have vertical edges, and upload traffic is shown as a clear
 pink line matching its live speed label.

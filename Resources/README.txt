@@ -1,4 +1,4 @@
-matveevVpn 1.0.2 for macOS (Apple Silicon)
+matveevVpn 1.0.3 for macOS (Apple Silicon)
 ==========================================
 
 matveevVpn is a universal selective-routing VLESS client. Enter your own
