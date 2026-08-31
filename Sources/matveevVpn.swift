@@ -35,7 +35,8 @@ final class SpeedMonitor: ObservableObject {
     init() {
         sample()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sample() }
+            guard let monitor = self else { return }
+            Task { @MainActor in monitor.sample() }
         }
     }
 
