@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct CommandResult { let status: Int32; let output: String }
 
@@ -74,6 +75,14 @@ struct SystemService {
     func deploy(_ config: URL) async throws {
         try privateWrite(Data(contentsOf: config), to: control.appendingPathComponent("pending-config.json"))
         try await send("reload")
+    }
+
+    func configurationMatches(_ config: URL) -> Bool {
+        guard let data = try? Data(contentsOf: config),
+              let active = try? String(contentsOf: control.appendingPathComponent("config-sha256"), encoding: .utf8)
+        else { return false }
+        let expected = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return active.trimmingCharacters(in: .whitespacesAndNewlines) == expected
     }
 
     func install(_ config: URL, desiredOn: Bool) async throws {

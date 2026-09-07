@@ -12,10 +12,13 @@ Dir.mktmpdir('matveev-routing') do |dir|
     value = JSON.parse(File.read(config))
     raise 'wrong final' unless value['route']['final'] == (mode == 'all' ? 'vpn' : 'direct')
     raise 'wrong DNS final' unless value['dns']['final'] == (mode == 'all' ? 'dns-vpn' : 'dns-direct')
-    raise 'bootstrap DNS can recurse through system resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-bootstrap' && value['dns']['servers'].any? { |r| r['tag'] == 'dns-bootstrap' && r['type'] == 'udp' && r['detour'] == 'direct' }
+    raise 'VPN server must use the direct system resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-direct'
+    raise 'external UDP bootstrap DNS was reintroduced' if value['dns']['servers'].any? { |r| r['tag'] == 'dns-bootstrap' }
     raise 'IPv6 missing' unless value['inbounds'][0]['address'].any? { |a| a.include?(':') }
     route = value['route']['rules']
     raise 'wildcard not normalized' unless route.any? { |r| r['domain_suffix'] == ['example.com'] }
+    raise 'diagnostic endpoints do not use VPN' unless route.any? { |r| r['domain'] == ['api4.ipify.org', 'api6.ipify.org'] && r['outbound'] == 'vpn' }
+    raise 'diagnostic DNS does not use VPN' unless value['dns']['rules'].any? { |r| r['domain'] == ['api4.ipify.org', 'api6.ipify.org'] && r['server'] == 'dns-vpn' }
     raise 'DNS intercepted after process route' unless route.index { |r| r['action'] == 'hijack-dns' } < route.index { |r| r['process_name'] == ['Example'] }
     raise 'process path missing in DNS' unless value['dns']['rules'].any? { |r| r.key?('process_path_regex') }
   end

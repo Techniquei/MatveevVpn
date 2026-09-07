@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1
+
+- Restored reliable VPN-node hostname bootstrap through the macOS system
+  resolver instead of requiring direct UDP access to 1.1.1.1.
+- Added regression coverage preventing an external bootstrap DNS dependency.
+- Made the diagnostic IPv4/IPv6 probes explicitly use the VPN in Selective mode.
+- Automatically reconciles an older generated config after an app-only update,
+  without reinstalling the privileged controller.
+
 ## 1.0.4
 
 - Automatically restores the tunnel after Mac sleep, network-interface changes,

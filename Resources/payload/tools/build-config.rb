@@ -22,7 +22,7 @@ vpn_outbound = {
   "server_port" => uri.port,
   "uuid" => URI.decode_www_form_component(uri.user.to_s),
   "domain_resolver" => {
-    "server" => "dns-bootstrap",
+    "server" => "dns-direct",
     "strategy" => "prefer_ipv4"
   }
 }
@@ -74,8 +74,11 @@ end.uniq
 paths = Array(rules_data["processPathRegexes"]).map(&:strip).reject(&:empty?).uniq
 paths.each { |pattern| Regexp.new(pattern) }
 full = rules_data.fetch("mode", "selective") == "all"
+diagnostic_domains = ["api4.ipify.org", "api6.ipify.org"]
 
-dns_rules = []
+dns_rules = [
+  { "domain" => diagnostic_domains, "action" => "route", "server" => "dns-vpn" }
+]
 unless paths.empty?
   dns_rules << { "process_path_regex" => paths, "action" => "route", "server" => "dns-vpn" }
 end
@@ -95,6 +98,7 @@ route_rules.concat([
   { "protocol" => "dns", "action" => "hijack-dns" }
 ])
 route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
+route_rules << { "domain" => diagnostic_domains, "action" => "route", "outbound" => "vpn" }
 route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" } unless routed_apps.empty?
 route_rules << { "process_path_regex" => paths, "action" => "route", "outbound" => "vpn" } unless paths.empty?
 unless routed_domains.empty?
@@ -105,13 +109,6 @@ config = {
   "log" => { "level" => "warn", "timestamp" => true },
   "dns" => {
     "servers" => [
-      {
-        "type" => "udp",
-        "tag" => "dns-bootstrap",
-        "server" => "1.1.1.1",
-        "server_port" => 53,
-        "detour" => "direct"
-      },
       {
         "type" => "local",
         "tag" => "dns-direct",

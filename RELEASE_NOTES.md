@@ -1,4 +1,18 @@
-# matveevVpn 1.1.0
+# matveevVpn 1.1.1
+
+- Fixed a regression where networks that block external UDP DNS could leave the
+  tunnel running while routed sites failed to open.
+- VPN node hostnames now bootstrap through the macOS system resolver, as in the
+  working 1.0 configuration.
+- Diagnostics now force their dedicated IPv4/IPv6 endpoints through the VPN,
+  including in Selective mode, instead of displaying the normal direct egress.
+
+This update keeps the 1.1 settings, selected node, mode and routing rules.
+The system controller remains version 2, so no administrator password is needed
+to apply the corrected configuration. The app compares the installed config and
+applies the fix automatically on its first launch.
+
+## Included in 1.1
 
 - Settings, subscription and selected node survive reinstalling the app.
 - Initial setup and subscription changes are fully native; Terminal setup is removed.

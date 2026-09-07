@@ -47,8 +47,8 @@ own explicit rules. Domain routing depends on DNS mapping or a visible protocol
 hostname; encrypted hostnames and existing connections can limit domain matching.
 
 DNS port 53 is intercepted before private-network and application rules.
-Full mode uses VPN DNS; resolving the VPN server itself uses the direct resolver
-at 1.1.1.1 to bootstrap the connection. Full mode is not a kill switch: turning the VPN off
+Full mode uses VPN DNS; resolving the VPN server itself uses the macOS system
+resolver over the direct connection. Full mode is not a kill switch: turning the VPN off
 restores direct connectivity.
 
 ## Settings and diagnostics
@@ -67,8 +67,9 @@ on connection parameters, not its position in the list.
 Settings & Diagnostics includes IPv4/IPv6 probes, service repair, a copyable
 report, application/domain rule explanations, and rules import/export.
 Exports do not contain the subscription or node credentials. Public IP probes
-contact api64.ipify.org only on request or after connection changes; they do not
-prove the absence of every possible leak. Node tests measure TCP reachability
+contact api4.ipify.org and api6.ipify.org only on request or after connection
+changes and are always routed through the selected VPN node; they do not prove
+the absence of every possible leak. Node tests measure TCP reachability
 through the current connection, not authenticated VPN speed.
 
 **Revert Changes** discards unsaved routing edits. **Clear All** clears the editor

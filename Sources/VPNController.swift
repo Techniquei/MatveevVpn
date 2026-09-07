@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.0"
+    static let releaseVersion = "1.1.1"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -43,6 +43,7 @@ final class VPNController: ObservableObject {
         do { state = try store.load() }
         catch { message = "Could not load settings: \(error.localizedDescription)"; loadFailed = true }
         refresh()
+        reconcileInstalledConfiguration()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let controller = self else { return }
             Task { @MainActor in controller.refresh() }
@@ -88,6 +89,28 @@ final class VPNController: ObservableObject {
     private func commit(_ next: SavedState) async throws {
         state = try await coordinator.apply(next, previous: state)
         checkConnection()
+    }
+
+    private func reconcileInstalledConfiguration() {
+        guard !loadFailed, service.installed, service.currentVersion == SystemService.version,
+              state.selectedNodeID != nil, !state.subscription.isEmpty else { return }
+        let snapshot = state
+        Task {
+            do {
+                let stage = try temporaryDirectory()
+                defer { try? FileManager.default.removeItem(at: stage) }
+                let config = try await self.service.generate(snapshot, at: stage)
+                guard !self.service.configurationMatches(config), !self.isBusy else { return }
+                self.isBusy = true
+                self.message = "Updating the installed configuration…"
+                defer { self.isBusy = false; self.refresh() }
+                try await self.service.deploy(config)
+                self.message = "Configuration updated."
+                self.checkConnection()
+            } catch {
+                self.message = "Could not update the installed configuration: \(error.localizedDescription)"
+            }
+        }
     }
 
     func run(_ action: String) {
@@ -207,15 +230,15 @@ final class VPNController: ObservableObject {
         let snapshot = state
         diagnostics = "Checking connection…"
         connectionCheck = Task {
-            async let ipv4 = Self.publicIP("-4")
-            async let ipv6 = Self.publicIP("-6")
+            async let ipv4 = Self.publicIP("-4", endpoint: "https://api4.ipify.org")
+            async let ipv6 = Self.publicIP("-6", endpoint: "https://api6.ipify.org")
             let (v4, v6) = await (ipv4, ipv6)
             guard !Task.isCancelled else { return }
-            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nCurrent connection IPv4: \(v4)\nCurrent connection IPv6: \(v6)\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nThese probes follow your current routing rules. They do not prove that every connection is routed."
+            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nVPN egress IPv4: \(v4)\nVPN egress IPv6: \(v6)\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nThe diagnostic endpoints are always routed through the selected VPN node. IPv6 may be unavailable on some nodes."
         }
     }
-    private nonisolated static func publicIP(_ family: String) async -> String {
-        let result = await Command.run("/usr/bin/curl", [family, "-fsS", "--connect-timeout", "5", "--max-time", "12", "--max-filesize", "4096", "https://api64.ipify.org"])
+    private nonisolated static func publicIP(_ family: String, endpoint: String) async -> String {
+        let result = await Command.run("/usr/bin/curl", [family, "-fsS", "--connect-timeout", "5", "--max-time", "12", "--max-filesize", "4096", endpoint])
         let value = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
         let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF:.")
         return result.status == 0 && !value.isEmpty && value.count < 64 && value.unicodeScalars.allSatisfy { allowed.contains($0) } ? value : "unavailable"
