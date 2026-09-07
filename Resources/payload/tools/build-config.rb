@@ -22,7 +22,7 @@ vpn_outbound = {
   "server_port" => uri.port,
   "uuid" => URI.decode_www_form_component(uri.user.to_s),
   "domain_resolver" => {
-    "server" => "dns-direct",
+    "server" => "dns-bootstrap",
     "strategy" => "prefer_ipv4"
   }
 }
@@ -66,8 +66,19 @@ end
 rules_data = JSON.parse(File.read(rules_path))
 routed_domains = Array(rules_data["domains"]).map { |value| value.to_s.strip.downcase }.reject(&:empty?).uniq
 routed_apps = Array(rules_data["applications"]).map { |value| value.to_s.strip }.reject(&:empty?).uniq
+routed_domains = routed_domains.map do |domain|
+  domain = domain.delete_prefix("*.")
+  abort "Invalid domain: use example.com or *.example.com" unless domain.length <= 253 && domain.split(".", -1).all? { |label| label.match?(/\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z/) }
+  domain
+end.uniq
+paths = Array(rules_data["processPathRegexes"]).map(&:strip).reject(&:empty?).uniq
+paths.each { |pattern| Regexp.new(pattern) }
+full = rules_data.fetch("mode", "selective") == "all"
 
 dns_rules = []
+unless paths.empty?
+  dns_rules << { "process_path_regex" => paths, "action" => "route", "server" => "dns-vpn" }
+end
 unless routed_apps.empty?
   dns_rules << { "process_name" => routed_apps, "action" => "route", "server" => "dns-vpn" }
 end
@@ -78,21 +89,29 @@ end
 route_rules = [
   { "process_name" => ["sing-box"], "action" => "route", "outbound" => "direct" }
 ]
-unless routed_apps.empty?
-  route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" }
-end
 route_rules.concat([
-  { "action" => "sniff", "sniffer" => ["http", "tls", "quic"], "timeout" => "500ms" },
+  { "port" => 53, "action" => "hijack-dns" },
+  { "action" => "sniff", "sniffer" => ["http", "tls", "quic", "dns"], "timeout" => "500ms" },
   { "protocol" => "dns", "action" => "hijack-dns" }
 ])
+route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
+route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" } unless routed_apps.empty?
+route_rules << { "process_path_regex" => paths, "action" => "route", "outbound" => "vpn" } unless paths.empty?
 unless routed_domains.empty?
   route_rules << { "domain_suffix" => routed_domains, "action" => "route", "outbound" => "vpn" }
 end
 
 config = {
-  "log" => { "level" => "info", "timestamp" => true },
+  "log" => { "level" => "warn", "timestamp" => true },
   "dns" => {
     "servers" => [
+      {
+        "type" => "udp",
+        "tag" => "dns-bootstrap",
+        "server" => "1.1.1.1",
+        "server_port" => 53,
+        "detour" => "direct"
+      },
       {
         "type" => "local",
         "tag" => "dns-direct",
@@ -109,23 +128,18 @@ config = {
     ],
     "strategy" => "prefer_ipv4",
     "rules" => dns_rules,
-    "final" => "dns-direct",
+    "final" => full ? "dns-vpn" : "dns-direct",
     "reverse_mapping" => true
   },
   "inbounds" => [
     {
       "type" => "tun",
       "tag" => "tun-in",
-      "address" => ["198.18.0.1/30"],
+      "address" => ["198.18.0.1/30", "fdfe:dcba:9876::1/126"],
       "auto_route" => true,
       "strict_route" => true,
       "stack" => "mixed",
-      "mtu" => 1500,
-      "route_exclude_address" => [
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16"
-      ]
+      "mtu" => 1500
     }
   ],
   "outbounds" => [
@@ -139,7 +153,7 @@ config = {
   "route" => {
     "auto_detect_interface" => true,
     "rules" => route_rules,
-    "final" => "direct"
+    "final" => full ? "vpn" : "direct"
   }
 }
 

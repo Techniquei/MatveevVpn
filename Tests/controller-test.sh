@@ -73,3 +73,14 @@ if /usr/bin/grep -q 'fail_run' "$RUNTIME/config.json"; then
 fi
 
 echo "controller protocol: ok"
+send_action off
+/bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"
+send_action reload
+wait_for_file_value "$CONTROL/runtime-status" "stopped"
+wait_for_file_value "$RUNTIME/run/desired-state" "off"
+send_action reset
+[[ ! -e "$RUNTIME/config.json" ]]
+[[ ! -e "$CONTROL/config-sha256" ]]
+send_action_expect on error
+send_action off
+echo "controller: reload preserves off state; reset removes credentials"

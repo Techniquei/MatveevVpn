@@ -3,21 +3,6 @@ import AppKit
 import Charts
 import Darwin
 
-private struct CommandResult {
-    let status: Int32
-    let output: String
-}
-
-struct RoutingRules: Codable {
-    var domains: [String]
-    var applications: [String]
-}
-
-struct VPNNode: Identifiable, Hashable {
-    let id: Int
-    let name: String
-}
-
 struct TrafficPoint: Identifiable {
     let slot: Int
     let download: Double
@@ -112,281 +97,6 @@ final class SpeedMonitor: ObservableObject {
     }
 }
 
-@MainActor
-final class VPNController: ObservableObject {
-    static let releaseVersion = "1.0.4"
-
-    @Published var isBusy = false
-    @Published var isInstalled = false
-    @Published var isRunning = false
-    @Published var needsUpgrade = false
-    @Published var node = "—"
-    @Published var directIP = "—"
-    @Published var serviceIP = "—"
-    @Published var message = "Checking status…"
-    @Published var rulesMessage = ""
-    @Published var availableNodes: [VPNNode] = []
-    @Published var currentNodeIndex: Int?
-    @Published var nodeMessage = ""
-
-    private let home = FileManager.default.homeDirectoryForCurrentUser.path
-
-    private var commandPath: String { "\(home)/VPN/.service/vpn-control.sh" }
-    private var versionPath: String { "\(home)/VPN/.service/package-version.txt" }
-    private var rulesPath: String { "\(home)/VPN/routing-rules.json" }
-    private var currentNodePath: String { "\(home)/VPN/.service/current-server.txt" }
-    private var setupWatchTask: Task<Void, Never>?
-
-    init() {
-        refresh()
-    }
-
-    func refresh() {
-        guard !isBusy else { return }
-        isBusy = true
-        Task {
-            isInstalled = FileManager.default.fileExists(atPath: commandPath)
-            let installedVersion = (try? String(contentsOfFile: versionPath, encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            needsUpgrade = isInstalled && installedVersion != Self.releaseVersion
-            currentNodeIndex = Int((try? String(contentsOfFile: currentNodePath, encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-
-            guard isInstalled else {
-                isRunning = false
-                message = "Initial setup is required"
-                isBusy = false
-                return
-            }
-
-            let result = await Self.execute("/bin/bash", [commandPath, "status"])
-            applyStatus(result.output)
-            if result.status != 0 {
-                message = result.output.isEmpty ? "Could not read VPN status" : result.output
-            } else if needsUpgrade {
-                message = "Configuration update \(Self.releaseVersion) is available"
-            } else {
-                message = isRunning ? "Selected traffic is routed through the VPN" : "VPN is currently off"
-            }
-            isBusy = false
-        }
-    }
-
-    func run(_ action: String) {
-        guard !isBusy else { return }
-        isBusy = true
-        message = "Running…"
-        Task {
-            let result = await Self.execute("/bin/bash", [commandPath, action])
-            message = result.output.isEmpty
-                ? (result.status == 0 ? "Done" : "The operation failed")
-                : result.output
-            isBusy = false
-            refresh()
-        }
-    }
-
-    func openSetup() {
-        guard let setup = Bundle.main.path(forResource: "setup", ofType: "command") else {
-            message = "Setup file was not found"
-            return
-        }
-        NSWorkspace.shared.open(URL(fileURLWithPath: setup))
-        message = "Setup opened in Terminal. This window will update automatically."
-        watchForSetupCompletion()
-    }
-
-    func refreshWhenActive() {
-        if installationIsReady || isInstalled {
-            refresh()
-        }
-    }
-
-    private var installationIsReady: Bool {
-        FileManager.default.fileExists(atPath: commandPath) &&
-            FileManager.default.fileExists(atPath: versionPath) &&
-            FileManager.default.fileExists(atPath: rulesPath)
-    }
-
-    private func watchForSetupCompletion() {
-        setupWatchTask?.cancel()
-        setupWatchTask = Task { [weak self] in
-            for _ in 0..<300 {
-                guard !Task.isCancelled else { return }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                guard let self else { return }
-                if self.installationIsReady {
-                    self.refresh()
-                    return
-                }
-            }
-        }
-    }
-
-    func currentRoutingRules() -> RoutingRules {
-        if let data = FileManager.default.contents(atPath: rulesPath),
-           let rules = try? JSONDecoder().decode(RoutingRules.self, from: data) {
-            return rules
-        }
-        return defaultRoutingRules()
-    }
-
-    func defaultRoutingRules() -> RoutingRules {
-        guard let resourceURL = Bundle.main.resourceURL?
-            .appendingPathComponent(".payload/default-rules.json"),
-              let data = try? Data(contentsOf: resourceURL),
-              let rules = try? JSONDecoder().decode(RoutingRules.self, from: data) else {
-            return RoutingRules(domains: [], applications: [])
-        }
-        return rules
-    }
-
-    func applyRoutingRules(domains: [String], applications: [String]) {
-        guard !isBusy, isInstalled else {
-            rulesMessage = "Complete initial setup first."
-            return
-        }
-        let normalized = RoutingRules(
-            domains: normalize(domains, lowercase: true),
-            applications: normalize(applications, lowercase: false)
-        )
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            let data = try encoder.encode(normalized)
-            try data.write(to: URL(fileURLWithPath: rulesPath), options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rulesPath)
-        } catch {
-            rulesMessage = "Could not save rules: \(error.localizedDescription)"
-            return
-        }
-
-        isBusy = true
-        rulesMessage = "Validating and applying…"
-        Task {
-            let result = await Self.execute("/bin/bash", [commandPath, "apply-rules"])
-            rulesMessage = result.status == 0
-                ? "Rules applied successfully."
-                : (result.output.isEmpty ? "Could not apply the rules." : result.output)
-            isBusy = false
-            refresh()
-        }
-    }
-
-    func loadAvailableNodes() {
-        guard !isBusy, isInstalled else { return }
-        isBusy = true
-        nodeMessage = "Loading nodes…"
-        Task {
-            let result = await Self.execute("/bin/bash", [commandPath, "list-nodes"])
-            if result.status == 0 {
-                availableNodes = result.output.components(separatedBy: .newlines).compactMap { line in
-                    let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
-                    guard parts.count == 2, let index = Int(parts[0]) else { return nil }
-                    return VPNNode(id: index, name: String(parts[1]))
-                }
-                nodeMessage = availableNodes.isEmpty ? "No VLESS nodes were found." : ""
-            } else {
-                availableNodes = []
-                nodeMessage = result.output.isEmpty ? "Could not load nodes." : result.output
-            }
-            isBusy = false
-        }
-    }
-
-    func selectNode(_ index: Int) {
-        guard !isBusy, isInstalled else { return }
-        isBusy = true
-        nodeMessage = "Validating and switching node…"
-        Task {
-            let result = await Self.execute("/bin/bash", [commandPath, "select-node", String(index)])
-            nodeMessage = result.status == 0
-                ? (result.output.isEmpty ? "Node changed successfully." : result.output)
-                : (result.output.isEmpty ? "Could not change the node." : result.output)
-            if result.status == 0 {
-                currentNodeIndex = index
-            }
-            isBusy = false
-            if result.status == 0 { refresh() }
-        }
-    }
-
-    private func normalize(_ values: [String], lowercase: Bool) -> [String] {
-        var seen = Set<String>()
-        return values.compactMap { value in
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
-            let result = lowercase ? trimmed.lowercased() : trimmed
-            return seen.insert(result).inserted ? result : nil
-        }
-    }
-
-    func runUninstall() {
-        guard !isBusy,
-              let script = Bundle.main.path(forResource: "uninstall", ofType: "command") else { return }
-        isBusy = true
-        message = "Removing the system service…"
-        Task {
-            let result = await Self.execute("/bin/bash", [script, "--yes"])
-            guard result.status == 0 else {
-                message = result.output.isEmpty ? "Uninstall failed" : result.output
-                isBusy = false
-                return
-            }
-
-            message = "Moving matveevVpn to Trash…"
-            let appURL = Bundle.main.bundleURL
-            NSWorkspace.shared.recycle([appURL]) { _, error in
-                DispatchQueue.main.async {
-                    if let error {
-                        self.message = "The service was removed, but the app could not be moved to Trash: \(error.localizedDescription)"
-                        self.isBusy = false
-                    } else {
-                        NSApplication.shared.terminate(nil)
-                    }
-                }
-            }
-        }
-    }
-
-    private func applyStatus(_ text: String) {
-        isRunning = text.contains("Service: running") || text.contains("Служба: работает")
-        for line in text.components(separatedBy: .newlines) {
-            if line.hasPrefix("Node:") || line.hasPrefix("Нода:") { node = value(after: ":", in: line) }
-            if line.hasPrefix("Direct IP:") || line.hasPrefix("Обычный IP:") { directIP = value(after: ":", in: line) }
-            if line.hasPrefix("Routed IP:") || line.hasPrefix("OpenAI IP:") { serviceIP = value(after: ":", in: line) }
-        }
-    }
-
-    private func value(after separator: Character, in line: String) -> String {
-        guard let index = line.firstIndex(of: separator) else { return "—" }
-        return String(line[line.index(after: index)...]).trimmingCharacters(in: .whitespaces)
-    }
-
-    private nonisolated static func execute(_ executable: String, _ arguments: [String]) async -> CommandResult {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                let pipe = Pipe()
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                process.standardOutput = pipe
-                process.standardError = pipe
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    continuation.resume(returning: CommandResult(status: process.terminationStatus, output: output))
-                } catch {
-                    continuation.resume(returning: CommandResult(status: -1, output: error.localizedDescription))
-                }
-            }
-        }
-    }
-}
-
 private struct BrandIcon: View {
     var size: CGFloat = 64
 
@@ -396,21 +106,6 @@ private struct BrandIcon: View {
             .interpolation(.high)
             .frame(width: size, height: size)
             .shadow(color: .cyan.opacity(0.28), radius: 18, y: 6)
-    }
-}
-
-private struct InfoCard: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.system(.body, design: .monospaced)).lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -438,7 +133,8 @@ private struct SpeedChartCard: View {
             Chart(monitor.samples) { point in
                 LineMark(
                     x: .value("Second", point.slot),
-                    y: .value("Download", point.download)
+                    y: .value("Download", point.download),
+                    series: .value("Direction", "Download")
                 )
                 .foregroundStyle(.cyan)
                 .lineStyle(StrokeStyle(lineWidth: 2))
@@ -446,7 +142,8 @@ private struct SpeedChartCard: View {
 
                 LineMark(
                     x: .value("Second", point.slot),
-                    y: .value("Upload", point.upload)
+                    y: .value("Upload", point.upload),
+                    series: .value("Direction", "Upload")
                 )
                 .foregroundStyle(.pink)
                 .lineStyle(StrokeStyle(lineWidth: 2))
@@ -492,6 +189,8 @@ private struct RoutingRulesView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var domainsText = ""
     @State private var applicationsText = ""
+    @State private var pathsText = ""
+    @State private var confirmClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -506,8 +205,18 @@ private struct RoutingRulesView: View {
             }
 
             HStack(alignment: .top, spacing: 14) {
-                editor(title: "Domain suffixes", hint: "example.com", text: $domainsText)
+                editor(title: "Domains", hint: "example.com or *.example.com", text: $domainsText)
                 editor(title: "Application process names", hint: "Example App", text: $applicationsText)
+            }
+            editor(title: "Application paths (regular expressions)", hint: "Use Add Application to include its helpers", text: $pathsText)
+            Button("Add Application…") {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.applicationBundle]
+                panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                if panel.runModal() == .OK, let url = panel.url {
+                    let pattern = "^.*/" + NSRegularExpression.escapedPattern(for: url.lastPathComponent) + "/Contents/.*"
+                    pathsText += (pathsText.isEmpty ? "" : "\n") + pattern
+                }
             }
 
             HStack {
@@ -516,11 +225,13 @@ private struct RoutingRulesView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer()
-                Button("Reset to Defaults") { load(controller.defaultRoutingRules()) }
+                Button("Revert Changes") { load(controller.currentRoutingRules()) }
+                Button("Clear All…") { confirmClear = true }
                 Button("Save and Apply") {
                     controller.applyRoutingRules(
                         domains: lines(domainsText),
-                        applications: lines(applicationsText)
+                        applications: lines(applicationsText),
+                        paths: lines(pathsText)
                     )
                 }
                 .buttonStyle(.borderedProminent)
@@ -528,7 +239,10 @@ private struct RoutingRulesView: View {
             }
         }
         .padding(22)
-        .frame(width: 720, height: 520)
+        .frame(width: 760, height: 640)
+        .confirmationDialog("Clear all routing rules?", isPresented: $confirmClear) {
+            Button("Clear All", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
+        } message: { Text("Changes take effect after Save and Apply.") }
         .preferredColorScheme(.dark)
         .onAppear {
             controller.rulesMessage = ""
@@ -556,13 +270,14 @@ private struct RoutingRulesView: View {
     private func load(_ rules: RoutingRules) {
         domainsText = rules.domains.joined(separator: "\n")
         applicationsText = rules.applications.joined(separator: "\n")
+        pathsText = rules.processPathRegexes.joined(separator: "\n")
     }
 }
 
 private struct NodeSelectionView: View {
     @ObservedObject var controller: VPNController
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedIndex: Int?
+    @State private var selectedIndex: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -578,7 +293,7 @@ private struct NodeSelectionView: View {
 
             Picker("Node", selection: $selectedIndex) {
                 ForEach(controller.availableNodes) { node in
-                    Text(node.name).tag(Optional(node.id))
+                    Text(node.name + (controller.probeResults[node.id].map { " — " + $0 } ?? "")).tag(Optional(node.id))
                 }
             }
             .labelsHidden()
@@ -591,6 +306,11 @@ private struct NodeSelectionView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer()
+                if controller.testingNodes {
+                    Button("Cancel Test") { controller.cancelNodeTests() }
+                } else {
+                    Button("Test Nodes") { controller.testNodes() }.disabled(controller.isBusy)
+                }
                 Button("Switch Node") {
                     if let selectedIndex { controller.selectNode(selectedIndex) }
                 }
@@ -616,11 +336,12 @@ private struct NodeSelectionView: View {
 
 private struct MainView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var controller = VPNController()
-    @StateObject private var speedMonitor = SpeedMonitor()
+    @ObservedObject var controller: VPNController
+    @ObservedObject var speedMonitor: SpeedMonitor
     @State private var confirmRemoval = false
     @State private var showRoutingRules = false
     @State private var showNodeSelection = false
+    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -634,7 +355,7 @@ private struct MainView: View {
                     BrandIcon()
                     VStack(alignment: .leading, spacing: 5) {
                         Text("matveevVpn").font(.system(size: 28, weight: .bold, design: .rounded))
-                        Text("Selective routing · Your rules").foregroundStyle(.secondary)
+                        Text("Your connection · Your rules").foregroundStyle(.secondary)
                     }
                     Spacer()
                     statusBadge
@@ -643,7 +364,7 @@ private struct MainView: View {
                 if controller.needsUpgrade {
                     HStack {
                         Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Configuration \(VPNController.releaseVersion) needs to be applied")
+                        Text("A system component update is required")
                         Spacer()
                         Button("Update") { controller.openSetup() }
                     }
@@ -666,15 +387,17 @@ private struct MainView: View {
                 .padding(14)
                 .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
 
-                HStack(spacing: 10) {
-                    InfoCard(title: "Direct IP", value: controller.directIP)
-                    InfoCard(title: "Routed IP", value: controller.serviceIP)
+                Picker("VPN mode", selection: Binding(get: { controller.state.rules.mode }, set: { controller.changeMode($0) })) {
+                    Text("Selective").tag(RoutingMode.selective)
+                    Text("All Traffic").tag(RoutingMode.all)
                 }
+                .pickerStyle(.segmented)
+                .disabled(!controller.isInstalled || controller.isBusy || controller.state.selectedNodeID == nil)
 
                 SpeedChartCard(monitor: speedMonitor)
 
                 HStack(spacing: 10) {
-                    if !controller.isInstalled {
+                    if !controller.isInstalled || controller.state.selectedNodeID == nil {
                         Button("Install and set up") { controller.openSetup() }
                             .buttonStyle(.borderedProminent)
                     } else {
@@ -685,16 +408,13 @@ private struct MainView: View {
                         Button("Restart") { controller.run("restart") }
                             .buttonStyle(.bordered)
                     }
-                    Button { controller.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.bordered)
-                        .help("Refresh status")
                     Spacer()
                     Button("Routing rules…") {
                         if controller.needsUpgrade { controller.openSetup() }
                         else { showRoutingRules = true }
                     }
                         .buttonStyle(.bordered)
-                        .disabled(!controller.isInstalled)
+                        .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil)
                 }
                 .controlSize(.large)
 
@@ -706,6 +426,7 @@ private struct MainView: View {
                 }
 
                 HStack {
+                    Button("Settings & Diagnostics…") { showSettings = true }
                     Spacer()
                     Button("Uninstall…", role: .destructive) { confirmRemoval = true }
                         .buttonStyle(.plain)
@@ -724,6 +445,8 @@ private struct MainView: View {
         .sheet(isPresented: $showNodeSelection) {
             NodeSelectionView(controller: controller)
         }
+        .sheet(isPresented: Binding(get: { controller.showConnection && !showSettings }, set: { controller.showConnection = $0 })) { ConnectionView(controller: controller) }
+        .sheet(isPresented: $showSettings) { SettingsView(controller: controller) }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
                 controller.refreshWhenActive()
@@ -733,7 +456,7 @@ private struct MainView: View {
             Button("Uninstall and Move to Trash", role: .destructive) { controller.runUninstall() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("The system service and bundled sing-box will be removed. Your ~/VPN folder will be kept as a backup.")
+            Text("The system service will be removed. Your settings will be kept for reinstalling.")
         }
     }
 
@@ -749,11 +472,32 @@ private struct MainView: View {
 
 @main
 struct MatveevVPNApp: App {
+    @StateObject private var controller = VPNController()
+    @StateObject private var speedMonitor = SpeedMonitor()
     var body: some Scene {
-        WindowGroup {
-            MainView()
+        Window("matveevVpn", id: "main") {
+            MainView(controller: controller, speedMonitor: speedMonitor)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        MenuBarExtra("matveevVpn", systemImage: controller.isRunning ? "network.badge.shield.half.filled" : "network") {
+            MenuContent(controller: controller, speedMonitor: speedMonitor)
+        }
+    }
+}
+
+private struct MenuContent: View {
+    @ObservedObject var controller: VPNController
+    @ObservedObject var speedMonitor: SpeedMonitor
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+            Text(controller.isRunning ? "Connected" : "Disconnected")
+            Text(controller.node)
+            Text("↓ \(Int(speedMonitor.downloadSpeed / 1024)) KB/s · ↑ \(Int(speedMonitor.uploadSpeed / 1024)) KB/s")
+            Button(controller.isRunning ? "Turn Off" : "Turn On") { controller.run(controller.isRunning ? "off" : "on") }
+                .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil)
+            Button("Open matveevVpn") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+            Divider()
+            Button("Quit") { NSApp.terminate(nil) }
     }
 }

@@ -1,41 +1,25 @@
-# matveevVpn 1.0.4
+# matveevVpn 1.1.0
 
-The system controller now repairs stale routing after sleep or network changes.
-A clean restart removes leftover routes only from matveevVpn's own TUN, refreshes
-the macOS DNS cache, and recreates the tunnel. Routing and node updates also roll
-back automatically if a new configuration cannot start.
+- Settings, subscription and selected node survive reinstalling the app.
+- Initial setup and subscription changes are fully native; Terminal setup is removed.
+- Switch between Selective and All Traffic without losing your rules.
+- Route domains with example.com / *.example.com and add application bundles,
+  including their internal helpers.
+- Configuration changes are validated and committed with rollback and recovery.
+- Menu bar controls and traffic rates, launch at login and optional failure alerts.
+- Connection diagnostics, node reachability checks and rule explanations.
+- Export/import routing rules without subscription credentials.
+- Signed Sparkle automatic updates and Check for Updates.
 
-## 1.0.3
+Existing 1.0 users install this release manually once. Settings are migrated
+from the canonical ~/VPN folder; backup folders are not searched.
 
-Nodes from the saved subscription can now be selected directly in the app. The
-new configuration is validated and applied without Terminal or another password.
+Requires Apple Silicon, macOS 13+ and an HTTPS VLESS subscription URL.
+System-component installation or repair needs administrator permission.
+Routine connection/configuration changes do not.
 
-## 1.0.2
+Full mode includes IPv4/IPv6 and VPN DNS while keeping local destinations direct.
+It is not a kill switch. Application rules cover executables within the selected
+bundle; external shells/runtimes need their own rules.
 
-Traffic peaks now have vertical edges, and upload traffic is shown as a clear
-pink line matching its live speed label.
-
-## 1.0.1
-
-This patch documents manual YouTube domain rules, refreshes the app automatically
-after Terminal setup, and fixes first-run startup on Macs where launchd or
-sing-box needs more than three seconds to become ready.
-
-## 1.0.0
-
-The first public release of the universal selective-routing client for Apple
-Silicon Macs.
-
-After the one-time setup, normal VPN controls and routing configuration changes
-do not ask for an administrator password. Routing rules can be edited directly
-in the native app, and the traffic card shows stable download and upload rates
-over the most recent 60 seconds.
-
-## Requirements
-
-- Apple Silicon Mac
-- macOS 13 or newer
-- VLESS subscription URL
-
-This release is ad-hoc signed and not notarized. On first launch, right-click the
-application and choose **Open** if macOS displays a Gatekeeper warning.
+The current build is ad-hoc signed and is not notarized by Apple.

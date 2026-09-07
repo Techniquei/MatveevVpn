@@ -17,8 +17,8 @@
   <key>ProcessType</key>
   <string>Interactive</string>
   <key>StandardOutPath</key>
-  <string>/tmp/matveev-vpn.log</string>
+  <string>/Library/Application Support/matveevVpn/run/controller.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/matveev-vpn.error.log</string>
+  <string>/Library/Application Support/matveevVpn/run/controller.error.log</string>
 </dict>
 </plist>

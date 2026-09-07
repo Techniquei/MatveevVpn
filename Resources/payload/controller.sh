@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -u
+umask 077
 
 BASE_DIR="${MATVEEV_BASE_DIR:-/Library/Application Support/matveevVpn}"
 CONTROL_DIR="$BASE_DIR/control"
@@ -13,8 +14,8 @@ STATUS_FILE="$CONTROL_DIR/runtime-status"
 DESIRED_FILE="$RUN_DIR/desired-state"
 PID_FILE="$RUN_DIR/sing-box.pid"
 ROLLBACK_CONFIG="$RUN_DIR/config.rollback.json"
-LOG_FILE="${MATVEEV_LOG_FILE:-/tmp/matveev-vpn.log}"
-ERROR_FILE="${MATVEEV_ERROR_FILE:-/tmp/matveev-vpn.error.log}"
+LOG_FILE="${MATVEEV_LOG_FILE:-$RUN_DIR/vpn.log}"
+ERROR_FILE="${MATVEEV_ERROR_FILE:-$RUN_DIR/vpn.error.log}"
 WATCHDOG_GAP_SECONDS="${MATVEEV_WATCHDOG_GAP_SECONDS:-10}"
 
 CHILD_PID=""
@@ -22,6 +23,7 @@ LAST_TICK="$(/bin/date +%s)"
 LAST_NETWORK_CHECK=0
 LAST_NETWORK_SIGNATURE=""
 TUN_MISSES=0
+LAST_STATUS_PUBLISH=0
 
 /bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
 
@@ -67,6 +69,16 @@ install_config() {
   else
     /usr/bin/install -o root -g wheel -m 600 "$source" "$CONFIG_FILE"
   fi
+  publish_config_hash
+}
+
+publish_config_hash() {
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  local temporary
+  temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.config-hash.XXXXXX")" || return 1
+  /usr/bin/shasum -a 256 "$CONFIG_FILE" | /usr/bin/awk '{print $1}' > "$temporary"
+  /bin/chmod 644 "$temporary"
+  /bin/mv -f "$temporary" "$CONTROL_DIR/config-sha256"
 }
 
 start_child() {
@@ -87,10 +99,16 @@ start_child() {
   CHILD_PID=$!
   /usr/bin/printf '%s\n' "$CHILD_PID" > "$PID_FILE"
   /bin/sleep 1
-  if child_running; then
-    write_status "running"
-    return 0
-  fi
+  local ready_attempt
+  for ready_attempt in {1..25}; do
+    child_running || break
+    if tunnel_ready; then
+      write_status "running"
+      return 0
+    fi
+    /bin/sleep 0.2
+  done
+  if child_running; then stop_child; fi
   CHILD_PID=""
   /bin/rm -f "$PID_FILE"
   write_status "error"
@@ -105,6 +123,10 @@ cleanup_tunnel_state() {
     [[ -n "$destination" ]] || continue
     /sbin/route -n delete -inet -ifscope "$interface" "$destination" >/dev/null 2>&1 || true
   done < <(/usr/sbin/netstat -rn -f inet 2>/dev/null | /usr/bin/awk -v interface="$interface" '$4 == interface {print $1}')
+  while IFS= read -r destination; do
+    [[ -n "$destination" ]] || continue
+    /sbin/route -n delete -inet6 -ifscope "$interface" "$destination" >/dev/null 2>&1 || true
+  done < <(/usr/sbin/netstat -rn -f inet6 2>/dev/null | /usr/bin/awk -v interface="$interface" '$4 == interface {print $1}')
 
   if /sbin/ifconfig "$interface" 2>/dev/null | /usr/bin/grep -q 'inet 198\.18\.0\.1 '; then
     /sbin/ifconfig "$interface" down >/dev/null 2>&1 || true
@@ -275,6 +297,12 @@ process_command() {
     reload)
       if reload_config; then write_response "$token" "ok"; else write_response "$token" "error"; fi
       ;;
+    reset)
+      set_desired "off"
+      stop_child
+      /bin/rm -f "$CONFIG_FILE" "$ROLLBACK_CONFIG" "$PENDING_CONFIG" "$CONTROL_DIR/config-sha256"
+      write_response "$token" "ok"
+      ;;
     *)
       write_response "$token" "error"
       ;;
@@ -286,6 +314,7 @@ shutdown() {
   exit 0
 }
 trap shutdown TERM INT HUP
+publish_config_hash
 
 if [[ "$(desired_state)" == "on" ]]; then
   start_child || true
@@ -306,6 +335,11 @@ while true; do
     run_watchdog
   else
     LAST_TICK="$(/bin/date +%s)"
+  fi
+  NOW="$(/bin/date +%s)"
+  if [[ $((NOW - LAST_STATUS_PUBLISH)) -ge 2 ]]; then
+    if child_running; then write_status "running"; fi
+    LAST_STATUS_PUBLISH="$NOW"
   fi
   /bin/sleep 0.5
 done

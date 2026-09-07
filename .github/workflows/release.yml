@@ -13,14 +13,26 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Verify version tag
+        run: |
+          version=$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' Scripts/build-dmg.sh)
+          test "$GITHUB_REF_NAME" = "v$version"
       - name: Validate
         run: ./Scripts/validate.sh
       - name: Build DMG
         run: ./Scripts/build-dmg.sh
+      - name: Sign update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY" || { echo 'Configure SPARKLE_PRIVATE_KEY before publishing a release.'; exit 1; }
+          bash Scripts/sign-release.sh dist "${GITHUB_REF_NAME#v}"
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: matveevVpn ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
-          files: dist/*.dmg
+          files: |
+            dist/*.dmg
+            dist/appcast.xml
           fail_on_unmatched_files: true

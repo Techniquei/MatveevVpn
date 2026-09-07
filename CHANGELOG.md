@@ -37,3 +37,13 @@
 - Passwordless normal operation after the one-time privileged setup.
 - Stable 60-second tunnel traffic graph with explicit byte-per-second labels.
 - Embedded uninstall action and clean DMG distribution.
+# 1.1.0
+
+- Persistent private settings, canonical 1.0 migration and stable node identity.
+- Native subscription setup, refresh and editing; remove Terminal setup.
+- Transactional configuration commits, rollback and interrupted-change recovery.
+- Selective / All Traffic, IPv6, DNS ordering and application path rules.
+- Wildcard domains, clear/revert routing actions and explicit settings reset.
+- Menu bar controls, login launch, failure notifications and node reachability.
+- Connection diagnostics, rule explanations and credential-free rules export.
+- Sparkle signed updates and signed release appcast pipeline.
