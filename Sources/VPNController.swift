@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.7"
+    static let releaseVersion = "1.1.8"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -318,7 +318,7 @@ final class VPNController: ObservableObject {
     func resetSettings() {
         perform(allowRecovery: true) {
             if self.service.installed { try await self.service.send("reset") }
-            let next = SavedState(); try self.store.save(next); self.state = next
+            let next = try self.store.freshState(); try self.store.save(next); self.state = next
             self.loadFailed = false
             try self.store.finishTransaction()
             self.setLogin(false)

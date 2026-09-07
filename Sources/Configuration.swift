@@ -99,10 +99,12 @@ struct StateStore {
     let directory: URL
     let legacyDirectory: URL
     let runtimeHashFile: URL
-    init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/matveevVpn"), legacyDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("VPN"), runtimeHashFile: URL = URL(fileURLWithPath: "/Library/Application Support/matveevVpn/control/config-sha256")) {
+    let defaultRulesFile: URL?
+    init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/matveevVpn"), legacyDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("VPN"), runtimeHashFile: URL = URL(fileURLWithPath: "/Library/Application Support/matveevVpn/control/config-sha256"), defaultRulesFile: URL? = Bundle.main.resourceURL?.appendingPathComponent(".payload/default-rules.json")) {
         self.directory = directory
         self.legacyDirectory = legacyDirectory
         self.runtimeHashFile = runtimeHashFile
+        self.defaultRulesFile = defaultRulesFile
     }
     var file: URL { directory.appendingPathComponent("settings.json") }
     var pendingFile: URL { directory.appendingPathComponent("pending.json") }
@@ -136,10 +138,19 @@ struct StateStore {
         try encoder.encode(state).write(to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
+    func freshState() throws -> SavedState {
+        guard let defaultRulesFile, FileManager.default.fileExists(atPath: defaultRulesFile.path) else {
+            return SavedState()
+        }
+        var state = SavedState()
+        state.rules = try JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: defaultRulesFile))
+        try state.rules.validate()
+        return state
+    }
     private func migrate() throws -> SavedState {
         let legacy = legacyDirectory
         let subscriptionFile = legacy.appendingPathComponent(".service/private/subscription.decoded")
-        guard FileManager.default.fileExists(atPath: subscriptionFile.path) else { return SavedState() }
+        guard FileManager.default.fileExists(atPath: subscriptionFile.path) else { return try freshState() }
         var state = SavedState()
         state.subscription = try Subscription.decode(Data(contentsOf: subscriptionFile))
         state.rules = try JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: legacy.appendingPathComponent("routing-rules.json")))

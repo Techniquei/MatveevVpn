@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.8
+
+- Adds editable default routes for YouTube, Telegram, ChatGPT, Claude and Cursor
+  on fresh installations.
+- Includes application bundle expressions so Cursor, Telegram, ChatGPT and
+  Claude helper processes follow their parent application through the VPN.
+- Restores the bundled routing defaults on an explicit settings reset without
+  replacing rules already saved by existing users during an update.
+
 ## 1.1.7
 
 - Removes the unused vertical margins around the main interface and reduces the

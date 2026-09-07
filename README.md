@@ -11,7 +11,7 @@ A native VLESS VPN client for Apple Silicon Macs running macOS 13 or newer.
 - Download/upload graphs, menu bar controls and optional launch at login.
 - Connection diagnostics, node TCP checks and routing-rule explanations.
 - Signed Sparkle updates, with manual Check for Updates.
-- No bundled subscription or service-specific routing defaults.
+- Ready-to-edit default routes for YouTube, Telegram, ChatGPT, Claude and Cursor.
 
 ## Install
 
@@ -39,6 +39,10 @@ In Routing Rules, enter one domain or process name per line.
 Both `example.com` and `*.example.com` include the base domain and all its
 subdomains, but not `notexample.com`. URLs and middle-of-domain wildcards are
 rejected.
+
+New installations start with editable rules for YouTube, Telegram, ChatGPT,
+Claude and Cursor. Updating the app never replaces rules already saved by the
+user. Reset All Settings restores the current bundled defaults.
 
 **Add Application** generates an escaped path expression for the selected
 application bundle. For example, a Cursor bundle rule includes its internal

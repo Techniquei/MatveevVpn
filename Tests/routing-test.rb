@@ -2,6 +2,16 @@ require 'json'
 require 'tmpdir'
 require 'rbconfig'
 
+defaults_path = File.expand_path('../Resources/payload/default-rules.json', __dir__)
+defaults = JSON.parse(File.read(defaults_path))
+expected_domains = %w[youtube.com googlevideo.com telegram.org chatgpt.com openai.com claude.ai anthropic.com cursor.com cursor.sh]
+missing_domains = expected_domains - defaults.fetch('domains')
+raise "default service domains missing: #{missing_domains.join(', ')}" unless missing_domains.empty?
+expected_apps = %w[ChatGPT Codex Claude Telegram Cursor]
+missing_apps = expected_apps - defaults.fetch('applications')
+raise "default applications missing: #{missing_apps.join(', ')}" unless missing_apps.empty?
+raise 'Cursor helper path is missing from defaults' unless defaults.fetch('processPathRegexes').include?('^.*/Cursor\\.app/Contents/.*')
+
 Dir.mktmpdir('matveev-routing') do |dir|
   sub, rules, config = %w[sub rules config].map { |name| File.join(dir, name) }
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Test\n")
@@ -39,5 +49,11 @@ Dir.mktmpdir('matveev-routing') do |dir|
     File.write(rules, JSON.generate({domains: [domain]}))
     raise "invalid domain accepted: #{domain}" if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
   end
+
+  raise 'default generation failed' unless system(RbConfig.ruby, builder, sub, config, '1')
+  generated_defaults = JSON.parse(File.read(config))
+  default_route = generated_defaults.fetch('route').fetch('rules').find { |rule| rule['outbound'] == 'vpn' && rule.key?('domain_suffix') }
+  raise 'bundled defaults are not applied by the config generator' unless default_route && expected_domains.all? { |domain| default_route['domain_suffix'].include?(domain) }
+  raise 'bundled Cursor helper route is missing' unless generated_defaults.fetch('route').fetch('rules').any? { |rule| rule['outbound'] == 'vpn' && rule['process_path_regex']&.include?('^.*/Cursor\\.app/Contents/.*') }
 end
-puts 'routing: modes, secure re-resolution, IPv4 compatibility, wildcards and process paths passed'
+puts 'routing: bundled defaults, modes, secure re-resolution, IPv4 compatibility, wildcards and process paths passed'

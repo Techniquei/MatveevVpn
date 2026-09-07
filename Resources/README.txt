@@ -1,4 +1,4 @@
-matveevVpn 1.1.7 for macOS (Apple Silicon)
+matveevVpn 1.1.8 for macOS (Apple Silicon)
 ========================================
 
 Move matveevVpn to Applications, open it, and choose Install and set up.
@@ -10,6 +10,8 @@ Choose Selective to route matching domains/applications, or All Traffic for a
 full tunnel. Local destinations remain direct. Domain patterns example.com and
 *.example.com both include the base domain and all subdomains.
 Add Application includes helpers within that application's bundle.
+Fresh installations include editable routes for YouTube, Telegram, ChatGPT,
+Claude and Cursor. App updates do not overwrite rules you have already saved.
 
 Settings survive app replacement and reinstalling. Version 1.0 settings are
 migrated once from the canonical ~/VPN folder, without scanning backups.

@@ -23,7 +23,12 @@ import Foundation
         try Data("https://example.com/private-token\n".utf8).write(to: service.appendingPathComponent("private/subscription-url.txt"))
         try Data("{\"domains\":[\"example.com\"],\"applications\":[\"Example\"]}".utf8).write(to: legacy.appendingPathComponent("routing-rules.json"))
         let hashFile = root.appendingPathComponent("runtime-hash")
-        let store = StateStore(directory: root.appendingPathComponent("settings"), legacyDirectory: legacy, runtimeHashFile: hashFile)
+        let defaultsFile = root.appendingPathComponent("default-rules.json")
+        let defaultRules = """
+        {"domains":["youtube.com","cursor.com"],"applications":["Cursor"],"processPathRegexes":["^.*/Cursor\\\\.app/Contents/.*"],"mode":"selective"}
+        """
+        try Data(defaultRules.utf8).write(to: defaultsFile)
+        let store = StateStore(directory: root.appendingPathComponent("settings"), legacyDirectory: legacy, runtimeHashFile: hashFile, defaultRulesFile: defaultsFile)
         var state = try store.load()
         precondition(state.migratedFromV1 && state.selectedNodeID == nodes[1].id)
         precondition(state.rules.domains == ["example.com"] && state.rules.processPathRegexes.isEmpty)
@@ -45,9 +50,20 @@ import Foundation
         precondition(unchanged.rules.domains == next.rules.domains, "Rejected transaction must not replace settings")
         var invalid = RoutingRules(); invalid.domains = ["https://example.com"]
         do { try invalid.validate(); fatalError("URL accepted as domain") } catch {}
-        try store.save(SavedState())
+        try store.save(try store.freshState())
         let reset = try store.load()
         precondition(reset.subscription.isEmpty, "Reset must not remigrate legacy settings")
-        print("configuration: migration, persistence, transaction recovery, reset, node identity and decoding passed")
+        precondition(reset.rules.domains == ["youtube.com", "cursor.com"] && reset.rules.applications == ["Cursor"], "Reset must restore bundled defaults")
+        precondition(reset.rules.processPathRegexes == ["^.*/Cursor\\.app/Contents/.*"], "Default helper path must be preserved")
+
+        let freshStore = StateStore(directory: root.appendingPathComponent("fresh-settings"), legacyDirectory: root.appendingPathComponent("missing-legacy"), runtimeHashFile: hashFile, defaultRulesFile: defaultsFile)
+        let fresh = try freshStore.load()
+        precondition(fresh.rules == reset.rules, "Fresh installs must load bundled routing defaults")
+        var customized = fresh
+        customized.rules.domains = ["custom.example.com"]
+        try freshStore.save(customized)
+        let preserved = try freshStore.load()
+        precondition(preserved.rules.domains == ["custom.example.com"], "Updates must not replace saved user rules")
+        print("configuration: defaults, migration, persistence, transaction recovery, reset, node identity and decoding passed")
     }
 }
