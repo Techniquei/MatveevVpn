@@ -23,7 +23,7 @@ vpn_outbound = {
   "uuid" => URI.decode_www_form_component(uri.user.to_s),
   "domain_resolver" => {
     "server" => "dns-direct",
-    "strategy" => "prefer_ipv4"
+    "strategy" => "ipv4_only"
   }
 }
 vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
@@ -74,10 +74,12 @@ end.uniq
 paths = Array(rules_data["processPathRegexes"]).map(&:strip).reject(&:empty?).uniq
 paths.each { |pattern| Regexp.new(pattern) }
 full = rules_data.fetch("mode", "selective") == "all"
-diagnostic_domains = ["api4.ipify.org", "api6.ipify.org"]
+diagnostic_vpn_domains = ["api4.ipify.org"]
+diagnostic_direct_domains = ["api64.ipify.org"]
 
 dns_rules = [
-  { "domain" => diagnostic_domains, "action" => "route", "server" => "dns-vpn" }
+  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "ipv4_only" },
+  { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "ipv4_only" }
 ]
 unless paths.empty?
   dns_rules << { "process_path_regex" => paths, "action" => "route", "server" => "dns-vpn" }
@@ -98,7 +100,8 @@ route_rules.concat([
   { "protocol" => "dns", "action" => "hijack-dns" }
 ])
 route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
-route_rules << { "domain" => diagnostic_domains, "action" => "route", "outbound" => "vpn" }
+route_rules << { "domain" => diagnostic_direct_domains, "action" => "route", "outbound" => "direct" }
+route_rules << { "domain" => diagnostic_vpn_domains, "action" => "route", "outbound" => "vpn" }
 route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" } unless routed_apps.empty?
 route_rules << { "process_path_regex" => paths, "action" => "route", "outbound" => "vpn" } unless paths.empty?
 unless routed_domains.empty?
@@ -123,7 +126,7 @@ config = {
         "detour" => "vpn"
       }
     ],
-    "strategy" => "prefer_ipv4",
+    "strategy" => "ipv4_only",
     "rules" => dns_rules,
     "final" => full ? "dns-vpn" : "dns-direct",
     "reverse_mapping" => true
@@ -132,11 +135,16 @@ config = {
     {
       "type" => "tun",
       "tag" => "tun-in",
-      "address" => ["198.18.0.1/30", "fdfe:dcba:9876::1/126"],
+      "address" => ["198.18.0.1/30"],
       "auto_route" => true,
       "strict_route" => true,
       "stack" => "mixed",
-      "mtu" => 1500
+      "mtu" => 1500,
+      "route_exclude_address" => [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16"
+      ]
     }
   ],
   "outbounds" => [
@@ -144,7 +152,7 @@ config = {
     {
       "type" => "direct",
       "tag" => "direct",
-      "domain_resolver" => { "server" => "dns-direct", "strategy" => "prefer_ipv4" }
+      "domain_resolver" => { "server" => "dns-direct", "strategy" => "ipv4_only" }
     }
   ],
   "route" => {

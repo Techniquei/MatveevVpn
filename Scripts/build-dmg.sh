@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.1.1"
-BUILD_NUMBER="111"
+VERSION="1.1.2"
+BUILD_NUMBER="112"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.13.19"
 SING_BOX_ARCHIVE_SHA256="23bf191906f2dfc9f00e9f0092f274f3426ba9377327e903ff94e636b64d0997"

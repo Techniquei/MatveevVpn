@@ -14,11 +14,14 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise 'wrong DNS final' unless value['dns']['final'] == (mode == 'all' ? 'dns-vpn' : 'dns-direct')
     raise 'VPN server must use the direct system resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-direct'
     raise 'external UDP bootstrap DNS was reintroduced' if value['dns']['servers'].any? { |r| r['tag'] == 'dns-bootstrap' }
-    raise 'IPv6 missing' unless value['inbounds'][0]['address'].any? { |a| a.include?(':') }
+    raise 'IPv6 TUN regression was reintroduced' if value['inbounds'][0]['address'].any? { |a| a.include?(':') }
+    raise 'private routes must bypass TUN' unless value['inbounds'][0]['route_exclude_address'] == ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+    raise 'DNS must suppress unsupported IPv6' unless value['dns']['strategy'] == 'ipv4_only'
     route = value['route']['rules']
     raise 'wildcard not normalized' unless route.any? { |r| r['domain_suffix'] == ['example.com'] }
-    raise 'diagnostic endpoints do not use VPN' unless route.any? { |r| r['domain'] == ['api4.ipify.org', 'api6.ipify.org'] && r['outbound'] == 'vpn' }
-    raise 'diagnostic DNS does not use VPN' unless value['dns']['rules'].any? { |r| r['domain'] == ['api4.ipify.org', 'api6.ipify.org'] && r['server'] == 'dns-vpn' }
+    raise 'VPN diagnostic endpoint does not use VPN' unless route.any? { |r| r['domain'] == ['api4.ipify.org'] && r['outbound'] == 'vpn' }
+    raise 'direct diagnostic endpoint does not bypass VPN' unless route.any? { |r| r['domain'] == ['api64.ipify.org'] && r['outbound'] == 'direct' }
+    raise 'diagnostic DNS does not use VPN' unless value['dns']['rules'].any? { |r| r['domain'] == ['api4.ipify.org'] && r['server'] == 'dns-vpn' }
     raise 'DNS intercepted after process route' unless route.index { |r| r['action'] == 'hijack-dns' } < route.index { |r| r['process_name'] == ['Example'] }
     raise 'process path missing in DNS' unless value['dns']['rules'].any? { |r| r.key?('process_path_regex') }
   end
@@ -27,4 +30,4 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise "invalid domain accepted: #{domain}" if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
   end
 end
-puts 'routing: modes, DNS ordering, IPv6, wildcards and process paths passed'
+puts 'routing: modes, DNS ordering, IPv4 compatibility, wildcards and process paths passed'

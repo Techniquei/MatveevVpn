@@ -17,7 +17,7 @@ The menu bar uses the same state and traffic monitor as the window.
 
 ## State and transactions
 
-The user state schema is version 2. App version (1.1.0), controller protocol version
+The user state schema is version 2. App version (1.1.x), controller protocol version
 (2) and schema version are independent. An app-only replacement does not require
 reinstalling the controller. The system component remains necessary for TUN.
 
@@ -41,8 +41,10 @@ Subscription URLs are never passed in process arguments or error text.
 ## Routing and diagnostics
 
 DNS interception precedes application/private destination routing. Private
-destinations route direct inside the engine, instead of bypassing DNS through a
-TUN exclusion. Full mode changes route and DNS finals and includes IPv6.
+destinations are excluded from TUN so LAN and mesh interfaces retain ownership
+of their routes. Full mode changes route and DNS finals and uses IPv4-only DNS;
+IPv6 is disabled while connected because VLESS nodes do not consistently provide
+IPv6 egress.
 The VPN server's own bootstrap lookup necessarily uses the direct resolver.
 
 Application bundle routing uses an escaped, anchored executable-path expression.

@@ -4,7 +4,7 @@ A native VLESS VPN client for Apple Silicon Macs running macOS 13 or newer.
 
 ## Version 1.1
 
-- Selective routing or All Traffic mode, including IPv4 and IPv6.
+- Selective routing or All Traffic mode over IPv4.
 - Native subscription setup, refresh and node selection.
 - Domain patterns, process names and application bundle rules including helpers.
 - Settings survive replacing or reinstalling the application.
@@ -31,8 +31,9 @@ can be installed through Sparkle.
 ## Routing
 
 **Selective** sends matching traffic through the VPN; unmatched traffic goes
-direct. **All Traffic** sends internet traffic through the VPN and keeps local
-destinations direct. Switching modes keeps the selective rules.
+direct. **All Traffic** sends IPv4 internet traffic through the VPN and keeps
+local destinations direct. Switching modes keeps the selective rules. IPv6 is
+disabled while connected because not every VLESS node provides IPv6 egress.
 
 In Routing Rules, enter one domain or process name per line.
 Both `example.com` and `*.example.com` include the base domain and all its
@@ -64,12 +65,12 @@ Connection Settings lets you change the URL, refresh nodes and apply a selected
 node. Failed changes retain the previous configuration. Node identity is based
 on connection parameters, not its position in the list.
 
-Settings & Diagnostics includes IPv4/IPv6 probes, service repair, a copyable
+Settings & Diagnostics includes direct/VPN IPv4 probes, service repair, a copyable
 report, application/domain rule explanations, and rules import/export.
 Exports do not contain the subscription or node credentials. Public IP probes
-contact api4.ipify.org and api6.ipify.org only on request or after connection
-changes and are always routed through the selected VPN node; they do not prove
-the absence of every possible leak. Node tests measure TCP reachability
+contact api64.ipify.org directly and api4.ipify.org through the selected VPN
+node only on request or after connection changes; they do not prove the absence
+of every possible leak. Node tests measure TCP reachability
 through the current connection, not authenticated VPN speed.
 
 **Revert Changes** discards unsaved routing edits. **Clear All** clears the editor

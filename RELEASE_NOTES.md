@@ -1,11 +1,16 @@
-# matveevVpn 1.1.1
+# matveevVpn 1.1.2
+
+- Restores the IPv4-only TUN design used by the stable 1.0.4 release.
+- Prevents unsupported IPv6 destinations from stalling browser connections.
+- Restores direct bypass for private IPv4 networks such as LAN and mesh VPNs.
+- Diagnostics now show Direct IPv4 and VPN IPv4 side by side.
 
 - Fixed a regression where networks that block external UDP DNS could leave the
   tunnel running while routed sites failed to open.
 - VPN node hostnames now bootstrap through the macOS system resolver, as in the
   working 1.0 configuration.
-- Diagnostics now force their dedicated IPv4/IPv6 endpoints through the VPN,
-  including in Selective mode, instead of displaying the normal direct egress.
+- Diagnostics use dedicated direct and VPN endpoints instead of presenting an
+  unmatched Selective-mode request as VPN egress.
 
 This update keeps the 1.1 settings, selected node, mode and routing rules.
 The system controller remains version 2, so no administrator password is needed
@@ -32,7 +37,7 @@ Requires Apple Silicon, macOS 13+ and an HTTPS VLESS subscription URL.
 System-component installation or repair needs administrator permission.
 Routine connection/configuration changes do not.
 
-Full mode includes IPv4/IPv6 and VPN DNS while keeping local destinations direct.
+Full mode uses IPv4 and VPN DNS while keeping local destinations direct.
 It is not a kill switch. Application rules cover executables within the selected
 bundle; external shells/runtimes need their own rules.
 

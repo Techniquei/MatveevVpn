@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2
+
+- Restored the proven IPv4-only TUN layout from 1.0.4 after real-world logs
+  showed unsupported IPv6 destinations stalling application connections.
+- DNS now returns IPv4 results only while the VPN is active.
+- Private IPv4 networks bypass TUN again, preserving LAN and mesh routes.
+- Diagnostics compare an explicitly direct IPv4 probe with an explicitly
+  VPN-routed IPv4 probe.
+
 ## 1.1.1
 
 - Restored reliable VPN-node hostname bootstrap through the macOS system

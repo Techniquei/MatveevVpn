@@ -6,7 +6,8 @@ and the DMG build pass. Installed-app network behavior still needs a real Mac ru
 - [x] Versioned, private persistent storage and one-time canonical ~/VPN migration.
 - [x] Stable node identity and transactional subscription/configuration changes.
 - [x] Native initial setup and subscription editing; no Terminal setup.
-- [x] Selective / All Traffic with IPv4, IPv6, DNS and LAN handling.
+- [x] Selective / All Traffic with IPv4, DNS and LAN handling. IPv6 was reverted
+  after real-world node compatibility failures and remains future work.
 - [x] Domain wildcards and application bundle/process-path routing.
 - [x] Automatic local status, explicit connection diagnostics, clear reset actions.
 - [x] Menu bar, launch at login, failure notifications and diagnostic export.
