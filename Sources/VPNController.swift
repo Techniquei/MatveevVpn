@@ -44,7 +44,8 @@ final class VPNController: ObservableObject {
         catch { message = "Could not load settings: \(error.localizedDescription)"; loadFailed = true }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            guard let controller = self else { return }
+            Task { @MainActor in controller.refresh() }
         }
     }
 
