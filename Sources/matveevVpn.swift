@@ -238,7 +238,7 @@ private struct RoutingRulesView: View {
                 .disabled(controller.isBusy)
             }
         }
-        .padding(22)
+        .padding(16)
         .frame(width: 760, height: 640)
         .confirmationDialog("Clear all routing rules?", isPresented: $confirmClear) {
             Button("Clear All", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
@@ -318,7 +318,7 @@ private struct NodeSelectionView: View {
                 .disabled(selectedIndex == nil || controller.isBusy || controller.availableNodes.isEmpty)
             }
         }
-        .padding(22)
+        .padding(16)
         .frame(width: 520, height: 210)
         .preferredColorScheme(.dark)
         .onAppear {
@@ -434,8 +434,7 @@ private struct MainView: View {
                         .disabled(controller.isBusy)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
         }
         .frame(width: 700)
         .preferredColorScheme(.dark)

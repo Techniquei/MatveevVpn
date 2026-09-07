@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.6"
+    static let releaseVersion = "1.1.7"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -42,6 +42,7 @@ final class VPNController: ObservableObject {
         _ = AppUpdater.shared
         do { state = try store.load() }
         catch { message = "Could not load settings: \(error.localizedDescription)"; loadFailed = true }
+        syncNotificationPreference()
         refresh()
         reconcileInstalledConfiguration()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -191,9 +192,36 @@ final class VPNController: ObservableObject {
         } catch { message = "Could not change launch at login: \(error.localizedDescription)" }
     }
     func setNotifications(_ enabled: Bool) {
-        if !enabled { notificationsEnabled = false; UserDefaults.standard.set(false, forKey: "failureNotifications"); return }
-        Task {
-            let allowed = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+        notificationsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "failureNotifications")
+        guard enabled else { return }
+
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let status = await center.notificationSettings().authorizationStatus
+            let allowed: Bool
+            if status == .authorized || status == .provisional {
+                allowed = true
+            } else if status == .notDetermined {
+                allowed = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            } else {
+                allowed = false
+            }
+            guard UserDefaults.standard.bool(forKey: "failureNotifications") else { return }
+            notificationsEnabled = allowed
+            UserDefaults.standard.set(allowed, forKey: "failureNotifications")
+            if !allowed {
+                message = "Notifications are disabled for matveevVpn in System Settings."
+            }
+        }
+    }
+
+    private func syncNotificationPreference() {
+        guard notificationsEnabled else { return }
+        Task { @MainActor in
+            let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+            guard UserDefaults.standard.bool(forKey: "failureNotifications") else { return }
+            let allowed = status == .authorized || status == .provisional || status == .notDetermined
             notificationsEnabled = allowed
             UserDefaults.standard.set(allowed, forKey: "failureNotifications")
         }

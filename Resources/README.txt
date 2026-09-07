@@ -1,4 +1,4 @@
-matveevVpn 1.1.6 for macOS (Apple Silicon)
+matveevVpn 1.1.7 for macOS (Apple Silicon)
 ========================================
 
 Move matveevVpn to Applications, open it, and choose Install and set up.

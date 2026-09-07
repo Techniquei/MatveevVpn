@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.7
+
+- Removes the unused vertical margins around the main interface and reduces the
+  outer margins in the main window and sheets.
+- Keeps the notifications toggle selected while macOS permission is requested.
+- Synchronizes the saved notification preference with the current system
+  permission and explains when notifications are disabled in System Settings.
+
 ## 1.1.6
 
 - Fixes a DNS recursion introduced in 1.1.5: the direct/bootstrap resolver now

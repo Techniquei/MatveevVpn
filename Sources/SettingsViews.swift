@@ -28,7 +28,7 @@ struct ConnectionView: View {
                     .disabled(controller.candidateID == nil)
             }
         }
-        .padding(24).frame(width: 560)
+        .padding(18).frame(width: 560)
         .disabled(controller.isBusy)
         .interactiveDismissDisabled(controller.isBusy)
     }
@@ -80,7 +80,7 @@ struct SettingsView: View {
             }
             Button("Reset All Settings…", role: .destructive) { confirmReset = true }
         }
-        .padding(24).frame(width: 620).disabled(controller.isBusy)
+        .padding(18).frame(width: 620).disabled(controller.isBusy)
         .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
             Button("Reset All Settings", role: .destructive) { controller.resetSettings() }
         } message: { Text("This disconnects the VPN and removes your saved subscription, node and rules.") }
