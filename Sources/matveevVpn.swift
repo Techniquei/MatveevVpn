@@ -366,7 +366,7 @@ private struct MainView: View {
                         Image(systemName: "arrow.triangle.2.circlepath")
                         Text("A system component update is required")
                         Spacer()
-                        Button("Update") { controller.openSetup() }
+                        Button("Update") { controller.repair() }
                     }
                     .padding(11)
                     .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 13))
@@ -410,7 +410,7 @@ private struct MainView: View {
                     }
                     Spacer()
                     Button("Routing rules…") {
-                        if controller.needsUpgrade { controller.openSetup() }
+                        if controller.needsUpgrade { controller.repair() }
                         else { showRoutingRules = true }
                     }
                         .buttonStyle(.bordered)

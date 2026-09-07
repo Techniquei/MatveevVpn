@@ -3,11 +3,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.1.2"
-BUILD_NUMBER="112"
+VERSION="1.1.3"
+BUILD_NUMBER="113"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
-SING_BOX_VERSION="1.13.19"
-SING_BOX_ARCHIVE_SHA256="23bf191906f2dfc9f00e9f0092f274f3426ba9377327e903ff94e636b64d0997"
+SING_BOX_VERSION="1.14.0"
+SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
 DIST_DIR="${1:-$ROOT_DIR/dist}"
 WORK_DIR="$(/usr/bin/mktemp -d /private/tmp/matveev-vpn-build.XXXXXX)"
 APP="$WORK_DIR/matveevVpn.app"

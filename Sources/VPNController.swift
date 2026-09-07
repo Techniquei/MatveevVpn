@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.2"
+    static let releaseVersion = "1.1.3"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -250,6 +250,7 @@ final class VPNController: ObservableObject {
             let stage = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: stage) }
             let config = try await self.service.generate(self.state, at: stage)
             try await self.service.install(config, desiredOn: self.state.desiredOn)
+            self.checkConnection()
         }
     }
     func exportRules() {

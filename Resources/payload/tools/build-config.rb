@@ -23,7 +23,7 @@ vpn_outbound = {
   "uuid" => URI.decode_www_form_component(uri.user.to_s),
   "domain_resolver" => {
     "server" => "dns-direct",
-    "strategy" => "ipv4_only"
+    "strategy" => "prefer_ipv4"
   }
 }
 vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
@@ -78,8 +78,8 @@ diagnostic_vpn_domains = ["api4.ipify.org"]
 diagnostic_direct_domains = ["api64.ipify.org"]
 
 dns_rules = [
-  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "ipv4_only" },
-  { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "ipv4_only" }
+  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" },
+  { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "prefer_ipv4" }
 ]
 unless paths.empty?
   dns_rules << { "process_path_regex" => paths, "action" => "route", "server" => "dns-vpn" }
@@ -99,8 +99,15 @@ route_rules.concat([
   { "action" => "sniff", "sniffer" => ["http", "tls", "quic", "dns"], "timeout" => "500ms" },
   { "protocol" => "dns", "action" => "hijack-dns" }
 ])
-route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
 route_rules << { "domain" => diagnostic_direct_domains, "action" => "route", "outbound" => "direct" }
+if full
+  route_rules << { "domain_regex" => [".+"], "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" }
+else
+  route_rules << { "domain_suffix" => routed_domains, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless routed_domains.empty?
+  route_rules << { "process_name" => routed_apps, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless routed_apps.empty?
+  route_rules << { "process_path_regex" => paths, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless paths.empty?
+end
+route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
 route_rules << { "domain" => diagnostic_vpn_domains, "action" => "route", "outbound" => "vpn" }
 route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" } unless routed_apps.empty?
 route_rules << { "process_path_regex" => paths, "action" => "route", "outbound" => "vpn" } unless paths.empty?
@@ -126,7 +133,7 @@ config = {
         "detour" => "vpn"
       }
     ],
-    "strategy" => "ipv4_only",
+    "strategy" => "prefer_ipv4",
     "rules" => dns_rules,
     "final" => full ? "dns-vpn" : "dns-direct",
     "reverse_mapping" => true
@@ -138,6 +145,7 @@ config = {
       "address" => ["198.18.0.1/30"],
       "auto_route" => true,
       "strict_route" => true,
+      "dns_mode" => "hijack",
       "stack" => "mixed",
       "mtu" => 1500,
       "route_exclude_address" => [
@@ -152,7 +160,7 @@ config = {
     {
       "type" => "direct",
       "tag" => "direct",
-      "domain_resolver" => { "server" => "dns-direct", "strategy" => "ipv4_only" }
+      "domain_resolver" => { "server" => "dns-direct", "strategy" => "prefer_ipv4" }
     }
   ],
   "route" => {

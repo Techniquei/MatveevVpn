@@ -47,10 +47,14 @@ bundle, such as a system shell or an external runtime, need domain rules or thei
 own explicit rules. Domain routing depends on DNS mapping or a visible protocol
 hostname; encrypted hostnames and existing connections can limit domain matching.
 
-DNS port 53 is intercepted before private-network and application rules.
+The TUN installs its native macOS DNS endpoint and intercepts DNS before
+private-network and application rules.
 Full mode uses VPN DNS; resolving the VPN server itself uses the macOS system
 resolver over the direct connection. Full mode is not a kill switch: turning the VPN off
 restores direct connectivity.
+After protocol sniffing, destinations selected for VPN routing are resolved again
+through VPN DNS. This prevents a locally filtered DNS answer from following the
+connection into the tunnel.
 
 ## Settings and diagnostics
 
@@ -87,7 +91,7 @@ Install Xcode command-line tools, then run:
 ./Scripts/build-dmg.sh
 ```
 
-The build downloads pinned, SHA-256-verified sing-box 1.13.19 and Sparkle 2.9.6.
+The build downloads pinned, SHA-256-verified sing-box 1.14.0 and Sparkle 2.9.6.
 No Xcode project is required. The output is in `dist/`.
 `MATVEEV_SING_BOX_BINARY` can point to an existing arm64 runtime for development.
 

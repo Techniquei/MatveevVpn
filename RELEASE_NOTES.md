@@ -1,4 +1,15 @@
-# matveevVpn 1.1.2
+# matveevVpn 1.1.3
+
+- Fixes blocked sites failing while ordinary sites and the VPN IP check work.
+- Updates the embedded sing-box to 1.14.0 and enables native macOS TUN DNS
+  hijacking, preventing router DNS from returning NXDOMAIN for blocked sites.
+- After detecting a hostname, matveevVpn now resolves VPN-routed destinations
+  again through VPN DNS instead of trusting a locally filtered DNS answer.
+- Covers Selective domain/application/path rules and All Traffic mode.
+
+This release updates the system controller from version 2 to 3 and therefore
+requires one administrator confirmation from the in-app Update button. It does
+not ask for the subscription again, and routine controls remain passwordless.
 
 - Restores the IPv4-only TUN design used by the stable 1.0.4 release.
 - Prevents unsupported IPv6 destinations from stalling browser connections.
@@ -13,9 +24,6 @@
   unmatched Selective-mode request as VPN egress.
 
 This update keeps the 1.1 settings, selected node, mode and routing rules.
-The system controller remains version 2, so no administrator password is needed
-to apply the corrected configuration. The app compares the installed config and
-applies the fix automatically on its first launch.
 
 ## Included in 1.1
 

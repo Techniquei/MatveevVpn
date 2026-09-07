@@ -49,7 +49,7 @@ trap cleanup EXIT
 /usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/runtime-status"
-/usr/bin/printf '2\n' > "$BASE/control/version"
+/usr/bin/printf '3\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /bin/launchctl enable system/com.matveev.vpn
 /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist

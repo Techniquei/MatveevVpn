@@ -1,4 +1,4 @@
-matveevVpn 1.1.2 for macOS (Apple Silicon)
+matveevVpn 1.1.3 for macOS (Apple Silicon)
 ========================================
 
 Move matveevVpn to Applications, open it, and choose Install and set up.
@@ -20,5 +20,5 @@ Change your subscription and node in Connection Settings. Uninstall in the app
 removes the system service and moves the app to Trash, preserving user settings.
 Reset All Settings explicitly clears saved settings.
 
-Includes sing-box 1.13.19 and Sparkle 2.9.6.
+Includes sing-box 1.14.0 and Sparkle 2.9.6.
 This development build is ad-hoc signed and is not notarized by Apple.

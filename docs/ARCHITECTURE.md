@@ -18,7 +18,7 @@ The menu bar uses the same state and traffic monitor as the window.
 ## State and transactions
 
 The user state schema is version 2. App version (1.1.x), controller protocol version
-(2) and schema version are independent. An app-only replacement does not require
+(3) and schema version are independent. An app-only replacement does not require
 reinstalling the controller. The system component remains necessary for TUN.
 
 Subscription data, node ID, routing mode/rules and desired connection state are
@@ -42,9 +42,14 @@ Subscription URLs are never passed in process arguments or error text.
 
 DNS interception precedes application/private destination routing. Private
 destinations are excluded from TUN so LAN and mesh interfaces retain ownership
-of their routes. Full mode changes route and DNS finals and uses IPv4-only DNS;
+of their routes. Full mode changes route and DNS finals and prefers IPv4 DNS;
 IPv6 is disabled while connected because VLESS nodes do not consistently provide
 IPv6 egress.
+sing-box 1.14 native TUN DNS hijacking installs the derived tunnel DNS endpoint
+on macOS, preventing the physical router resolver from bypassing DNS rules.
+After sniffing, hostnames selected for VPN routing are resolved through `dns-vpn`
+before the terminal outbound rule. This replaces locally filtered destination
+addresses while preserving direct bootstrap resolution for the VPN server itself.
 The VPN server's own bootstrap lookup necessarily uses the direct resolver.
 
 Application bundle routing uses an escaped, anchored executable-path expression.

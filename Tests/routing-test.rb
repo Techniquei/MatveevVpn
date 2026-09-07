@@ -16,9 +16,13 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise 'external UDP bootstrap DNS was reintroduced' if value['dns']['servers'].any? { |r| r['tag'] == 'dns-bootstrap' }
     raise 'IPv6 TUN regression was reintroduced' if value['inbounds'][0]['address'].any? { |a| a.include?(':') }
     raise 'private routes must bypass TUN' unless value['inbounds'][0]['route_exclude_address'] == ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
-    raise 'DNS must suppress unsupported IPv6' unless value['dns']['strategy'] == 'ipv4_only'
+    raise 'DNS should prefer IPv4 without returning NXDOMAIN for IPv6 queries' unless value['dns']['strategy'] == 'prefer_ipv4'
+    raise 'native TUN DNS hijacking is missing' unless value['inbounds'][0]['dns_mode'] == 'hijack'
     route = value['route']['rules']
     raise 'wildcard not normalized' unless route.any? { |r| r['domain_suffix'] == ['example.com'] }
+    resolver = mode == 'all' ? route.find { |r| r['domain_regex'] == ['.+'] && r['action'] == 'resolve' } : route.find { |r| r['domain_suffix'] == ['example.com'] && r['action'] == 'resolve' }
+    raise 'routed destinations are not re-resolved through VPN DNS' unless resolver && resolver['server'] == 'dns-vpn' && resolver['strategy'] == 'prefer_ipv4'
+    raise 'destination is routed before secure re-resolution' unless route.index(resolver) < route.index { |r| r['domain_suffix'] == ['example.com'] && r['outbound'] == 'vpn' }
     raise 'VPN diagnostic endpoint does not use VPN' unless route.any? { |r| r['domain'] == ['api4.ipify.org'] && r['outbound'] == 'vpn' }
     raise 'direct diagnostic endpoint does not bypass VPN' unless route.any? { |r| r['domain'] == ['api64.ipify.org'] && r['outbound'] == 'direct' }
     raise 'diagnostic DNS does not use VPN' unless value['dns']['rules'].any? { |r| r['domain'] == ['api4.ipify.org'] && r['server'] == 'dns-vpn' }
@@ -30,4 +34,4 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise "invalid domain accepted: #{domain}" if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
   end
 end
-puts 'routing: modes, DNS ordering, IPv4 compatibility, wildcards and process paths passed'
+puts 'routing: modes, secure re-resolution, IPv4 compatibility, wildcards and process paths passed'

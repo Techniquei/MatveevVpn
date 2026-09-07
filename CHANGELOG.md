@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.3
+
+- Updated sing-box to 1.14.0 and enabled native TUN DNS hijacking on macOS so
+  the active resolver no longer remains the local router.
+- Restored `prefer_ipv4`; using `ipv4_only` for browser DNS queries could surface
+  false NXDOMAIN results.
+- Re-resolves VPN-routed destinations through VPN DNS after protocol sniffing,
+  preventing locally filtered or poisoned DNS answers from being sent through
+  an otherwise healthy tunnel.
+- Applies secure destination resolution to domain, application and path rules,
+  and to every sniffed hostname in All Traffic mode.
+
 ## 1.1.2
 
 - Restored the proven IPv4-only TUN layout from 1.0.4 after real-world logs
