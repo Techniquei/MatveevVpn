@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.5
+
+- Works around the macOS sing-box CLI DNS limitation by temporarily assigning
+  the tunnel resolver to the active network service while the VPN is on.
+- Saves and restores the user's automatic or custom DNS servers on turn-off,
+  restart, network changes, service repair and uninstall.
+- Keeps the saved DNS state across controller crashes so recovery cannot replace
+  the user's original resolver settings with the temporary tunnel address.
+- Selects the underlying physical network service even when another macOS VPN
+  owns the default route, and watches that interface for network changes.
+
 ## 1.1.4
 
 - Automatically terminates the old app process after Sparkle has prepared an

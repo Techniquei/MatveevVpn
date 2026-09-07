@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.4"
+    static let releaseVersion = "1.1.5"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -232,10 +232,11 @@ final class VPNController: ObservableObject {
         connectionCheck = Task {
             async let directIPv4 = Self.publicIP(endpoint: "https://api64.ipify.org")
             async let vpnIPv4 = Self.publicIP(endpoint: "https://api4.ipify.org")
-            let (direct, vpn) = await (directIPv4, vpnIPv4)
+            async let resolver = Self.systemDNS()
+            let (direct, vpn, dns) = await (directIPv4, vpnIPv4, resolver)
             guard !Task.isCancelled else { return }
             let path = direct != "unavailable" && vpn != "unavailable" ? (direct == vpn ? "same" : "different") : "unavailable"
-            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nThe two IPv4 probes are explicitly routed through different outbounds. A working VPN should normally report different addresses."
+            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nSystem DNS: \(dns)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nWhile connected with controller 4, System DNS should include 198.18.0.2. The two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
         }
     }
     private nonisolated static func publicIP(endpoint: String) async -> String {
@@ -243,6 +244,18 @@ final class VPNController: ObservableObject {
         let value = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
         let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF:.")
         return result.status == 0 && !value.isEmpty && value.count < 64 && value.unicodeScalars.allSatisfy { allowed.contains($0) } ? value : "unavailable"
+    }
+    private nonisolated static func systemDNS() async -> String {
+        let result = await Command.run("/usr/sbin/scutil", ["--dns"])
+        guard result.status == 0 else { return "unavailable" }
+        var servers: [String] = []
+        for line in result.output.split(separator: "\n") where line.contains("nameserver[") {
+            guard let separator = line.firstIndex(of: ":") else { continue }
+            let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+            if !value.isEmpty && !servers.contains(value) { servers.append(value) }
+            if servers.count == 4 { break }
+        }
+        return servers.isEmpty ? "unavailable" : servers.joined(separator: ", ")
     }
     func copyDiagnostics() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(diagnostics, forType: .string) }
     func repair() {

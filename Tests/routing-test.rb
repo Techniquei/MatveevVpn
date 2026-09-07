@@ -18,6 +18,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise 'private routes must bypass TUN' unless value['inbounds'][0]['route_exclude_address'] == ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
     raise 'DNS should prefer IPv4 without returning NXDOMAIN for IPv6 queries' unless value['dns']['strategy'] == 'prefer_ipv4'
     raise 'native TUN DNS hijacking is missing' unless value['inbounds'][0]['dns_mode'] == 'hijack'
+    raise 'system DNS and TUN resolver addresses differ' unless value['inbounds'][0]['dns_address'] == ['198.18.0.2']
     route = value['route']['rules']
     raise 'wildcard not normalized' unless route.any? { |r| r['domain_suffix'] == ['example.com'] }
     resolver = mode == 'all' ? route.find { |r| r['domain_regex'] == ['.+'] && r['action'] == 'resolve' } : route.find { |r| r['domain_suffix'] == ['example.com'] && r['action'] == 'resolve' }

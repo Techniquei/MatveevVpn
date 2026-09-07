@@ -44,12 +44,13 @@ trap cleanup EXIT
 /usr/bin/install -d -o "$OWNER_UID" -g "$OWNER_GID" -m 700 "$BASE/control"
 /usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/sing-box" "$BASE/bin/sing-box"
 /usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/controller.sh" "$BASE/bin/controller.sh"
+/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/dns-manager.sh" "$BASE/bin/dns-manager.sh"
 /usr/bin/install -o root -g wheel -m 600 "$CONFIG" "$BASE/config.json"
 /usr/bin/install -o root -g wheel -m 644 "$PAYLOAD/com.matveev.vpn.plist" /Library/LaunchDaemons/com.matveev.vpn.plist
 /usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/runtime-status"
-/usr/bin/printf '3\n' > "$BASE/control/version"
+/usr/bin/printf '4\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /bin/launchctl enable system/com.matveev.vpn
 /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist

@@ -146,6 +146,7 @@ config = {
       "auto_route" => true,
       "strict_route" => true,
       "dns_mode" => "hijack",
+      "dns_address" => ["198.18.0.2"],
       "stack" => "mixed",
       "mtu" => 1500,
       "route_exclude_address" => [

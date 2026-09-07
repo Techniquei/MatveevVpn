@@ -7,6 +7,7 @@ BASE_DIR="${MATVEEV_BASE_DIR:-/Library/Application Support/matveevVpn}"
 CONTROL_DIR="$BASE_DIR/control"
 RUN_DIR="$BASE_DIR/run"
 SING_BOX="$BASE_DIR/bin/sing-box"
+DNS_MANAGER="$BASE_DIR/bin/dns-manager.sh"
 CONFIG_FILE="$BASE_DIR/config.json"
 PENDING_CONFIG="$CONTROL_DIR/pending-config.json"
 COMMAND_FILE="$CONTROL_DIR/command"
@@ -103,6 +104,12 @@ start_child() {
   for ready_attempt in {1..25}; do
     child_running || break
     if tunnel_ready; then
+      if [[ -x "$DNS_MANAGER" ]] && ! "$DNS_MANAGER" apply >> "$LOG_FILE" 2>> "$ERROR_FILE"; then
+        log_event "could not activate tunnel DNS"
+        stop_child
+        write_status "error"
+        return 1
+      fi
       write_status "running"
       return 0
     fi
@@ -138,6 +145,9 @@ cleanup_tunnel_state() {
 stop_child() {
   local owned_interface
   owned_interface="$(tunnel_interface)"
+  if [[ -x "$DNS_MANAGER" ]]; then
+    "$DNS_MANAGER" restore >> "$LOG_FILE" 2>> "$ERROR_FILE" || log_event "could not restore system DNS"
+  fi
   if child_running; then
     /bin/kill -TERM "$CHILD_PID" 2>/dev/null || true
     local attempt
@@ -206,12 +216,18 @@ reload_config() {
 }
 
 network_signature() {
-  local route_info interface gateway
-  route_info="$(/sbin/route -n get default 2>/dev/null || true)"
-  interface="$(/usr/bin/awk '/interface:/{print $2; exit}' <<< "$route_info")"
-  gateway="$(/usr/bin/awk '/gateway:/{print $2; exit}' <<< "$route_info")"
+  local route_info interface gateway address
+  interface="$(/usr/sbin/scutil --nwi 2>/dev/null | /usr/bin/awk '$2 == ":" && $3 == "flags" && $1 !~ /^utun/ { print $1; exit }')"
   if [[ -n "$interface" ]]; then
-    /usr/bin/printf '%s|%s\n' "$interface" "$gateway"
+    route_info="$(/sbin/route -n get -ifscope "$interface" default 2>/dev/null || true)"
+  else
+    route_info="$(/sbin/route -n get default 2>/dev/null || true)"
+    interface="$(/usr/bin/awk '/interface:/{print $2; exit}' <<< "$route_info")"
+  fi
+  gateway="$(/usr/bin/awk '/gateway:/{print $2; exit}' <<< "$route_info")"
+  address="$(/usr/sbin/ipconfig getifaddr "$interface" 2>/dev/null || true)"
+  if [[ -n "$interface" ]]; then
+    /usr/bin/printf '%s|%s|%s\n' "$interface" "$gateway" "$address"
   else
     /usr/bin/printf 'offline\n'
   fi
@@ -319,6 +335,7 @@ publish_config_hash
 if [[ "$(desired_state)" == "on" ]]; then
   start_child || true
 else
+  if [[ -x "$DNS_MANAGER" ]]; then "$DNS_MANAGER" restore >> "$LOG_FILE" 2>> "$ERROR_FILE" || true; fi
   write_status "stopped"
 fi
 LAST_NETWORK_SIGNATURE="$(network_signature)"

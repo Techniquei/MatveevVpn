@@ -5,16 +5,26 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME="$(/usr/bin/mktemp -d /private/tmp/matveev-controller-test.XXXXXX)"
 CONTROL="$RUNTIME/control"
+CURRENT_DNS="$RUNTIME/current-dns"
+DNS_CALL_LOG="$RUNTIME/dns-calls"
 
 /bin/mkdir -p "$RUNTIME/bin" "$RUNTIME/run" "$CONTROL"
 /bin/cp "$TEST_DIR/fake-sing-box" "$RUNTIME/bin/sing-box"
+/bin/cp "$TEST_DIR/fake-networksetup" "$RUNTIME/bin/networksetup"
+/bin/cp "$TEST_DIR/../Resources/payload/dns-manager.sh" "$RUNTIME/bin/dns-manager.sh"
 /bin/cp "$TEST_DIR/config.json" "$RUNTIME/config.json"
-/bin/chmod 755 "$RUNTIME/bin/sing-box"
+/bin/chmod 755 "$RUNTIME/bin/sing-box" "$RUNTIME/bin/networksetup" "$RUNTIME/bin/dns-manager.sh"
 /usr/bin/printf 'on\n' > "$RUNTIME/run/desired-state"
+/usr/bin/printf '9.9.9.9\n' > "$CURRENT_DNS"
+: > "$DNS_CALL_LOG"
 
 MATVEEV_BASE_DIR="$RUNTIME" \
 MATVEEV_LOG_FILE="$RUNTIME/vpn.log" \
 MATVEEV_ERROR_FILE="$RUNTIME/vpn.error.log" \
+MATVEEV_NETWORKSETUP="$RUNTIME/bin/networksetup" \
+MATVEEV_DEFAULT_INTERFACE="test0" \
+MATVEEV_FAKE_DNS="$CURRENT_DNS" \
+MATVEEV_FAKE_LOG="$DNS_CALL_LOG" \
   "$TEST_DIR/../Resources/payload/controller.sh" &
 CONTROLLER_PID=$!
 
@@ -55,10 +65,13 @@ send_action_expect() {
 }
 
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action off
 wait_for_file_value "$CONTROL/runtime-status" "stopped"
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
 send_action on
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action restart
 wait_for_file_value "$CONTROL/runtime-status" "running"
 /bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"

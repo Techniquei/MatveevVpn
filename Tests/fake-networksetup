@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -euo pipefail
+
+case "$1" in
+  -listnetworkserviceorder)
+    printf 'An asterisk denotes that a network service is disabled.\n(1) Test Network\n(Hardware Port: Test, Device: test0)\n'
+    ;;
+  -listallnetworkservices)
+    printf 'An asterisk denotes that a network service is disabled.\nTest Network\n'
+    ;;
+  -getdnsservers)
+    if [[ -s "$MATVEEV_FAKE_DNS" ]]; then
+      /bin/cat "$MATVEEV_FAKE_DNS"
+    else
+      echo 'There are no DNS Servers set'
+    fi
+    ;;
+  -setdnsservers)
+    service="$2"
+    shift 2
+    printf '%s|%s\n' "$service" "$*" >> "$MATVEEV_FAKE_LOG"
+    if [[ "${1:-}" == Empty ]]; then
+      : > "$MATVEEV_FAKE_DNS"
+    else
+      printf '%s\n' "$@" > "$MATVEEV_FAKE_DNS"
+    fi
+    ;;
+  *) exit 2 ;;
+esac

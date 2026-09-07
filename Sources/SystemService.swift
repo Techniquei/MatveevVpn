@@ -26,7 +26,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "3"
+    static let version = "4"
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { Self.base.appendingPathComponent("control") }
