@@ -22,7 +22,7 @@ vpn_outbound = {
   "server_port" => uri.port,
   "uuid" => URI.decode_www_form_component(uri.user.to_s),
   "domain_resolver" => {
-    "server" => "dns-direct",
+    "server" => "dns-bootstrap",
     "strategy" => "prefer_ipv4"
   }
 }
@@ -120,8 +120,17 @@ config = {
   "dns" => {
     "servers" => [
       {
-        "type" => "local",
+        "type" => "dhcp",
         "tag" => "dns-direct",
+      },
+      {
+        "type" => "https",
+        "tag" => "dns-bootstrap",
+        "server" => "8.8.8.8",
+        "server_port" => 443,
+        "path" => "/dns-query",
+        "tls" => { "enabled" => true, "server_name" => "dns.google" },
+        "detour" => "direct"
       },
       {
         "type" => "https",

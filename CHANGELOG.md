@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.6
+
+- Fixes a DNS recursion introduced in 1.1.5: the direct/bootstrap resolver now
+  reads DNS servers from DHCP instead of calling the overridden macOS resolver.
+- Keeps VPN-node hostname resolution independent from the tunnel DNS, restoring
+  the bootstrap order used by the working 1.0.4 release.
+- Uses a numeric direct DNS-over-HTTPS bootstrap for the VPN node, avoiding both
+  blocked UDP resolvers and dependency on the active macOS resolver.
+- Adds an explicit tunnel DNS reachability result to Connection Diagnostics.
+
 ## 1.1.5
 
 - Works around the macOS sing-box CLI DNS limitation by temporarily assigning

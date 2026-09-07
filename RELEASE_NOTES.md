@@ -1,17 +1,19 @@
-# matveevVpn 1.1.5
+# matveevVpn 1.1.6
 
-- Fixes YouTube, Instagram and other blocked domains returning NXDOMAIN while
-  the tunnel itself and VPN IP check are working.
-- While the VPN is on, macOS now uses the resolver inside the tunnel instead of
-  continuing to query the router's DNS server.
-- The previous automatic or custom DNS configuration is restored when the VPN
-  is turned off, restarted, repaired, moved to another network or uninstalled.
+- Fixes the DNS recursion introduced in 1.1.5 that could make every routed site,
+  including ChatGPT, unavailable.
+- The VPN node is now resolved through an independent direct DNS-over-HTTPS
+  bootstrap with a numeric endpoint. It neither calls the overridden macOS
+  resolver nor relies on UDP DNS remaining reachable after TUN starts.
+- Ordinary direct domains use the physical network's DHCP DNS, while routed
+  domains use encrypted DNS through the selected VPN node.
+- Routed domains continue to use encrypted DNS through the selected VPN node.
+- Connection Diagnostics now checks the tunnel DNS endpoint directly.
 - Includes the reliable app shutdown during Sparkle updates and the simplified
   menu bar quick-access menu from 1.1.4.
 
-This release updates the system controller to version 4, so one administrator
-confirmation from the in-app Update button is required. Settings, subscription,
-selected node, mode and routing rules are preserved.
+No system-component reinstall is required when updating from 1.1.5. Settings,
+subscription, selected node, mode and routing rules are preserved.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

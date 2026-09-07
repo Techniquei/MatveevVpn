@@ -12,8 +12,13 @@ Dir.mktmpdir('matveev-routing') do |dir|
     value = JSON.parse(File.read(config))
     raise 'wrong final' unless value['route']['final'] == (mode == 'all' ? 'vpn' : 'direct')
     raise 'wrong DNS final' unless value['dns']['final'] == (mode == 'all' ? 'dns-vpn' : 'dns-direct')
-    raise 'VPN server must use the direct system resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-direct'
-    raise 'external UDP bootstrap DNS was reintroduced' if value['dns']['servers'].any? { |r| r['tag'] == 'dns-bootstrap' }
+    direct_dns = value['dns']['servers'].find { |server| server['tag'] == 'dns-direct' }
+    raise 'direct DNS must read DHCP without using the overridden system resolver' unless direct_dns && direct_dns['type'] == 'dhcp'
+    raise 'recursive local DNS bootstrap was reintroduced' if value['dns']['servers'].any? { |server| server['type'] == 'local' }
+    raise 'VPN server must use an independent bootstrap resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-bootstrap'
+    bootstrap = value['dns']['servers'].find { |server| server['tag'] == 'dns-bootstrap' }
+    raise 'VPN bootstrap must use direct HTTPS with a numeric address' unless bootstrap && bootstrap['type'] == 'https' && bootstrap['server'] == '8.8.8.8' && bootstrap['server_port'] == 443 && bootstrap['detour'] == 'direct'
+    raise 'external UDP bootstrap DNS was reintroduced' if value['dns']['servers'].any? { |server| server['tag'] == 'dns-bootstrap' && server['type'] == 'udp' }
     raise 'IPv6 TUN regression was reintroduced' if value['inbounds'][0]['address'].any? { |a| a.include?(':') }
     raise 'private routes must bypass TUN' unless value['inbounds'][0]['route_exclude_address'] == ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
     raise 'DNS should prefer IPv4 without returning NXDOMAIN for IPv6 queries' unless value['dns']['strategy'] == 'prefer_ipv4'
