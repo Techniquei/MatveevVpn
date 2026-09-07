@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.4
+
+- Automatically terminates the old app process after Sparkle has prepared an
+  update, with a short fallback for AppKit termination stalls.
+- Removes live traffic rates from the menu bar quick-access menu; the detailed
+  download/upload graph remains available in the main window.
+- Rejects a cached sing-box binary whose version does not match the release,
+  preventing an incompatible runtime from entering a DMG.
+
 ## 1.1.3
 
 - Updated sing-box to 1.14.0 and enabled native TUN DNS hijacking on macOS so

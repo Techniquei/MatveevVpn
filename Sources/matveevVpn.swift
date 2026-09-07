@@ -481,19 +481,17 @@ struct MatveevVPNApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         MenuBarExtra("matveevVpn", systemImage: controller.isRunning ? "network.badge.shield.half.filled" : "network") {
-            MenuContent(controller: controller, speedMonitor: speedMonitor)
+            MenuContent(controller: controller)
         }
     }
 }
 
 private struct MenuContent: View {
     @ObservedObject var controller: VPNController
-    @ObservedObject var speedMonitor: SpeedMonitor
     @Environment(\.openWindow) private var openWindow
     var body: some View {
             Text(controller.isRunning ? "Connected" : "Disconnected")
             Text(controller.node)
-            Text("↓ \(Int(speedMonitor.downloadSpeed / 1024)) KB/s · ↑ \(Int(speedMonitor.uploadSpeed / 1024)) KB/s")
             Button(controller.isRunning ? "Turn Off" : "Turn On") { controller.run(controller.isRunning ? "off" : "on") }
                 .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil)
             Button("Open matveevVpn") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }

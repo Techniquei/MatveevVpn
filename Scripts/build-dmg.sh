@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.1.3"
-BUILD_NUMBER="113"
+VERSION="1.1.4"
+BUILD_NUMBER="114"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
@@ -72,6 +72,11 @@ fi
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/tools/build-config.rb" "$APP/Contents/Resources/.payload/tools/build-config.rb"
 
 if [[ -n "${MATVEEV_SING_BOX_BINARY:-}" ]]; then
+  LOCAL_SING_BOX_VERSION="$("$MATVEEV_SING_BOX_BINARY" version | /usr/bin/awk '/^sing-box version / { print $3; exit }')"
+  if [[ "$LOCAL_SING_BOX_VERSION" != "$SING_BOX_VERSION" ]]; then
+    echo "Local sing-box version mismatch: expected $SING_BOX_VERSION, got ${LOCAL_SING_BOX_VERSION:-unknown}" >&2
+    exit 1
+  fi
   echo "Using local sing-box binary..."
   /usr/bin/install -m 755 "$MATVEEV_SING_BOX_BINARY" "$APP/Contents/Resources/.payload/sing-box"
 else
