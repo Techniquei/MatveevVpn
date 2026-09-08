@@ -11,7 +11,7 @@ The menu bar uses the same state and traffic monitor as the window.
 | Configuration / StateStore | Versioned private state, stable node identity, migration |
 | SubscriptionFetcher | Bounded HTTPS transfer without persistent HTTP cache |
 | SystemService | Fixed controller protocol, config generation and privileged install |
-| build-config.rb | Derive sing-box configuration from node + rules |
+| build-config.rb | Derive sing-box configuration and the optional REALITY sidecar |
 | controller.sh | Privileged tunnel lifetime, reload rollback, sleep/network recovery |
 | Diagnostics / Updater | Reachability, rule explanation and Sparkle integration |
 
@@ -26,7 +26,7 @@ one atomic private JSON file. The parent directory has mode 0700; files have mod
 0600. Migration only reads canonical ~/VPN and never searches backups. Once the
 new file exists, reinstalling or resetting cannot trigger another migration.
 
-Changes follow: parse → generate → sing-box check → private journal → controller
+Changes follow: parse → generate → engine checks → private journal → controller
 acceptance → atomic settings commit → journal removal. A journal stores the new
 state and SHA-256 of the generated configuration. On recovery, state is adopted
 only if the controller's active configuration hash matches. Runtime rejection
@@ -51,6 +51,11 @@ After sniffing, hostnames selected for VPN routing are resolved through `dns-vpn
 before the terminal outbound rule. This replaces locally filtered destination
 addresses while preserving direct bootstrap resolution for the VPN server itself.
 The VPN server's own bootstrap lookup necessarily uses the direct resolver.
+For REALITY nodes, Xray-core owns only the VLESS transport on a loopback SOCKS
+endpoint because current REALITY servers can reject the legacy client version
+advertised by sing-box. sing-box still owns TUN, DNS and routing; an explicit
+process rule keeps the Xray uplink outside the tunnel. The primary configuration
+contains a hash marker for the private Xray sidecar, preserving transaction identity.
 
 Application bundle routing uses an escaped, anchored executable-path expression.
 It does not infer parent-process ancestry. Diagnostics may populate an executable

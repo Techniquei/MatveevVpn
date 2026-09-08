@@ -6,6 +6,7 @@ A native VLESS VPN client for Apple Silicon Macs running macOS 13 or newer.
 
 - Selective routing or All Traffic mode over IPv4.
 - Native subscription setup, refresh and node selection.
+- Modern VLESS Reality nodes, including servers that enforce current Xray client versions.
 - Domain patterns, process names and application bundle rules including helpers.
 - Settings survive replacing or reinstalling the application.
 - Download/upload graphs, menu bar controls and optional launch at login.
@@ -95,7 +96,9 @@ Install Xcode command-line tools, then run:
 ./Scripts/build-dmg.sh
 ```
 
-The build downloads pinned, SHA-256-verified sing-box 1.14.0 and Sparkle 2.9.6.
+The build downloads pinned, SHA-256-verified sing-box 1.14.0, Xray-core 26.3.27
+and Sparkle 2.9.6. Xray is started as a loopback-only transport for REALITY nodes;
+sing-box continues to own the TUN, DNS and routing policy.
 No Xcode project is required. The output is in `dist/`.
 `MATVEEV_SING_BOX_BINARY` can point to an existing arm64 runtime for development.
 

@@ -55,5 +55,25 @@ Dir.mktmpdir('matveev-routing') do |dir|
   default_route = generated_defaults.fetch('route').fetch('rules').find { |rule| rule['outbound'] == 'vpn' && rule.key?('domain_suffix') }
   raise 'bundled defaults are not applied by the config generator' unless default_route && expected_domains.all? { |domain| default_route['domain_suffix'].include?(domain) }
   raise 'bundled Cursor helper route is missing' unless generated_defaults.fetch('route').fetch('rules').any? { |rule| rule['outbound'] == 'vpn' && rule['process_path_regex']&.include?('^.*/Cursor\\.app/Contents/.*') }
+
+  File.write(rules, JSON.generate({domains: ['example.com'], applications: [], processPathRegexes: [], mode: 'selective'}))
+  reality_key = 'A' * 43
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@reality.example.com:443?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&fp=chrome&sni=cover.example.com&pbk=#{reality_key}&sid=0123456789abcdef&spx=%2Fmodern#Reality\n")
+  raise 'REALITY generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  reality_main = JSON.parse(File.read(config))
+  reality_sidecar = JSON.parse(File.read(config + '.xray.json'))
+  vpn = reality_main.fetch('outbounds').find { |outbound| outbound['tag'] == 'vpn' }
+  raise 'REALITY must use the private Xray transport' unless vpn == {'type' => 'socks', 'tag' => 'vpn', 'server' => '127.0.0.1', 'server_port' => 18_443, 'version' => '5'}
+  raise 'Xray loop prevention is missing' unless reality_main.fetch('route').fetch('rules').any? { |rule| rule['process_name']&.include?('xray') && rule['outbound'] == 'direct' }
+  stream = reality_sidecar.fetch('outbounds').first.fetch('streamSettings')
+  settings = stream.fetch('realitySettings')
+  raise 'modern raw transport was not preserved' unless stream['network'] == 'raw'
+  raise 'REALITY parameters were not preserved' unless settings['serverName'] == 'cover.example.com' && settings['password'] == reality_key && settings['shortId'] == '0123456789abcdef' && settings['spiderX'] == '/modern'
+  marker = reality_main.fetch('route').fetch('rules').first.fetch('process_name').first
+  raise 'sidecar transaction marker is missing' unless marker.start_with?('matveev-xray-config-')
+
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#TLS\n")
+  raise 'TLS regeneration failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  raise 'stale REALITY sidecar was retained' if File.exist?(config + '.xray.json')
 end
-puts 'routing: bundled defaults, modes, secure re-resolution, IPv4 compatibility, wildcards and process paths passed'
+puts 'routing: defaults, modes, secure DNS, REALITY sidecar, wildcards and process paths passed'

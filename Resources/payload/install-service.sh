@@ -8,12 +8,16 @@ OWNER_GID="$4"
 DESIRED="$5"
 BASE='/Library/Application Support/matveevVpn'
 "$PAYLOAD/sing-box" check -c "$CONFIG" >/dev/null 2>&1
+if [[ -f "$CONFIG.xray.json" ]]; then
+  "$PAYLOAD/xray" run -test -c "$CONFIG.xray.json" >/dev/null 2>&1
+fi
 BACKUP="$(/usr/bin/mktemp -d /private/tmp/matveev-service-backup.XXXXXX)"
 HAD_PREVIOUS=false
 if [[ -f "$BASE/config.json" && -x "$BASE/bin/controller.sh" ]]; then
   HAD_PREVIOUS=true
   /usr/bin/ditto "$BASE/bin" "$BACKUP/bin"
   /bin/cp "$BASE/config.json" "$BACKUP/config.json"
+  if [[ -f "$BASE/xray.json" ]]; then /bin/cp "$BASE/xray.json" "$BACKUP/xray.json"; fi
   /bin/cp /Library/LaunchDaemons/com.matveev.vpn.plist "$BACKUP/service.plist"
   /bin/cp "$BASE/run/desired-state" "$BACKUP/desired-state" 2>/dev/null || /usr/bin/printf 'off\n' > "$BACKUP/desired-state"
   if [[ -f "$BASE/control/version" ]]; then /bin/cp "$BASE/control/version" "$BACKUP/version"; fi
@@ -24,6 +28,11 @@ cleanup() {
     /bin/launchctl bootout system/com.matveev.vpn 2>/dev/null || true
     /usr/bin/ditto "$BACKUP/bin" "$BASE/bin"
     /usr/bin/install -m 600 "$BACKUP/config.json" "$BASE/config.json"
+    if [[ -f "$BACKUP/xray.json" ]]; then
+      /usr/bin/install -m 600 "$BACKUP/xray.json" "$BASE/xray.json"
+    else
+      /bin/rm -f "$BASE/xray.json"
+    fi
     /usr/bin/install -m 600 "$BACKUP/desired-state" "$BASE/run/desired-state"
     /usr/bin/install -m 644 "$BACKUP/service.plist" /Library/LaunchDaemons/com.matveev.vpn.plist
     if [[ -f "$BACKUP/version" ]]; then
@@ -43,14 +52,20 @@ trap cleanup EXIT
 /usr/bin/install -d -o root -g wheel -m 700 "$BASE/run"
 /usr/bin/install -d -o "$OWNER_UID" -g "$OWNER_GID" -m 700 "$BASE/control"
 /usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/sing-box" "$BASE/bin/sing-box"
+/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/xray" "$BASE/bin/xray"
 /usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/controller.sh" "$BASE/bin/controller.sh"
 /usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/dns-manager.sh" "$BASE/bin/dns-manager.sh"
 /usr/bin/install -o root -g wheel -m 600 "$CONFIG" "$BASE/config.json"
+if [[ -f "$CONFIG.xray.json" ]]; then
+  /usr/bin/install -o root -g wheel -m 600 "$CONFIG.xray.json" "$BASE/xray.json"
+else
+  /bin/rm -f "$BASE/xray.json"
+fi
 /usr/bin/install -o root -g wheel -m 644 "$PAYLOAD/com.matveev.vpn.plist" /Library/LaunchDaemons/com.matveev.vpn.plist
 /usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
-/bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/runtime-status"
-/usr/bin/printf '4\n' > "$BASE/control/version"
+/bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
+/usr/bin/printf '5\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /bin/launchctl enable system/com.matveev.vpn
 /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist

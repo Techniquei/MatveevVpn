@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.9
+
+- Supports modern VLESS REALITY servers that enforce current Xray client
+  versions, including RAW/TCP with XTLS Vision and post-quantum verification.
+- Uses a private loopback Xray transport for REALITY while retaining sing-box
+  for the macOS TUN, DNS interception and selective application routing.
+- Applies, rolls back and monitors the two runtime processes as one transaction.
+
 ## 1.1.8
 
 - Adds editable default routes for YouTube, Telegram, ChatGPT, Claude and Cursor

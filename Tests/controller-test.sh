@@ -10,10 +10,11 @@ DNS_CALL_LOG="$RUNTIME/dns-calls"
 
 /bin/mkdir -p "$RUNTIME/bin" "$RUNTIME/run" "$CONTROL"
 /bin/cp "$TEST_DIR/fake-sing-box" "$RUNTIME/bin/sing-box"
+/bin/cp "$TEST_DIR/fake-xray" "$RUNTIME/bin/xray"
 /bin/cp "$TEST_DIR/fake-networksetup" "$RUNTIME/bin/networksetup"
 /bin/cp "$TEST_DIR/../Resources/payload/dns-manager.sh" "$RUNTIME/bin/dns-manager.sh"
 /bin/cp "$TEST_DIR/config.json" "$RUNTIME/config.json"
-/bin/chmod 755 "$RUNTIME/bin/sing-box" "$RUNTIME/bin/networksetup" "$RUNTIME/bin/dns-manager.sh"
+/bin/chmod 755 "$RUNTIME/bin/sing-box" "$RUNTIME/bin/xray" "$RUNTIME/bin/networksetup" "$RUNTIME/bin/dns-manager.sh"
 /usr/bin/printf 'on\n' > "$RUNTIME/run/desired-state"
 /usr/bin/printf '9.9.9.9\n' > "$CURRENT_DNS"
 : > "$DNS_CALL_LOG"
@@ -75,8 +76,10 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 send_action restart
 wait_for_file_value "$CONTROL/runtime-status" "running"
 /bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"
+/usr/bin/printf '{"valid":true}\n' > "$CONTROL/pending-xray.json"
 send_action reload
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ -f "$RUNTIME/xray.json" && -f "$RUNTIME/run/xray.pid" ]]
 /usr/bin/printf '{"fail_run":true}\n' > "$CONTROL/pending-config.json"
 send_action_expect reload error
 wait_for_file_value "$CONTROL/runtime-status" "running"
@@ -91,6 +94,7 @@ send_action off
 send_action reload
 wait_for_file_value "$CONTROL/runtime-status" "stopped"
 wait_for_file_value "$RUNTIME/run/desired-state" "off"
+[[ ! -e "$RUNTIME/xray.json" && ! -e "$RUNTIME/run/xray.pid" ]]
 send_action reset
 [[ ! -e "$RUNTIME/config.json" ]]
 [[ ! -e "$CONTROL/config-sha256" ]]

@@ -1,0 +1,13 @@
+#!/bin/bash
+
+if [[ "${1:-}" != run ]]; then exit 2; fi
+if [[ "${2:-}" == -test && "${3:-}" == -c ]]; then
+  /usr/bin/grep -q 'fail_xray' "${4:-}" 2>/dev/null && exit 1
+  exit 0
+fi
+if [[ "${2:-}" == -c ]]; then
+  /usr/bin/grep -q 'fail_xray' "${3:-}" 2>/dev/null && exit 1
+  trap 'exit 0' TERM INT
+  while true; do /bin/sleep 1; done
+fi
+exit 2

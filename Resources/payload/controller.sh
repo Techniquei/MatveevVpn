@@ -7,19 +7,25 @@ BASE_DIR="${MATVEEV_BASE_DIR:-/Library/Application Support/matveevVpn}"
 CONTROL_DIR="$BASE_DIR/control"
 RUN_DIR="$BASE_DIR/run"
 SING_BOX="$BASE_DIR/bin/sing-box"
+XRAY="$BASE_DIR/bin/xray"
 DNS_MANAGER="$BASE_DIR/bin/dns-manager.sh"
 CONFIG_FILE="$BASE_DIR/config.json"
+XRAY_CONFIG_FILE="$BASE_DIR/xray.json"
 PENDING_CONFIG="$CONTROL_DIR/pending-config.json"
+PENDING_XRAY_CONFIG="$CONTROL_DIR/pending-xray.json"
 COMMAND_FILE="$CONTROL_DIR/command"
 STATUS_FILE="$CONTROL_DIR/runtime-status"
 DESIRED_FILE="$RUN_DIR/desired-state"
 PID_FILE="$RUN_DIR/sing-box.pid"
+XRAY_PID_FILE="$RUN_DIR/xray.pid"
 ROLLBACK_CONFIG="$RUN_DIR/config.rollback.json"
+ROLLBACK_XRAY_CONFIG="$RUN_DIR/xray.rollback.json"
 LOG_FILE="${MATVEEV_LOG_FILE:-$RUN_DIR/vpn.log}"
 ERROR_FILE="${MATVEEV_ERROR_FILE:-$RUN_DIR/vpn.error.log}"
 WATCHDOG_GAP_SECONDS="${MATVEEV_WATCHDOG_GAP_SECONDS:-10}"
 
 CHILD_PID=""
+XRAY_PID=""
 LAST_TICK="$(/bin/date +%s)"
 LAST_NETWORK_CHECK=0
 LAST_NETWORK_SIGNATURE=""
@@ -52,6 +58,14 @@ child_running() {
   [[ -n "$CHILD_PID" ]] && /bin/kill -0 "$CHILD_PID" 2>/dev/null
 }
 
+xray_running() {
+  [[ -n "$XRAY_PID" ]] && /bin/kill -0 "$XRAY_PID" 2>/dev/null
+}
+
+runtime_running() {
+  child_running && { [[ ! -f "$XRAY_CONFIG_FILE" ]] || xray_running; }
+}
+
 tunnel_interface() {
   /sbin/ifconfig 2>/dev/null | /usr/bin/awk '
     /^[A-Za-z0-9]+:/ { interface=$1; sub(":", "", interface) }
@@ -70,7 +84,6 @@ install_config() {
   else
     /usr/bin/install -o root -g wheel -m 600 "$source" "$CONFIG_FILE"
   fi
-  publish_config_hash
 }
 
 publish_config_hash() {
@@ -83,9 +96,12 @@ publish_config_hash() {
 }
 
 start_child() {
-  if child_running; then
+  if runtime_running; then
     write_status "running"
     return 0
+  fi
+  if child_running || xray_running; then
+    stop_child
   fi
   if [[ ! -x "$SING_BOX" || ! -f "$CONFIG_FILE" ]]; then
     write_status "error"
@@ -94,6 +110,23 @@ start_child() {
   if ! "$SING_BOX" check -c "$CONFIG_FILE" >> "$ERROR_FILE" 2>&1; then
     write_status "error"
     return 1
+  fi
+
+  if [[ -f "$XRAY_CONFIG_FILE" ]]; then
+    if [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$XRAY_CONFIG_FILE" >> "$ERROR_FILE" 2>&1; then
+      write_status "error"
+      return 1
+    fi
+    "$XRAY" run -c "$XRAY_CONFIG_FILE" >> "$LOG_FILE" 2>> "$ERROR_FILE" &
+    XRAY_PID=$!
+    /usr/bin/printf '%s\n' "$XRAY_PID" > "$XRAY_PID_FILE"
+    /bin/sleep 0.2
+    if ! xray_running; then
+      XRAY_PID=""
+      /bin/rm -f "$XRAY_PID_FILE"
+      write_status "error"
+      return 1
+    fi
   fi
 
   "$SING_BOX" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>> "$ERROR_FILE" &
@@ -115,9 +148,7 @@ start_child() {
     fi
     /bin/sleep 0.2
   done
-  if child_running; then stop_child; fi
-  CHILD_PID=""
-  /bin/rm -f "$PID_FILE"
+  stop_child
   write_status "error"
   return 1
 }
@@ -162,6 +193,20 @@ stop_child() {
   fi
   CHILD_PID=""
   /bin/rm -f "$PID_FILE"
+  if xray_running; then
+    /bin/kill -TERM "$XRAY_PID" 2>/dev/null || true
+    local xray_attempt
+    for xray_attempt in 1 2 3 4 5; do
+      xray_running || break
+      /bin/sleep 1
+    done
+    if xray_running; then
+      /bin/kill -KILL "$XRAY_PID" 2>/dev/null || true
+    fi
+    wait "$XRAY_PID" 2>/dev/null || true
+  fi
+  XRAY_PID=""
+  /bin/rm -f "$XRAY_PID_FILE"
   if [[ -z "${MATVEEV_BASE_DIR:-}" && -n "$owned_interface" ]]; then
     cleanup_tunnel_state "$owned_interface"
   fi
@@ -182,35 +227,56 @@ desired_state() {
 }
 
 reload_config() {
-  if [[ ! -f "$PENDING_CONFIG" || -L "$PENDING_CONFIG" ]]; then
+  if [[ ! -f "$PENDING_CONFIG" || -L "$PENDING_CONFIG" || -L "$PENDING_XRAY_CONFIG" ]]; then
     return 1
   fi
   if ! "$SING_BOX" check -c "$PENDING_CONFIG" >> "$ERROR_FILE" 2>&1; then
     return 1
   fi
+  if [[ -f "$PENDING_XRAY_CONFIG" ]] && { [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$PENDING_XRAY_CONFIG" >> "$ERROR_FILE" 2>&1; }; then
+    return 1
+  fi
+  /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
   local had_previous=false
   if [[ -f "$CONFIG_FILE" ]]; then
     /usr/bin/install -m 600 "$CONFIG_FILE" "$ROLLBACK_CONFIG"
+    if [[ -f "$XRAY_CONFIG_FILE" ]]; then /usr/bin/install -m 600 "$XRAY_CONFIG_FILE" "$ROLLBACK_XRAY_CONFIG"; fi
     had_previous=true
   fi
   install_config "$PENDING_CONFIG" || return 1
   /bin/rm -f "$PENDING_CONFIG"
+  if [[ -f "$PENDING_XRAY_CONFIG" ]]; then
+    /usr/bin/install -m 600 "$PENDING_XRAY_CONFIG" "$XRAY_CONFIG_FILE"
+    /bin/rm -f "$PENDING_XRAY_CONFIG"
+  else
+    /bin/rm -f "$XRAY_CONFIG_FILE"
+  fi
+  publish_config_hash || return 1
   if [[ "$(desired_state)" == "on" ]]; then
     stop_child
     if start_child; then
-      /bin/rm -f "$ROLLBACK_CONFIG"
+      /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
       return 0
     fi
     log_event "new configuration failed; restoring the previous configuration"
     if [[ "$had_previous" == true ]]; then
       install_config "$ROLLBACK_CONFIG" || return 1
+      if [[ -f "$ROLLBACK_XRAY_CONFIG" ]]; then
+        /usr/bin/install -m 600 "$ROLLBACK_XRAY_CONFIG" "$XRAY_CONFIG_FILE"
+      else
+        /bin/rm -f "$XRAY_CONFIG_FILE"
+      fi
+      publish_config_hash || return 1
       /bin/rm -f "$ROLLBACK_CONFIG"
+      /bin/rm -f "$ROLLBACK_XRAY_CONFIG"
       stop_child
       start_child || true
+    else
+      /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$CONTROL_DIR/config-sha256"
     fi
     return 1
   else
-    /bin/rm -f "$ROLLBACK_CONFIG"
+    /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
     write_status "stopped"
   fi
 }
@@ -252,14 +318,14 @@ run_watchdog() {
   now="$(/bin/date +%s)"
   gap=$((now - LAST_TICK))
 
-  if [[ "$gap" -gt "$WATCHDOG_GAP_SECONDS" ]] && child_running; then
+  if [[ "$gap" -gt "$WATCHDOG_GAP_SECONDS" ]] && runtime_running; then
     recover_child "sleep or a scheduler pause"
     recovered=true
   fi
 
   if [[ $((now - LAST_NETWORK_CHECK)) -ge 5 ]]; then
     signature="$(network_signature)"
-    if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]] && child_running; then
+    if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]] && runtime_running; then
       recover_child "a network interface change"
       recovered=true
     fi
@@ -270,12 +336,16 @@ run_watchdog() {
       TUN_MISSES=0
     else
       TUN_MISSES=$((TUN_MISSES + 1))
-      if [[ "$TUN_MISSES" -ge 2 ]] && child_running; then
+      if [[ "$TUN_MISSES" -ge 2 ]] && runtime_running; then
         recover_child "the TUN interface disappeared"
         TUN_MISSES=0
         recovered=true
       fi
     fi
+  fi
+  if child_running && [[ -f "$XRAY_CONFIG_FILE" ]] && ! xray_running; then
+    recover_child "the REALITY transport stopped"
+    recovered=true
   fi
 
   if [[ "$recovered" == true ]]; then
@@ -316,7 +386,7 @@ process_command() {
     reset)
       set_desired "off"
       stop_child
-      /bin/rm -f "$CONFIG_FILE" "$ROLLBACK_CONFIG" "$PENDING_CONFIG" "$CONTROL_DIR/config-sha256"
+      /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG" "$PENDING_CONFIG" "$PENDING_XRAY_CONFIG" "$CONTROL_DIR/config-sha256"
       write_response "$token" "ok"
       ;;
     *)

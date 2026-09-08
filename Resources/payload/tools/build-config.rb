@@ -1,12 +1,14 @@
 #!/usr/bin/env ruby
 
 require "json"
+require "digest"
 require "uri"
 
 abort "usage: build-config.rb SUBSCRIPTION OUTPUT INDEX [RULES]" unless (3..4).cover?(ARGV.length)
 
 subscription_path, output_path, index_text, rules_path = ARGV
 rules_path ||= File.expand_path("../default-rules.json", __dir__)
+File.delete(output_path + ".xray.json") if File.exist?(output_path + ".xray.json")
 index = Integer(index_text, 10)
 lines = File.readlines(subscription_path, chomp: true).reject(&:empty?)
 abort "server index is out of range" unless index.between?(1, lines.length)
@@ -28,7 +30,71 @@ vpn_outbound = {
 }
 vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
 
-if %w[tls reality].include?(query["security"])
+xray_config = nil
+if query["security"] == "reality"
+  abort "REALITY requires pbk" if query["pbk"].to_s.empty?
+  abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
+  abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
+
+  network = query["type"].to_s
+  network = "raw" if network.empty? || %w[tcp raw].include?(network)
+  stream = { "network" => network, "security" => "reality" }
+  case network
+  when "raw"
+  when "ws"
+    stream["wsSettings"] = {
+      "path" => query["path"].to_s.empty? ? "/" : query["path"],
+      "headers" => query["host"].to_s.empty? ? {} : { "Host" => query["host"] }
+    }
+  when "grpc"
+    stream["grpcSettings"] = { "serviceName" => query["serviceName"].to_s }
+  else
+    abort "unsupported VLESS REALITY transport: #{query["type"]}"
+  end
+  reality = {
+    "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+    "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"],
+    "password" => query["pbk"],
+    "shortId" => query["sid"].to_s,
+    "spiderX" => query["spx"].to_s
+  }
+  reality["mldsa65Verify"] = query["pqv"] unless query["pqv"].to_s.empty?
+  stream["realitySettings"] = reality
+  user = {
+    "id" => URI.decode_www_form_component(uri.user.to_s),
+    "encryption" => query["encryption"].to_s.empty? ? "none" : query["encryption"]
+  }
+  user["flow"] = query["flow"] unless query["flow"].to_s.empty?
+  xray_config = {
+    "log" => { "loglevel" => "warning" },
+    "inbounds" => [{
+      "tag" => "matveev-reality-in",
+      "listen" => "127.0.0.1",
+      "port" => 18_443,
+      "protocol" => "socks",
+      "settings" => { "udp" => true }
+    }],
+    "outbounds" => [{
+      "tag" => "reality",
+      "protocol" => "vless",
+      "settings" => { "vnext" => [{ "address" => uri.host, "port" => uri.port, "users" => [user] }] },
+      "streamSettings" => stream
+    }]
+  }
+  xray_path = output_path + ".xray.json"
+  xray_json = JSON.pretty_generate(xray_config) + "\n"
+  File.write(xray_path, xray_json, mode: "w", perm: 0o600)
+  File.chmod(0o600, xray_path)
+  vpn_outbound = {
+    "type" => "socks",
+    "tag" => "vpn",
+    "server" => "127.0.0.1",
+    "server_port" => 18_443,
+    "version" => "5"
+  }
+end
+
+if query["security"] == "tls"
   tls = {
     "enabled" => true,
     "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"]
@@ -36,17 +102,10 @@ if %w[tls reality].include?(query["security"])
   unless query["fp"].to_s.empty?
     tls["utls"] = { "enabled" => true, "fingerprint" => query["fp"] }
   end
-  if query["security"] == "reality"
-    tls["reality"] = {
-      "enabled" => true,
-      "public_key" => query.fetch("pbk"),
-      "short_id" => query.fetch("sid")
-    }
-  end
   vpn_outbound["tls"] = tls
 end
 
-case query["type"]
+case query["security"] == "reality" ? nil : query["type"]
 when nil, "", "tcp"
 when "ws"
   vpn_outbound["transport"] = {
@@ -92,7 +151,7 @@ unless routed_domains.empty?
 end
 
 route_rules = [
-  { "process_name" => ["sing-box"], "action" => "route", "outbound" => "direct" }
+  { "process_name" => ["sing-box", "xray"], "action" => "route", "outbound" => "direct" }
 ]
 route_rules.concat([
   { "port" => 53, "action" => "hijack-dns" },
@@ -179,6 +238,16 @@ config = {
     "final" => full ? "vpn" : "direct"
   }
 }
+
+if xray_config
+  # Keep the primary config identity tied to the private sidecar so transaction
+  # recovery can never confuse two REALITY nodes that use the same local SOCKS endpoint.
+  config["route"]["rules"].unshift({
+    "process_name" => ["matveev-xray-config-#{Digest::SHA256.hexdigest(JSON.generate(xray_config))}"],
+    "action" => "route",
+    "outbound" => "direct"
+  })
+end
 
 File.write(output_path, JSON.pretty_generate(config) + "\n", mode: "w", perm: 0o600)
 File.chmod(0o600, output_path)

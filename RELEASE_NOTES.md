@@ -1,15 +1,13 @@
-# matveevVpn 1.1.8
+# matveevVpn 1.1.9
 
-- Adds ready-to-edit default routes for YouTube, Telegram, ChatGPT, Claude and
-  Cursor on fresh installations and after Reset All Settings.
-- Routes helper processes inside the supported application bundles, including
-  Cursor's dynamically named helpers.
-- Preserves every existing user's saved routing rules during the update.
-- Includes the compact UI, notification toggle and DNS bootstrap fixes from
-  versions 1.1.6 and 1.1.7.
+- Adds support for modern VLESS REALITY servers that reject the legacy client
+  version advertised by sing-box, including the France node used for validation.
+- Keeps sing-box in charge of TUN, DNS and selective routing while Xray-core
+  handles only the authenticated REALITY transport over a private loopback port.
+- Preserves atomic apply, rollback and watchdog recovery across both processes.
 
-No system-component reinstall is required when updating from 1.1.7. Settings,
-subscription, selected node, mode and routing rules are preserved.
+A one-time administrator prompt updates the system component from 1.1.8.
+Settings, subscription, selected node, mode and routing rules are preserved.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

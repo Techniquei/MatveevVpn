@@ -3,11 +3,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.1.8"
-BUILD_NUMBER="118"
+VERSION="1.1.9"
+BUILD_NUMBER="119"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
+XRAY_VERSION="26.3.27"
+XRAY_ARCHIVE_SHA256="2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf"
 DIST_DIR="${1:-$ROOT_DIR/dist}"
 WORK_DIR="$(/usr/bin/mktemp -d /private/tmp/matveev-vpn-build.XXXXXX)"
 APP="$WORK_DIR/matveevVpn.app"
@@ -59,6 +61,20 @@ if [[ -n "${SPARKLE_PUBLIC_KEY:-}" ]]; then
   /usr/bin/plutil -insert SUEnableAutomaticChecks -bool true "$INFO_PLIST"
 fi
 
+XRAY_ARCHIVE="$WORK_DIR/xray.zip"
+XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/Xray-macos-arm64-v8a.zip"
+echo "Downloading Xray $XRAY_VERSION for modern REALITY..."
+/usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$XRAY_URL" -o "$XRAY_ARCHIVE"
+XRAY_ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$XRAY_ARCHIVE" | /usr/bin/awk '{print $1}')"
+if [[ "$XRAY_ACTUAL_SHA" != "$XRAY_ARCHIVE_SHA256" ]]; then
+  echo "Xray checksum mismatch" >&2
+  exit 1
+fi
+/bin/mkdir -p "$WORK_DIR/xray"
+/usr/bin/ditto -x -k "$XRAY_ARCHIVE" "$WORK_DIR/xray"
+/usr/bin/install -m 755 "$WORK_DIR/xray/xray" "$APP/Contents/Resources/.payload/xray"
+/usr/bin/install -m 644 "$WORK_DIR/xray/LICENSE" "$APP/Contents/Resources/Xray-LICENSE"
+
 /usr/bin/install -m 644 "$ROOT_DIR/Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/uninstall-service.sh" "$APP/Contents/Resources/.payload/uninstall-service.sh"
 /usr/bin/install -m 644 "$ROOT_DIR/Resources/README.txt" "$APP/Contents/Resources/README.txt"
@@ -101,6 +117,7 @@ SIGN_ARGS=(--force --deep --sign "${CODE_SIGN_IDENTITY:--}")
 if [[ -n "${CODE_SIGN_IDENTITY:-}" && "$CODE_SIGN_IDENTITY" != - ]]; then
   SIGN_ARGS+=(--options runtime --timestamp)
   /usr/bin/codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$APP/Contents/Resources/.payload/sing-box"
+  /usr/bin/codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$APP/Contents/Resources/.payload/xray"
 fi
 /usr/bin/codesign "${SIGN_ARGS[@]}" "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"

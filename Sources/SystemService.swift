@@ -26,7 +26,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "4"
+    static let version = "5"
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { Self.base.appendingPathComponent("control") }
@@ -69,10 +69,21 @@ struct SystemService {
         guard generated.status == 0 else { throw VPNError.message("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.") }
         let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path])
         guard checked.status == 0 else { throw VPNError.message("The configuration did not pass validation. Check the node and routing expressions.") }
+        let xrayConfig = URL(fileURLWithPath: config.path + ".xray.json")
+        if FileManager.default.fileExists(atPath: xrayConfig.path) {
+            let xrayChecked = await Command.run(payload.appendingPathComponent("xray").path, ["run", "-test", "-c", xrayConfig.path])
+            guard xrayChecked.status == 0 else { throw VPNError.message("The REALITY configuration did not pass validation. Check the selected node.") }
+        }
         return config
     }
 
     func deploy(_ config: URL) async throws {
+        let pendingXray = control.appendingPathComponent("pending-xray.json")
+        try? FileManager.default.removeItem(at: pendingXray)
+        let xrayConfig = URL(fileURLWithPath: config.path + ".xray.json")
+        if FileManager.default.fileExists(atPath: xrayConfig.path) {
+            try privateWrite(Data(contentsOf: xrayConfig), to: pendingXray)
+        }
         try privateWrite(Data(contentsOf: config), to: control.appendingPathComponent("pending-config.json"))
         try await send("reload")
     }
