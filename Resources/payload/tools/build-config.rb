@@ -17,6 +17,7 @@ uri = URI.parse(lines[index - 1])
 abort "only vless:// subscriptions are supported" unless uri.scheme == "vless"
 
 query = URI.decode_www_form(uri.query.to_s).to_h
+alpn = query["alpn"].to_s.split(",").map(&:strip).reject(&:empty?)
 vpn_outbound = {
   "type" => "vless",
   "tag" => "vpn",
@@ -94,7 +95,6 @@ if query["security"] == "reality" || xhttp
       "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
       "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"]
     }
-    alpn = query["alpn"].to_s.split(",").map(&:strip).reject(&:empty?)
     tls["alpn"] = alpn unless alpn.empty?
     stream["tlsSettings"] = tls
   end
@@ -140,11 +140,12 @@ if query["security"] == "tls" && xray_config.nil?
   unless query["fp"].to_s.empty?
     tls["utls"] = { "enabled" => true, "fingerprint" => query["fp"] }
   end
+  tls["alpn"] = alpn unless alpn.empty?
   vpn_outbound["tls"] = tls
 end
 
 case xray_config ? nil : query["type"]
-when nil, "", "tcp"
+when nil, "", "tcp", "raw"
 when "ws"
   vpn_outbound["transport"] = {
     "type" => "ws",

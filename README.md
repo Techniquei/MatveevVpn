@@ -8,6 +8,7 @@ A native VLESS VPN client for Apple Silicon Macs running macOS 13 or newer.
 - Native subscription setup, refresh and node selection.
 - Modern VLESS Reality nodes, including RAW, gRPC and XHTTP servers that enforce current Xray client versions.
 - VLESS XHTTP over REALITY or TLS, including mode, host, path, extra JSON and ALPN parameters.
+- Standard `type=raw` links and explicit ALPN lists across TLS transports.
 - Domain patterns, process names and application bundle rules including helpers.
 - Settings survive replacing or reinstalling the application.
 - Download/upload graphs, menu bar controls and optional launch at login.

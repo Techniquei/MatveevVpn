@@ -3,6 +3,7 @@
 - Adds VLESS XHTTP over REALITY and TLS through the private Xray transport.
 - Preserves mode, host, path and raw `extra` JSON from subscription links.
 - Supports TLS ALPN lists and the older `splithttp` transport alias.
+- Accepts `type=raw` for ordinary TLS nodes and applies ALPN to every TLS transport.
 - Rejects malformed XHTTP parameters before applying a node.
 
 Settings, subscription, selected node, mode and routing rules are preserved when

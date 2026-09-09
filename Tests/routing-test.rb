@@ -90,8 +90,16 @@ Dir.mktmpdir('matveev-routing') do |dir|
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@tls.example.com:443?type=xhttp&security=tls&encryption=none&host=bad.example.com%2Fcrash#Invalid-XHTTP\n")
   raise 'unsafe XHTTP host was accepted' if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
 
-  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#TLS\n")
-  raise 'TLS regeneration failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
-  raise 'stale REALITY sidecar was retained' if File.exist?(config + '.xray.json')
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?type=raw&security=tls&fp=chrome&alpn=h2%2Chttp%2F1.1#Raw-TLS\n")
+  raise 'raw TLS generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  raw_tls = JSON.parse(File.read(config)).fetch('outbounds').first
+  raise 'raw alias created a redundant transport' if raw_tls.key?('transport')
+  raise 'raw TLS ALPN was not preserved' unless raw_tls.fetch('tls')['alpn'] == ['h2', 'http/1.1']
+  raise 'stale Xray sidecar was retained' if File.exist?(config + '.xray.json')
+
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?type=ws&security=tls&path=%2Fsocket&alpn=http%2F1.1#WebSocket-TLS\n")
+  raise 'WebSocket TLS generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  ws_tls = JSON.parse(File.read(config)).fetch('outbounds').first
+  raise 'TLS ALPN was not applied to WebSocket' unless ws_tls.fetch('transport')['type'] == 'ws' && ws_tls.fetch('tls')['alpn'] == ['http/1.1']
 end
-puts 'routing: defaults, modes, secure DNS, REALITY sidecar, wildcards and process paths passed'
+puts 'routing: defaults, modes, secure DNS, Xray transports, TLS aliases, wildcards and process paths passed'
