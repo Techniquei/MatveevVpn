@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.11
+
+- Keeps the main window fitted to its content height so vertical resizing no
+  longer creates empty space above and below the interface.
+
 ## 1.1.10
 
 - Adds VLESS XHTTP over REALITY and TLS through the private Xray transport.

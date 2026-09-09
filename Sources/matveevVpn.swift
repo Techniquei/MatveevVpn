@@ -437,6 +437,7 @@ private struct MainView: View {
             .padding(.horizontal, 12)
         }
         .frame(width: 700)
+        .fixedSize(horizontal: false, vertical: true)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showRoutingRules) {
             RoutingRulesView(controller: controller)
