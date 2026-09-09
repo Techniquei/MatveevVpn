@@ -1,27 +1,19 @@
 # Changelog
 
-## 1.1.12
+## 1.2.0
 
 - Stops subscription downloads and controller connection attempts after 10 seconds.
 - Offers a privacy-redacted error report when loading a subscription or changing the VPN connection fails.
 - Accepts direct VLESS links, URL-safe Base64 subscriptions and supported VLESS entries in mixed subscription lists.
-- Adds bottom safe spacing so the Settings and Diagnostics button is no longer clipped.
-- Reduces unused vertical and horizontal space throughout the app windows.
-- Integrates a compact combined download/upload traffic graph into the current-node card.
-- Balances the main actions and node-selection controls into equal-width columns.
-- Moves node selection into a standard picker on the main screen.
-- Places VPN mode beside the On/Off status and keeps Uninstall in Settings.
-- Removes the redundant Done status and places the version in the header.
-- Reserves a stable status slot so the window does not move when progress appears.
-- Replaces the main text actions with a compact four-icon toolbar and shows progress inside the status badge.
+- Redesigns the app around a compact 420-point main window and tighter supporting windows.
+- Moves node selection into a stable-width picker on the main screen.
+- Integrates one combined traffic graph into the current-node card.
+- Gives download and upload readouts independent fixed-width, monospaced layouts.
+- Replaces the main text actions with a compact four-icon dock with hover feedback and tooltips.
+- Displays connection state and operation progress in the power button without resizing the window.
 - Replaces the mode segments with a compact Routing switch: on is selective, off is all traffic.
-- Uses a narrower, more square main window with evenly spaced square action buttons.
-- Adds custom proportional action buttons with visible hover feedback and native tooltips.
-- Moves progress into the power button, uses its color for connection state and removes the separate status badge.
-- Groups the main actions into a compact centered dock with consistent spacing.
-- Narrows the main window to a compact 420-point layout.
-- Highlights the power button in blue only while the VPN is active.
-- Dims the traffic card and speed indicators while the VPN is off.
+- Dims the graph and speed indicators while disconnected.
+- Moves Uninstall into Settings and fixes clipped controls and inconsistent spacing.
 - Recovers legacy subscriptions even when their old routing-rules file is missing.
 
 ## 1.1.11

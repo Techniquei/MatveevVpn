@@ -27,7 +27,7 @@ final class SubscriptionFetcher: NSObject, URLSessionDataDelegate {
             let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
             self.session = session
             var request = URLRequest(url: url, timeoutInterval: Self.timeout)
-            request.setValue("matveevVpn/1.1.12", forHTTPHeaderField: "User-Agent")
+            request.setValue("matveevVpn/1.2.0", forHTTPHeaderField: "User-Agent")
             request.setValue("text/plain, application/octet-stream;q=0.9, */*;q=0.5", forHTTPHeaderField: "Accept")
             session.dataTask(with: request).resume()
             let timeout = DispatchWorkItem { [weak self] in

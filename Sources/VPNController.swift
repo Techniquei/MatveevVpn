@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.12"
+    static let releaseVersion = "1.2.0"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false

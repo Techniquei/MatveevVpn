@@ -184,33 +184,31 @@ private struct ConnectionOverviewCard: View {
             .padding(.top, 34)
             .opacity(controller.isRunning ? 0.62 : 0.16)
 
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Current node").font(.caption).foregroundStyle(.secondary)
-                    Picker("Current node", selection: Binding(
-                        get: { controller.state.selectedNodeID },
-                        set: { if let id = $0 { controller.selectNode(id) } }
-                    )) {
-                        Text("Not selected").tag(Optional<String>.none)
-                        ForEach(controller.availableNodes) { node in
-                            Text(node.name).tag(Optional(node.id))
-                        }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Current node")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    HStack(spacing: 4) {
+                        speedMetric(monitor.downloadSpeed, icon: "arrow.down", activeColor: .cyan)
+                        speedMetric(monitor.uploadSpeed, icon: "arrow.up", activeColor: .pink)
                     }
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(maxWidth: 260, alignment: .leading)
-                    .disabled(controller.isBusy || controller.availableNodes.isEmpty)
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 5) {
-                    HStack(spacing: 9) {
-                        Label(speedText(monitor.downloadSpeed), systemImage: "arrow.down")
-                            .foregroundStyle(controller.isRunning ? Color.cyan : Color.secondary)
-                        Label(speedText(monitor.uploadSpeed), systemImage: "arrow.up")
-                            .foregroundStyle(controller.isRunning ? Color.pink : Color.secondary)
+
+                Picker("Current node", selection: Binding(
+                    get: { controller.state.selectedNodeID },
+                    set: { if let id = $0 { controller.selectNode(id) } }
+                )) {
+                    Text("Not selected").tag(Optional<String>.none)
+                    ForEach(controller.availableNodes) { node in
+                        Text(node.name).tag(Optional(node.id))
                     }
-                    .font(.caption)
                 }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 230, alignment: .leading)
+                .disabled(controller.isBusy || controller.availableNodes.isEmpty)
             }
         }
         .padding(10)
@@ -230,6 +228,18 @@ private struct ConnectionOverviewCard: View {
         if value < 1_048_576 { return String(format: "%.1f KB/s", value / 1024) }
         if value < 1_073_741_824 { return String(format: "%.1f MB/s", value / 1_048_576) }
         return String(format: "%.1f GB/s", value / 1_073_741_824)
+    }
+
+    private func speedMetric(_ value: Double, icon: String, activeColor: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text(speedText(value))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+        .font(.caption)
+        .foregroundStyle(controller.isRunning ? activeColor : Color.secondary)
+        .frame(width: 92, alignment: .trailing)
     }
 
 }
