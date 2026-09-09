@@ -51,8 +51,8 @@ After sniffing, hostnames selected for VPN routing are resolved through `dns-vpn
 before the terminal outbound rule. This replaces locally filtered destination
 addresses while preserving direct bootstrap resolution for the VPN server itself.
 The VPN server's own bootstrap lookup necessarily uses the direct resolver.
-For REALITY nodes, Xray-core owns only the VLESS transport on a loopback SOCKS
-endpoint because current REALITY servers can reject the legacy client version
+For REALITY and XHTTP nodes, Xray-core owns only the VLESS transport on a loopback SOCKS
+endpoint because current servers can reject the legacy client version
 advertised by sing-box. sing-box still owns TUN, DNS and routing; an explicit
 process rule keeps the Xray uplink outside the tunnel. The primary configuration
 contains a hash marker for the private Xray sidecar, preserving transaction identity.

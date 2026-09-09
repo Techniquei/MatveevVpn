@@ -1,6 +1,7 @@
 require 'json'
 require 'tmpdir'
 require 'rbconfig'
+require 'uri'
 
 defaults_path = File.expand_path('../Resources/payload/default-rules.json', __dir__)
 defaults = JSON.parse(File.read(defaults_path))
@@ -71,6 +72,23 @@ Dir.mktmpdir('matveev-routing') do |dir|
   raise 'REALITY parameters were not preserved' unless settings['serverName'] == 'cover.example.com' && settings['password'] == reality_key && settings['shortId'] == '0123456789abcdef' && settings['spiderX'] == '/modern'
   marker = reality_main.fetch('route').fetch('rules').first.fetch('process_name').first
   raise 'sidecar transaction marker is missing' unless marker.start_with?('matveev-xray-config-')
+
+  xhttp_extra = {xPaddingBytes: '100-1000', noGRPCHeader: false}
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@xhttp.example.com:443?type=xhttp&security=reality&encryption=none&flow=xtls-rprx-vision&fp=chrome&sni=cover.example.com&pbk=#{reality_key}&sid=0123456789abcdef&path=%2Fhidden&host=cdn.example.com&mode=stream-up&extra=#{URI.encode_www_form_component(JSON.generate(xhttp_extra))}#XHTTP-Reality\n")
+  raise 'XHTTP REALITY generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  xhttp_reality = JSON.parse(File.read(config + '.xray.json')).fetch('outbounds').first.fetch('streamSettings')
+  raise 'XHTTP transport was not generated' unless xhttp_reality['network'] == 'xhttp'
+  raise 'XHTTP settings were not preserved' unless xhttp_reality['xhttpSettings'] == {'host' => 'cdn.example.com', 'path' => '/hidden', 'mode' => 'stream-up', 'extra' => {'xPaddingBytes' => '100-1000', 'noGRPCHeader' => false}}
+  raise 'XHTTP REALITY security was lost' unless xhttp_reality['security'] == 'reality' && xhttp_reality['realitySettings']['password'] == reality_key
+
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@tls.example.com:443?type=splithttp&security=tls&encryption=none&fp=chrome&sni=edge.example.com&alpn=h2%2Chttp%2F1.1&path=%2Fx&host=edge.example.com&mode=auto#XHTTP-TLS\n")
+  raise 'XHTTP TLS generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  xhttp_tls = JSON.parse(File.read(config + '.xray.json')).fetch('outbounds').first.fetch('streamSettings')
+  raise 'SplitHTTP alias was not normalized' unless xhttp_tls['network'] == 'xhttp'
+  raise 'XHTTP TLS settings were not preserved' unless xhttp_tls['tlsSettings'] == {'serverName' => 'edge.example.com', 'fingerprint' => 'chrome', 'alpn' => ['h2', 'http/1.1']}
+
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@tls.example.com:443?type=xhttp&security=tls&encryption=none&host=bad.example.com%2Fcrash#Invalid-XHTTP\n")
+  raise 'unsafe XHTTP host was accepted' if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
 
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#TLS\n")
   raise 'TLS regeneration failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)

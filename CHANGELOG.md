@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.10
+
+- Adds VLESS XHTTP over REALITY and TLS through the private Xray transport.
+- Preserves XHTTP mode, host, path and extra JSON parameters from subscription links.
+- Supports TLS ALPN lists and the legacy `splithttp` transport name for XHTTP nodes.
+- Rejects malformed XHTTP hosts before they can reach Xray.
+
 ## 1.1.9
 
 - Supports modern VLESS REALITY servers that enforce current Xray client

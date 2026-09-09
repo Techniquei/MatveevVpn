@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.1.9"
-BUILD_NUMBER="119"
+VERSION="1.1.10"
+BUILD_NUMBER="1110"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
@@ -63,7 +63,7 @@ fi
 
 XRAY_ARCHIVE="$WORK_DIR/xray.zip"
 XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/Xray-macos-arm64-v8a.zip"
-echo "Downloading Xray $XRAY_VERSION for modern REALITY..."
+echo "Downloading Xray $XRAY_VERSION for modern REALITY and XHTTP..."
 /usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$XRAY_URL" -o "$XRAY_ARCHIVE"
 XRAY_ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$XRAY_ARCHIVE" | /usr/bin/awk '{print $1}')"
 if [[ "$XRAY_ACTUAL_SHA" != "$XRAY_ARCHIVE_SHA256" ]]; then

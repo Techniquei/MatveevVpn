@@ -344,7 +344,7 @@ run_watchdog() {
     fi
   fi
   if child_running && [[ -f "$XRAY_CONFIG_FILE" ]] && ! xray_running; then
-    recover_child "the REALITY transport stopped"
+    recover_child "the Xray transport stopped"
     recovered=true
   fi
 

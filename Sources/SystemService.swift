@@ -72,7 +72,7 @@ struct SystemService {
         let xrayConfig = URL(fileURLWithPath: config.path + ".xray.json")
         if FileManager.default.fileExists(atPath: xrayConfig.path) {
             let xrayChecked = await Command.run(payload.appendingPathComponent("xray").path, ["run", "-test", "-c", xrayConfig.path])
-            guard xrayChecked.status == 0 else { throw VPNError.message("The REALITY configuration did not pass validation. Check the selected node.") }
+            guard xrayChecked.status == 0 else { throw VPNError.message("The Xray transport configuration did not pass validation. Check the selected node.") }
         }
         return config
     }

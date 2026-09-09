@@ -31,16 +31,44 @@ vpn_outbound = {
 vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
 
 xray_config = nil
-if query["security"] == "reality"
-  abort "REALITY requires pbk" if query["pbk"].to_s.empty?
-  abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
-  abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
+requested_network = query["type"].to_s
+xhttp = %w[xhttp splithttp].include?(requested_network)
+if query["security"] == "reality" || xhttp
+  if query["security"] == "reality"
+    abort "REALITY requires pbk" if query["pbk"].to_s.empty?
+    abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
+    abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
+  end
 
-  network = query["type"].to_s
+  network = requested_network
+  network = "xhttp" if xhttp
   network = "raw" if network.empty? || %w[tcp raw].include?(network)
-  stream = { "network" => network, "security" => "reality" }
+  security = query["security"].to_s
+  security = "none" if security.empty?
+  abort "unsupported VLESS XHTTP security: #{security}" unless %w[none tls reality].include?(security)
+  stream = { "network" => network, "security" => security }
   case network
   when "raw"
+  when "xhttp"
+    host = query["host"].to_s
+    abort "XHTTP host is invalid" if host.match?(/[\s\/?#@]/)
+    mode = query["mode"].to_s.empty? ? "auto" : query["mode"]
+    abort "unsupported XHTTP mode: #{mode}" unless %w[auto packet-up stream-up stream-one].include?(mode)
+    xhttp_settings = {
+      "host" => host,
+      "path" => query["path"].to_s.empty? ? "/" : query["path"],
+      "mode" => mode
+    }
+    unless query["extra"].to_s.empty?
+      begin
+        extra = JSON.parse(query["extra"])
+      rescue JSON::ParserError
+        abort "XHTTP extra must be valid JSON"
+      end
+      abort "XHTTP extra must be a JSON object" unless extra.is_a?(Hash)
+      xhttp_settings["extra"] = extra
+    end
+    stream["xhttpSettings"] = xhttp_settings
   when "ws"
     stream["wsSettings"] = {
       "path" => query["path"].to_s.empty? ? "/" : query["path"],
@@ -51,15 +79,25 @@ if query["security"] == "reality"
   else
     abort "unsupported VLESS REALITY transport: #{query["type"]}"
   end
-  reality = {
-    "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
-    "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"],
-    "password" => query["pbk"],
-    "shortId" => query["sid"].to_s,
-    "spiderX" => query["spx"].to_s
-  }
-  reality["mldsa65Verify"] = query["pqv"] unless query["pqv"].to_s.empty?
-  stream["realitySettings"] = reality
+  if security == "reality"
+    reality = {
+      "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+      "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"],
+      "password" => query["pbk"],
+      "shortId" => query["sid"].to_s,
+      "spiderX" => query["spx"].to_s
+    }
+    reality["mldsa65Verify"] = query["pqv"] unless query["pqv"].to_s.empty?
+    stream["realitySettings"] = reality
+  elsif security == "tls"
+    tls = {
+      "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+      "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"]
+    }
+    alpn = query["alpn"].to_s.split(",").map(&:strip).reject(&:empty?)
+    tls["alpn"] = alpn unless alpn.empty?
+    stream["tlsSettings"] = tls
+  end
   user = {
     "id" => URI.decode_www_form_component(uri.user.to_s),
     "encryption" => query["encryption"].to_s.empty? ? "none" : query["encryption"]
@@ -94,7 +132,7 @@ if query["security"] == "reality"
   }
 end
 
-if query["security"] == "tls"
+if query["security"] == "tls" && xray_config.nil?
   tls = {
     "enabled" => true,
     "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"]
@@ -105,7 +143,7 @@ if query["security"] == "tls"
   vpn_outbound["tls"] = tls
 end
 
-case query["security"] == "reality" ? nil : query["type"]
+case xray_config ? nil : query["type"]
 when nil, "", "tcp"
 when "ws"
   vpn_outbound["transport"] = {
@@ -241,7 +279,7 @@ config = {
 
 if xray_config
   # Keep the primary config identity tied to the private sidecar so transaction
-  # recovery can never confuse two REALITY nodes that use the same local SOCKS endpoint.
+  # recovery can never confuse two Xray nodes that use the same local SOCKS endpoint.
   config["route"]["rules"].unshift({
     "process_name" => ["matveev-xray-config-#{Digest::SHA256.hexdigest(JSON.generate(xray_config))}"],
     "action" => "route",
