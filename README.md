@@ -1,117 +1,66 @@
 # matveevVpn
 
-A native VLESS VPN client for Apple Silicon Macs running macOS 13 or newer.
+Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 
-## Version 1.1
+## Features
 
-- Selective routing or All Traffic mode over IPv4.
-- Native subscription setup, refresh and node selection.
-- Modern VLESS Reality nodes, including RAW, gRPC and XHTTP servers that enforce current Xray client versions.
-- VLESS XHTTP over REALITY or TLS, including mode, host, path, extra JSON and ALPN parameters.
-- Standard `type=raw` links and explicit ALPN lists across TLS transports.
-- Domain patterns, process names and application bundle rules including helpers.
-- Settings survive replacing or reinstalling the application.
-- Download/upload graphs, menu bar controls and optional launch at login.
-- Connection diagnostics, node TCP checks and routing-rule explanations.
-- Signed Sparkle updates, with manual Check for Updates.
-- Ready-to-edit default routes for YouTube, Telegram, ChatGPT, Claude and Cursor.
+- Selective routing by domain, application name or executable path.
+- All Traffic mode with private and local networks kept direct.
+- Native TUN, DNS interception and VPN-side DNS re-resolution.
+- HTTPS subscriptions, node selection and settings that survive app updates.
+- Modern REALITY and XHTTP through Xray-core; sing-box handles TUN and routing.
+- Connection diagnostics, traffic graphs, menu-bar controls and launch at login.
+- Atomic configuration reload, automatic rollback and runtime recovery.
+- Signed Sparkle update feed.
+
+## Supported VLESS links
+
+Subscriptions may contain plain or Base64-encoded `vless://` links.
+
+| Area | Supported values and parameters |
+| --- | --- |
+| Server | UUID, hostname or IP, port, node name in the URL fragment |
+| Flow | `flow`, including `xtls-rprx-vision` |
+| RAW/TCP | omitted `type`, `type=tcp`, `type=raw` |
+| WebSocket | `type=ws`, `path`, `host` |
+| gRPC | `type=grpc`, `serviceName` |
+| XHTTP | `type=xhttp` or `type=splithttp`, `path`, `host`, `mode`, `extra` |
+| TLS | `security=tls`, `sni`, `fp`, `alpn` |
+| REALITY | `security=reality`, `pbk`, `sid`, `sni`, `fp`, `spx`, optional `pqv` |
+
+XHTTP supports `auto`, `packet-up`, `stream-up` and `stream-one` modes. Its
+URL-encoded `extra` value is passed to Xray as a JSON object. ALPN lists such as
+`h2,http/1.1` are preserved across TLS transports.
 
 ## Install
 
-Download the DMG from [Releases](https://github.com/Techniquei/MatveevVpn/releases),
-drag the app to Applications and open it. Choose **Install and set up**, enter
-your HTTPS VLESS subscription URL, load nodes, select a node and install.
+Download the latest DMG from [Releases](https://github.com/Techniquei/MatveevVpn/releases),
+drag `matveevVpn` to Applications and open it. Add an HTTPS subscription, choose
+a node, then select **Install and set up**.
 
-macOS requests an administrator password for system installation, repair or
-system-component upgrades. Normal on/off, node, subscription and routing changes
-do not request a password. This development build is ad-hoc signed; it is not
-notarized by Apple. On macOS versions that block it, review the blocked-app
-entry in System Settings → Privacy & Security.
+The system component requires one administrator prompt on first installation or
+repair. Normal connection and configuration changes do not require a password.
 
-The first upgrade from 1.0 to 1.1 must be installed manually. Subsequent releases
-can be installed through Sparkle.
+Current builds are ad-hoc signed and not notarized by Apple. If macOS blocks the
+app, allow it in System Settings → Privacy & Security. The tunnel is IPv4-only.
 
-## Routing
-
-**Selective** sends matching traffic through the VPN; unmatched traffic goes
-direct. **All Traffic** sends IPv4 internet traffic through the VPN and keeps
-local destinations direct. Switching modes keeps the selective rules. IPv6 is
-disabled while connected because not every VLESS node provides IPv6 egress.
-
-In Routing Rules, enter one domain or process name per line.
-Both `example.com` and `*.example.com` include the base domain and all its
-subdomains, but not `notexample.com`. URLs and middle-of-domain wildcards are
-rejected.
-
-New installations start with editable rules for YouTube, Telegram, ChatGPT,
-Claude and Cursor. Updating the app never replaces rules already saved by the
-user. Reset All Settings restores the current bundled defaults.
-
-**Add Application** generates an escaped path expression for the selected
-application bundle. For example, a Cursor bundle rule includes its internal
-helpers even when their process names vary. Commands launched outside the app
-bundle, such as a system shell or an external runtime, need domain rules or their
-own explicit rules. Domain routing depends on DNS mapping or a visible protocol
-hostname; encrypted hostnames and existing connections can limit domain matching.
-
-The TUN installs its native macOS DNS endpoint and intercepts DNS before
-private-network and application rules.
-Full mode uses VPN DNS; resolving the VPN server itself uses the macOS system
-resolver over the direct connection. Full mode is not a kill switch: turning the VPN off
-restores direct connectivity.
-After protocol sniffing, destinations selected for VPN routing are resolved again
-through VPN DNS. This prevents a locally filtered DNS answer from following the
-connection into the tunnel.
-
-## Settings and diagnostics
-
-User state is stored privately in
-`~/Library/Application Support/matveevVpn/settings.json`.
-It contains sensitive subscription credentials; do not share it.
-A one-time migration reads the canonical `~/VPN` installation, preserves the
-selected node and rules, and leaves the old files intact. Backup folders are not
-searched.
-
-Connection Settings lets you change the URL, refresh nodes and apply a selected
-node. Failed changes retain the previous configuration. Node identity is based
-on connection parameters, not its position in the list.
-
-Settings & Diagnostics includes direct/VPN IPv4 probes, service repair, a copyable
-report, application/domain rule explanations, and rules import/export.
-Exports do not contain the subscription or node credentials. Public IP probes
-contact api64.ipify.org directly and api4.ipify.org through the selected VPN
-node only on request or after connection changes; they do not prove the absence
-of every possible leak. Node tests measure TCP reachability
-through the current connection, not authenticated VPN speed.
-
-**Revert Changes** discards unsaved routing edits. **Clear All** clears the editor
-after confirmation; Save and Apply commits it. **Reset All Settings** disconnects
-and clears the saved subscription, node and rules. **Uninstall** removes the
-system service and moves the app to Trash while keeping user settings.
-
-## Build and test
-
-Install Xcode command-line tools, then run:
+## Build
 
 ```sh
 ./Scripts/validate.sh
 ./Scripts/build-dmg.sh
 ```
 
-The build downloads pinned, SHA-256-verified sing-box 1.14.0, Xray-core 26.3.27
-and Sparkle 2.9.6. Xray is started as a loopback-only transport for REALITY and XHTTP nodes;
-sing-box continues to own the TUN, DNS and routing policy.
-No Xcode project is required. The output is in `dist/`.
-`MATVEEV_SING_BOX_BINARY` can point to an existing arm64 runtime for development.
+The build downloads pinned, SHA-256-verified sing-box, Xray-core and Sparkle
+artifacts. Output is written to `dist/`.
 
-See [architecture](docs/ARCHITECTURE.md) and [release instructions](docs/RELEASING.md).
+See [architecture](docs/ARCHITECTURE.md), [release instructions](docs/RELEASING.md)
+and [security policy](SECURITY.md).
 
-## Privacy and licensing
+## Privacy and license
 
-The app has no analytics or bundled account. Subscription requests use a
-memory-only HTTP session. Sparkle contacts GitHub for updates. Optional IP checks
-contact the provider described above. Diagnostic reports omit subscription URLs,
-node credentials and process arguments.
+No analytics are included. Subscription credentials and settings remain on the
+Mac. Optional IP diagnostics contact ipify only when requested or after a
+connection change.
 
-GPL-3.0-or-later. See [third-party notices](THIRD_PARTY_NOTICES.md) and
-[security reporting](SECURITY.md).
+GPL-3.0-or-later. Third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
