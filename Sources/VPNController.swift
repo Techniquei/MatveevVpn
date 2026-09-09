@@ -6,7 +6,7 @@ import UserNotifications
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.1.11"
+    static let releaseVersion = "1.1.12"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -20,6 +20,7 @@ final class VPNController: ObservableObject {
     @Published var state = SavedState()
     @Published var showConnection = false
     @Published var diagnostics = ""
+    @Published var failureReport = ""
     @Published var candidateURL = ""
     @Published var candidateNodes: [VPNNode] = []
     @Published var candidateID: String?
@@ -64,7 +65,7 @@ final class VPNController: ObservableObject {
         currentNodeIndex = state.selectedNodeID
         node = availableNodes.first { $0.id == state.selectedNodeID }?.name ?? "Not selected"
         if message == "Checking status…" {
-            message = isInstalled ? "Ready" : "Add a subscription to get started."
+            message = isInstalled && state.selectedNodeID != nil ? "" : "Add a subscription to get started."
         }
     }
     func refreshWhenActive() { refresh() }
@@ -72,15 +73,17 @@ final class VPNController: ObservableObject {
     func currentRoutingRules() -> RoutingRules { state.rules }
     func loadAvailableNodes() { refresh() }
 
-    private func perform(allowRecovery: Bool = false, _ operation: @escaping () async throws -> Void) {
+    private func perform(_ operationName: String = "Apply changes", allowRecovery: Bool = false, _ operation: @escaping () async throws -> Void) {
         guard !isBusy, !loadFailed || allowRecovery else { return }
         isBusy = true
+        failureReport = ""
         message = "Applying changes…"
         Task {
-            do { try await operation(); message = "Done" }
+            do { try await operation(); message = "" }
             catch {
                 if let recovered = try? store.load() { state = recovered }
                 message = error.localizedDescription; rulesMessage = message; nodeMessage = message
+                failureReport = makeFailureReport(operation: operationName, error: error)
             }
             isBusy = false
             refresh()
@@ -115,7 +118,7 @@ final class VPNController: ObservableObject {
     }
 
     func run(_ action: String) {
-        perform {
+        perform(action == "off" ? "Disconnect VPN" : "Connect VPN") {
             let wasRunning = self.service.running
             try await self.service.send(action)
             var next = self.state
@@ -154,11 +157,16 @@ final class VPNController: ObservableObject {
     }
     func fetchSubscription() {
         let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        perform {
-            guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
-                throw VPNError.message("Enter an HTTPS subscription URL.")
+        perform("Load subscription") {
+            let data: Data
+            if input.hasPrefix("vless://") {
+                data = Data(input.utf8)
+            } else {
+                guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
+                    throw VPNError.message("Enter an HTTPS subscription URL or a VLESS link.")
+                }
+                data = try await SubscriptionFetcher.fetch(url)
             }
-            let data = try await SubscriptionFetcher.fetch(url)
             let decoded = try Subscription.decode(data)
             let nodes = try Subscription.nodes(decoded)
             let old = self.availableNodes.first { $0.id == self.state.selectedNodeID }
@@ -292,6 +300,29 @@ final class VPNController: ObservableObject {
         return result.status == 0 && !addresses.isEmpty ? "reachable" : "unavailable"
     }
     func copyDiagnostics() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(diagnostics, forType: .string) }
+    func copyFailureReport() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(failureReport, forType: .string)
+        message = "Error report copied."
+    }
+
+    private func makeFailureReport(operation: String, error: Error) -> String {
+        var details = (error as? VPNError)?.diagnosticDetails ?? "No additional error details were provided."
+        details = Self.redact(details)
+        return "Time: \(Date().formatted())\nApp: \(Self.releaseVersion)\nOperation: \(operation)\nResult: failed\nError: \(error.localizedDescription)\nController: \(service.currentVersion)\nTunnel: \(service.running ? "running" : "stopped")\n\nDetails:\n\(details)"
+    }
+
+    private nonisolated static func redact(_ text: String) -> String {
+        var result = text
+        for pattern in [#"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"#,
+                        #"(?i)(?:vless|https?)://[^\s\"']+"#,
+                        #"\b(?:\d{1,3}\.){3}\d{1,3}\b"#,
+                        #"(?i)\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b"#,
+                        #"(?i)\b[A-Za-z0-9_-]{43}\b"#] {
+            result = result.replacingOccurrences(of: pattern, with: "<redacted>", options: .regularExpression)
+        }
+        return String(result.prefix(12_000))
+    }
     func repair() {
         perform {
             let stage = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: stage) }

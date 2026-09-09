@@ -45,15 +45,17 @@ struct SystemService {
         let token = UUID().uuidString
         let response = control.appendingPathComponent("response-\(token)")
         try privateWrite(Data("\(action) \(token)\n".utf8), to: control.appendingPathComponent("command"))
-        for _ in 0..<300 {
+        for _ in 0..<100 {
             if let value = try? String(contentsOf: response, encoding: .utf8) {
                 try? FileManager.default.removeItem(at: response)
-                guard value.hasPrefix("ok") else { throw VPNError.message("The controller rejected the change. The previous configuration was retained.") }
+                guard value.hasPrefix("ok") else {
+                    throw VPNError.diagnostic("The controller rejected the change. The previous configuration was retained.", recentRuntimeErrors())
+                }
                 return
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        throw VPNError.message("The controller did not respond. Open Diagnostics to repair the service.")
+        throw VPNError.diagnostic("The controller did not respond within 10 seconds.", recentRuntimeErrors())
     }
 
     func generate(_ state: SavedState, at stage: URL) async throws -> URL {
@@ -66,13 +68,13 @@ struct SystemService {
         try privateWrite(Data(state.subscription.utf8), to: subscription)
         try privateWrite(JSONEncoder().encode(state.rules), to: rules)
         let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(node.index), rules.path])
-        guard generated.status == 0 else { throw VPNError.message("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.") }
+        guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.", generated.output) }
         let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path])
-        guard checked.status == 0 else { throw VPNError.message("The configuration did not pass validation. Check the node and routing expressions.") }
+        guard checked.status == 0 else { throw VPNError.diagnostic("The configuration did not pass validation. Check the node and routing expressions.", checked.output) }
         let xrayConfig = URL(fileURLWithPath: config.path + ".xray.json")
         if FileManager.default.fileExists(atPath: xrayConfig.path) {
             let xrayChecked = await Command.run(payload.appendingPathComponent("xray").path, ["run", "-test", "-c", xrayConfig.path])
-            guard xrayChecked.status == 0 else { throw VPNError.message("The Xray transport configuration did not pass validation. Check the selected node.") }
+            guard xrayChecked.status == 0 else { throw VPNError.diagnostic("The Xray transport configuration did not pass validation. Check the selected node.", xrayChecked.output) }
         }
         return config
     }
@@ -106,7 +108,15 @@ struct SystemService {
             if currentVersion == Self.version && (!desiredOn || running) { return }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        throw VPNError.message("The service was installed but did not become ready. Open Diagnostics.")
+        throw VPNError.diagnostic("The service was installed but did not become ready within 10 seconds.", recentRuntimeErrors())
+    }
+
+    func recentRuntimeErrors() -> String {
+        let file = Self.base.appendingPathComponent("run/vpn.error.log")
+        guard let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty else {
+            return "The VPN runtime did not provide an error log."
+        }
+        return text.split(separator: "\n").suffix(30).joined(separator: "\n")
     }
 
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }

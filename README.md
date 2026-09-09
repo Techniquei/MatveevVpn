@@ -7,7 +7,7 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 - Selective routing by domain, application name or executable path.
 - All Traffic mode with private and local networks kept direct.
 - Native TUN, DNS interception and VPN-side DNS re-resolution.
-- HTTPS subscriptions, node selection and settings that survive app updates.
+- HTTPS subscriptions or direct VLESS links, node selection and settings that survive app updates.
 - Modern REALITY and XHTTP through Xray-core; sing-box handles TUN and routing.
 - Connection diagnostics, traffic graphs, menu-bar controls and launch at login.
 - Atomic configuration reload, automatic rollback and runtime recovery.
@@ -15,7 +15,8 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 
 ## Supported VLESS links
 
-Subscriptions may contain plain or Base64-encoded `vless://` links.
+Subscriptions may contain plain, standard Base64 or URL-safe Base64-encoded
+`vless://` links. Supported VLESS entries are imported from mixed protocol lists.
 
 | Area | Supported values and parameters |
 | --- | --- |
@@ -35,7 +36,7 @@ URL-encoded `extra` value is passed to Xray as a JSON object. ALPN lists such as
 ## Install
 
 Download the latest DMG from [Releases](https://github.com/Techniquei/MatveevVpn/releases),
-drag `matveevVpn` to Applications and open it. Add an HTTPS subscription, choose
+drag `matveevVpn` to Applications and open it. Add an HTTPS subscription or direct VLESS link, choose
 a node, then select **Install and set up**.
 
 The system component requires one administrator prompt on first installation or

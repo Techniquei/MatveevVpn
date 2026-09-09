@@ -17,6 +17,17 @@ import Foundation
         precondition(nodes[0].id == renamed[0].id)
         let decoded = try Subscription.decode(Data(Data(text.utf8).base64EncodedString().utf8))
         precondition(decoded == text)
+        let urlSafe = Data(text.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let decodedURLSafe = try Subscription.decode(Data(urlSafe.utf8))
+        precondition(decodedURLSafe == text)
+        let mixed = "\u{feff}vmess://unsupported\n" + text + "trojan://unsupported\n"
+        let decodedMixed = try Subscription.decode(Data(mixed.utf8))
+        precondition(decodedMixed == text)
+        let decodedDirect = try Subscription.decode(Data(a.utf8))
+        precondition(decodedDirect == a + "\n")
         do { _ = try Subscription.decode(Data("garbage".utf8)); fatalError("Invalid subscription accepted") } catch {}
         try Data(text.utf8).write(to: service.appendingPathComponent("private/subscription.decoded"))
         try Data("2\n".utf8).write(to: service.appendingPathComponent("current-server.txt"))
@@ -64,6 +75,16 @@ import Foundation
         try freshStore.save(customized)
         let preserved = try freshStore.load()
         precondition(preserved.rules.domains == ["custom.example.com"], "Updates must not replace saved user rules")
+
+        let incompleteLegacy = root.appendingPathComponent("incomplete-legacy")
+        let incompleteService = incompleteLegacy.appendingPathComponent(".service")
+        try FileManager.default.createDirectory(at: incompleteService.appendingPathComponent("private"), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: incompleteService.appendingPathComponent("private/subscription.decoded"))
+        try Data("1\n".utf8).write(to: incompleteService.appendingPathComponent("current-server.txt"))
+        let incompleteStore = StateStore(directory: root.appendingPathComponent("incomplete-settings"), legacyDirectory: incompleteLegacy, runtimeHashFile: hashFile, defaultRulesFile: defaultsFile)
+        let recoveredLegacy = try incompleteStore.load()
+        precondition(recoveredLegacy.selectedNodeID == nodes[0].id, "Incomplete legacy subscription must still migrate")
+        precondition(recoveredLegacy.rules == fresh.rules, "Missing legacy routing rules must fall back to bundled defaults")
         print("configuration: defaults, migration, persistence, transaction recovery, reset, node identity and decoding passed")
     }
 }

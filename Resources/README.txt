@@ -1,8 +1,8 @@
-matveevVpn 1.1.10 for macOS (Apple Silicon)
+matveevVpn 1.1.12 for macOS (Apple Silicon)
 ========================================
 
 Move matveevVpn to Applications, open it, and choose Install and set up.
-Enter an HTTPS VLESS subscription URL, load nodes, choose one, and install.
+Enter an HTTPS VLESS subscription URL or a direct VLESS link, load nodes, choose one, and install.
 macOS requests administrator permission to install or repair the system service.
 Routine connection and routing changes do not need a password.
 

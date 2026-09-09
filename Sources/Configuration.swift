@@ -3,7 +3,18 @@ import CryptoKit
 
 enum VPNError: LocalizedError {
     case message(String)
-    var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
+    case diagnostic(String, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .message(let text), .diagnostic(let text, _): return text
+        }
+    }
+
+    var diagnosticDetails: String? {
+        if case .diagnostic(_, let details) = self { return details }
+        return nil
+    }
 }
 
 enum RoutingMode: String, Codable, CaseIterable { case selective, all }
@@ -53,12 +64,19 @@ enum Subscription {
         guard data.count <= 4_194_304, let raw = String(data: data, encoding: .utf8) else {
             throw VPNError.message("The subscription is too large or is not text.")
         }
-        let compact = raw.components(separatedBy: .whitespacesAndNewlines).joined()
+        let cleaned = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}")))
+        let compact = cleaned.components(separatedBy: .whitespacesAndNewlines).joined()
         let padded = compact + String(repeating: "=", count: (4 - compact.count % 4) % 4)
-        let decoded = raw.contains("vless://") ? raw : String(data: Data(base64Encoded: padded) ?? Data(), encoding: .utf8) ?? ""
-        let lines = decoded.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        guard !lines.isEmpty, lines.allSatisfy({ $0.hasPrefix("vless://") }) else {
-            throw VPNError.message("The subscription must contain VLESS links.")
+        let base64 = padded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let decoded = cleaned.contains("vless://") ? cleaned : String(data: Data(base64Encoded: base64) ?? Data(), encoding: .utf8) ?? ""
+        let lines = decoded.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}"))) }
+            .filter { $0.hasPrefix("vless://") }
+        guard !lines.isEmpty else {
+            throw VPNError.diagnostic(
+                "The subscription must contain VLESS links.",
+                "Received bytes: \(data.count)\nText encoding: UTF-8\nDirect VLESS content: \(cleaned.contains("vless://") ? "yes" : "no")\nBase64 decoding: \(Data(base64Encoded: base64) == nil ? "failed" : "succeeded")"
+            )
         }
         let result = lines.joined(separator: "\n") + "\n"
         _ = try nodes(result)
@@ -71,7 +89,7 @@ enum Subscription {
             guard var parts = URLComponents(string: String(line)), parts.scheme == "vless",
                   let host = parts.host, !host.isEmpty, let port = parts.port, (1...65535).contains(port),
                   let user = parts.user, UUID(uuidString: user) != nil else {
-                throw VPNError.message("Invalid VLESS node on line \(offset + 1).")
+                throw VPNError.diagnostic("Invalid VLESS node on line \(offset + 1).", "The node is missing a valid UUID, hostname or port. Credentials and addresses were omitted from this report.")
             }
             let name = parts.fragment.flatMap { $0.isEmpty ? nil : $0 } ?? "\(host):\(port)"
             parts.fragment = nil
@@ -153,7 +171,12 @@ struct StateStore {
         guard FileManager.default.fileExists(atPath: subscriptionFile.path) else { return try freshState() }
         var state = SavedState()
         state.subscription = try Subscription.decode(Data(contentsOf: subscriptionFile))
-        state.rules = try JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: legacy.appendingPathComponent("routing-rules.json")))
+        let legacyRules = legacy.appendingPathComponent("routing-rules.json")
+        if let rules = try? JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: legacyRules)) {
+            state.rules = rules
+        } else {
+            state.rules = try freshState().rules
+        }
         state.subscriptionURL = (try? String(contentsOf: legacy.appendingPathComponent(".service/private/subscription-url.txt"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let index = Int((try String(contentsOf: legacy.appendingPathComponent(".service/current-server.txt"), encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines))
         state.selectedNodeID = try Subscription.nodes(state.subscription).first { $0.index == index }?.id
