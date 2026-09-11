@@ -26,12 +26,16 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "5"
+    static let version = "7"
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { Self.base.appendingPathComponent("control") }
     var installed: Bool { FileManager.default.fileExists(atPath: Self.base.appendingPathComponent("bin/controller.sh").path) }
     var currentVersion: String { (try? String(contentsOf: control.appendingPathComponent("version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "1" }
+    var runtimeStatus: String {
+        (try? String(contentsOf: control.appendingPathComponent("runtime-status"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unavailable"
+    }
     var running: Bool {
         let file = control.appendingPathComponent("runtime-status")
         guard (try? String(contentsOf: file, encoding: .utf8))?.hasPrefix("running") == true else { return false }
@@ -112,11 +116,13 @@ struct SystemService {
     }
 
     func recentRuntimeErrors() -> String {
-        let file = Self.base.appendingPathComponent("run/vpn.error.log")
-        guard let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty else {
-            return "The VPN runtime did not provide an error log."
+        let files = [control.appendingPathComponent("last-error.log"), Self.base.appendingPathComponent("run/vpn.error.log")]
+        for file in files {
+            if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
+                return text.split(separator: "\n").suffix(80).joined(separator: "\n")
+            }
         }
-        return text.split(separator: "\n").suffix(30).joined(separator: "\n")
+        return "The VPN runtime did not provide an error log."
     }
 
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }

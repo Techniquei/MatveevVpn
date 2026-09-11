@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1
+
+- Measures direct, physical-interface ICMP latency for subscription nodes at launch and refreshes a node's result when selected, with a labelled direct TCP fallback when ICMP is blocked.
+- Refreshes all visible node measurements every time a node selector is opened.
+- Detects repeated tunnel health failures and performs bounded restart/node failover with a persistent circuit breaker.
+- Turns the VPN off with an explicit error after automatic recovery is exhausted.
+- Replaces copied diagnostic/error reports with an unredacted, unchanged log export from Settings and error notifications; failure logs include physical-network state, VLESS transport/security details and recent raw runtime errors.
+- Keeps application and privileged runtime log files within a strict 3 MB limit.
+
 ## 1.2.0
 
 - Stops subscription downloads and controller connection attempts after 10 seconds.

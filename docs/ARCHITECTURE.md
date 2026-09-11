@@ -13,7 +13,7 @@ The menu bar uses the same state and traffic monitor as the window.
 | SystemService | Fixed controller protocol, config generation and privileged install |
 | build-config.rb | Derive sing-box configuration and the optional REALITY sidecar |
 | controller.sh | Privileged tunnel lifetime, reload rollback, sleep/network recovery |
-| Diagnostics / Updater | Reachability, rule explanation and Sparkle integration |
+| Diagnostics / Updater | Node latency, reachability, rule explanation and Sparkle integration |
 
 ## State and transactions
 
@@ -65,6 +65,27 @@ to observe the actual rule used by an existing socket.
 The runtime status file is a heartbeat in controller v2. A stale heartbeat is not
 reported as connected. External IP checks are separate, bounded requests. They
 run after changes or on explicit request, never on the two-second status timer.
+
+Node latency is measured automatically when the app starts and again when a
+node is selected. Probes are bound to the physical network interface so the TUN
+cannot report a local connect time for an alternate node. Three ICMP packets
+provide the average RTT; nodes that block ICMP use one direct, interface-bound
+TCP handshake as a clearly labelled fallback. While the VPN is expected to be on, a bounded tunnel-DNS probe
+runs every 15 seconds. Three consecutive failures start recovery: two restarts
+of the current node, then up to three alternate nodes ordered by known TCP
+latency. A persistent circuit breaker permits at most three actual node switches
+in ten minutes. Exhausting either path turns the VPN off and surfaces an error.
+The privileged controller independently stops trying to launch a failing runtime
+after three attempts, so recovery cannot loop when the UI is absent.
+
+The user-readable event log lives under `~/Library/Logs/matveevVpn`. Each append
+atomically retains at most 3,000,000 bytes, and Settings or an error action exports its bytes
+unchanged. It is deliberately unredacted and may contain node addresses, links
+and credentials; filesystem permissions are 0600. Failure entries include the
+physical network state, Wi-Fi power, default route, VLESS URI, endpoint,
+transport, security, flow, runtime core and recent raw engine errors. Privileged
+engine output is also written through bounded appenders; each internal runtime
+log has the same hard maximum.
 
 ## Platform boundaries
 

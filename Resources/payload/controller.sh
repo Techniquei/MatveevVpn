@@ -23,6 +23,8 @@ ROLLBACK_XRAY_CONFIG="$RUN_DIR/xray.rollback.json"
 LOG_FILE="${MATVEEV_LOG_FILE:-$RUN_DIR/vpn.log}"
 ERROR_FILE="${MATVEEV_ERROR_FILE:-$RUN_DIR/vpn.error.log}"
 WATCHDOG_GAP_SECONDS="${MATVEEV_WATCHDOG_GAP_SECONDS:-10}"
+MAX_LOG_BYTES="${MATVEEV_MAX_LOG_BYTES:-3000000}"
+MAX_START_FAILURES="${MATVEEV_MAX_START_FAILURES:-3}"
 
 CHILD_PID=""
 XRAY_PID=""
@@ -31,8 +33,79 @@ LAST_NETWORK_CHECK=0
 LAST_NETWORK_SIGNATURE=""
 TUN_MISSES=0
 LAST_STATUS_PUBLISH=0
+START_FAILURES=0
 
 /bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
+
+bounded_log_line() {
+  local file="$1" line="$2" lock temporary size entry_size keep lock_attempt=0
+  lock="$RUN_DIR/.log-lock-$(/usr/bin/basename "$file")"
+  while ! /bin/mkdir "$lock" 2>/dev/null; do
+    lock_attempt=$((lock_attempt + 1))
+    [[ "$lock_attempt" -lt 500 ]] || return 1
+    /bin/sleep 0.01
+  done
+  temporary="$(/usr/bin/mktemp "$RUN_DIR/.bounded-log.XXXXXX")" || { /bin/rmdir "$lock"; return 1; }
+  /usr/bin/printf '%s\n' "$line" > "$temporary"
+  entry_size="$(/usr/bin/wc -c < "$temporary" | /usr/bin/tr -d '[:space:]')"
+  if [[ "$entry_size" -gt "$MAX_LOG_BYTES" ]]; then
+    /usr/bin/tail -c "$MAX_LOG_BYTES" "$temporary" > "$file"
+  else
+    size="$(/usr/bin/wc -c < "$file" 2>/dev/null | /usr/bin/tr -d '[:space:]')"
+    size="${size:-0}"
+    if [[ $((size + entry_size)) -gt "$MAX_LOG_BYTES" ]]; then
+      keep=$((MAX_LOG_BYTES - entry_size))
+      if [[ "$keep" -gt 0 && -f "$file" ]]; then /usr/bin/tail -c "$keep" "$file" > "$temporary.retained"; else : > "$temporary.retained"; fi
+      /bin/cat "$temporary" >> "$temporary.retained"
+      /bin/mv -f "$temporary.retained" "$file"
+    else
+      /bin/cat "$temporary" >> "$file"
+    fi
+  fi
+  /bin/chmod 600 "$file" 2>/dev/null || true
+  /bin/rm -f "$temporary" "$temporary.retained"
+  /bin/rmdir "$lock"
+}
+
+bounded_logger() {
+  local file="$1" line
+  while IFS= read -r line || [[ -n "$line" ]]; do bounded_log_line "$file" "$line"; done
+}
+
+prepare_log() {
+  local file="$1" size temporary
+  [[ -f "$file" ]] || { : > "$file"; /bin/chmod 600 "$file"; return; }
+  size="$(/usr/bin/wc -c < "$file" | /usr/bin/tr -d '[:space:]')"
+  if [[ "$size" -gt "$MAX_LOG_BYTES" ]]; then
+    temporary="$(/usr/bin/mktemp "$RUN_DIR/.trim-log.XXXXXX")" || return
+    /usr/bin/tail -c "$MAX_LOG_BYTES" "$file" > "$temporary"
+    /bin/mv -f "$temporary" "$file"
+  fi
+  /bin/chmod 600 "$file" 2>/dev/null || true
+}
+
+/bin/rmdir "$RUN_DIR/.log-lock-$(/usr/bin/basename "$LOG_FILE")" 2>/dev/null || true
+/bin/rmdir "$RUN_DIR/.log-lock-$(/usr/bin/basename "$ERROR_FILE")" 2>/dev/null || true
+prepare_log "$LOG_FILE"
+prepare_log "$ERROR_FILE"
+
+publish_recent_errors() {
+  local temporary owner_uid owner_gid
+  temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.last-error.XXXXXX")" || return 1
+  {
+    /usr/bin/printf '%s\n' "Controller status: $(/usr/bin/head -n 1 "$STATUS_FILE" 2>/dev/null || /usr/bin/printf unavailable)"
+    /usr/bin/printf '%s\n' "Desired state: $(/usr/bin/head -n 1 "$DESIRED_FILE" 2>/dev/null || /usr/bin/printf unavailable)"
+    /usr/bin/printf '%s\n' 'Recent runtime output:'
+    /usr/bin/tail -c 128000 "$ERROR_FILE" 2>/dev/null || true
+  } > "$temporary"
+  if [[ -z "${MATVEEV_BASE_DIR:-}" ]]; then
+    owner_uid="$(/usr/bin/stat -f '%u' "$CONTROL_DIR")"
+    owner_gid="$(/usr/bin/stat -f '%g' "$CONTROL_DIR")"
+    /usr/sbin/chown "$owner_uid:$owner_gid" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
+  fi
+  /bin/chmod 600 "$temporary"
+  /bin/mv -f "$temporary" "$CONTROL_DIR/last-error.log"
+}
 
 write_status() {
   local value="$1"
@@ -48,6 +121,7 @@ write_response() {
   local value="$2"
   local response="$CONTROL_DIR/response-$token"
   local temporary
+  if [[ "$value" != "ok" ]]; then publish_recent_errors || true; else /bin/rm -f "$CONTROL_DIR/last-error.log"; fi
   temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.response.XXXXXX")" || return 1
   /usr/bin/printf '%s\n' "$value" > "$temporary"
   /bin/chmod 644 "$temporary"
@@ -74,7 +148,7 @@ tunnel_interface() {
 }
 
 log_event() {
-  /usr/bin/printf '%s controller: %s\n' "$(/bin/date '+%Y-%m-%d %H:%M:%S')" "$1"
+  bounded_log_line "$LOG_FILE" "$(/bin/date '+%Y-%m-%d %H:%M:%S') controller: $1"
 }
 
 install_config() {
@@ -107,17 +181,17 @@ start_child() {
     write_status "error"
     return 1
   fi
-  if ! "$SING_BOX" check -c "$CONFIG_FILE" >> "$ERROR_FILE" 2>&1; then
+  if ! "$SING_BOX" check -c "$CONFIG_FILE" > >(bounded_logger "$ERROR_FILE") 2>&1; then
     write_status "error"
     return 1
   fi
 
   if [[ -f "$XRAY_CONFIG_FILE" ]]; then
-    if [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$XRAY_CONFIG_FILE" >> "$ERROR_FILE" 2>&1; then
+    if [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$XRAY_CONFIG_FILE" > >(bounded_logger "$ERROR_FILE") 2>&1; then
       write_status "error"
       return 1
     fi
-    "$XRAY" run -c "$XRAY_CONFIG_FILE" >> "$LOG_FILE" 2>> "$ERROR_FILE" &
+    "$XRAY" run -c "$XRAY_CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
     XRAY_PID=$!
     /usr/bin/printf '%s\n' "$XRAY_PID" > "$XRAY_PID_FILE"
     /bin/sleep 0.2
@@ -129,7 +203,7 @@ start_child() {
     fi
   fi
 
-  "$SING_BOX" run -c "$CONFIG_FILE" >> "$LOG_FILE" 2>> "$ERROR_FILE" &
+  "$SING_BOX" run -c "$CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
   CHILD_PID=$!
   /usr/bin/printf '%s\n' "$CHILD_PID" > "$PID_FILE"
   /bin/sleep 1
@@ -137,7 +211,7 @@ start_child() {
   for ready_attempt in {1..25}; do
     child_running || break
     if tunnel_ready; then
-      if [[ -x "$DNS_MANAGER" ]] && ! "$DNS_MANAGER" apply >> "$LOG_FILE" 2>> "$ERROR_FILE"; then
+      if [[ -x "$DNS_MANAGER" ]] && ! "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE"); then
         log_event "could not activate tunnel DNS"
         stop_child
         write_status "error"
@@ -177,7 +251,7 @@ stop_child() {
   local owned_interface
   owned_interface="$(tunnel_interface)"
   if [[ -x "$DNS_MANAGER" ]]; then
-    "$DNS_MANAGER" restore >> "$LOG_FILE" 2>> "$ERROR_FILE" || log_event "could not restore system DNS"
+    "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || log_event "could not restore system DNS"
   fi
   if child_running; then
     /bin/kill -TERM "$CHILD_PID" 2>/dev/null || true
@@ -230,10 +304,10 @@ reload_config() {
   if [[ ! -f "$PENDING_CONFIG" || -L "$PENDING_CONFIG" || -L "$PENDING_XRAY_CONFIG" ]]; then
     return 1
   fi
-  if ! "$SING_BOX" check -c "$PENDING_CONFIG" >> "$ERROR_FILE" 2>&1; then
+  if ! "$SING_BOX" check -c "$PENDING_CONFIG" > >(bounded_logger "$ERROR_FILE") 2>&1; then
     return 1
   fi
-  if [[ -f "$PENDING_XRAY_CONFIG" ]] && { [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$PENDING_XRAY_CONFIG" >> "$ERROR_FILE" 2>&1; }; then
+  if [[ -f "$PENDING_XRAY_CONFIG" ]] && { [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$PENDING_XRAY_CONFIG" > >(bounded_logger "$ERROR_FILE") 2>&1; }; then
     return 1
   fi
   /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
@@ -310,7 +384,22 @@ recover_child() {
   local reason="$1"
   log_event "restarting VPN after $reason"
   stop_child
-  start_child || true
+  start_with_limit || true
+}
+
+start_with_limit() {
+  if start_child; then
+    START_FAILURES=0
+    return 0
+  fi
+  START_FAILURES=$((START_FAILURES + 1))
+  log_event "VPN start failed ($START_FAILURES/$MAX_START_FAILURES)"
+  if [[ "$START_FAILURES" -ge "$MAX_START_FAILURES" ]]; then
+    set_desired "off"
+    write_status "error: retry limit reached"
+    log_event "VPN disabled after reaching the startup retry limit"
+  fi
+  return 1
 }
 
 run_watchdog() {
@@ -368,7 +457,8 @@ process_command() {
   case "$action" in
     on)
       set_desired "on"
-      if start_child; then write_response "$token" "ok"; else write_response "$token" "error"; fi
+      START_FAILURES=0
+      if start_with_limit; then write_response "$token" "ok"; else write_response "$token" "error"; fi
       ;;
     off)
       set_desired "off"
@@ -377,8 +467,9 @@ process_command() {
       ;;
     restart)
       set_desired "on"
+      START_FAILURES=0
       stop_child
-      if start_child; then write_response "$token" "ok"; else write_response "$token" "error"; fi
+      if start_with_limit; then write_response "$token" "ok"; else write_response "$token" "error"; fi
       ;;
     reload)
       if reload_config; then write_response "$token" "ok"; else write_response "$token" "error"; fi
@@ -386,7 +477,7 @@ process_command() {
     reset)
       set_desired "off"
       stop_child
-      /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG" "$PENDING_CONFIG" "$PENDING_XRAY_CONFIG" "$CONTROL_DIR/config-sha256"
+      /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG" "$PENDING_CONFIG" "$PENDING_XRAY_CONFIG" "$CONTROL_DIR/config-sha256" "$CONTROL_DIR/last-error.log"
       write_response "$token" "ok"
       ;;
     *)
@@ -403,9 +494,9 @@ trap shutdown TERM INT HUP
 publish_config_hash
 
 if [[ "$(desired_state)" == "on" ]]; then
-  start_child || true
+  start_with_limit || true
 else
-  if [[ -x "$DNS_MANAGER" ]]; then "$DNS_MANAGER" restore >> "$LOG_FILE" 2>> "$ERROR_FILE" || true; fi
+  if [[ -x "$DNS_MANAGER" ]]; then "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || true; fi
   write_status "stopped"
 fi
 LAST_NETWORK_SIGNATURE="$(network_signature)"
@@ -416,7 +507,7 @@ while true; do
     process_command
   fi
   if [[ "$(desired_state)" == "on" ]] && ! child_running; then
-    start_child || true
+    start_with_limit || true
   fi
   if [[ "$(desired_state)" == "on" ]]; then
     run_watchdog

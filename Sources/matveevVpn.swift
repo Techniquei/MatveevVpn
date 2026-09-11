@@ -202,13 +202,15 @@ private struct ConnectionOverviewCard: View {
                 )) {
                     Text("Not selected").tag(Optional<String>.none)
                     ForEach(controller.availableNodes) { node in
-                        Text(node.name).tag(Optional(node.id))
+                        Text(node.name + (controller.probeResults[node.id].map { " — " + $0.displayText } ?? ""))
+                            .tag(Optional(node.id))
                     }
                 }
                 .labelsHidden()
                 .controlSize(.small)
                 .frame(width: 230, alignment: .leading)
                 .disabled(controller.isBusy || controller.availableNodes.isEmpty)
+                .simultaneousGesture(TapGesture().onEnded { controller.testNodes(automatic: true) })
             }
         }
         .padding(10)
@@ -353,7 +355,7 @@ private struct NodeSelectionView: View {
 
             Picker("Node", selection: $selectedIndex) {
                 ForEach(controller.availableNodes) { node in
-                    Text(node.name + (controller.probeResults[node.id].map { " — " + $0 } ?? "")).tag(Optional(node.id))
+                    Text(node.name + (controller.probeResults[node.id].map { " — " + $0.displayText } ?? "")).tag(Optional(node.id))
                 }
             }
             .labelsHidden()
@@ -397,12 +399,14 @@ private struct NodeSelectionView: View {
             selectedIndex = controller.currentNodeIndex
             controller.nodeMessage = ""
             controller.loadAvailableNodes()
+            controller.testNodes(automatic: true)
         }
         .onChange(of: controller.availableNodes) { nodes in
             if selectedIndex == nil {
                 selectedIndex = controller.currentNodeIndex ?? nodes.first?.id
             }
         }
+        .onChange(of: selectedIndex) { controller.probeCandidateNode($0) }
     }
 }
 
@@ -494,8 +498,8 @@ private struct MainView: View {
                             .foregroundStyle(.orange)
                             .lineLimit(2)
                         Spacer()
-                        Button { controller.copyFailureReport() } label: { Image(systemName: "doc.on.doc") }
-                            .help("Copy error report")
+                        Button { controller.exportLog() } label: { Image(systemName: "square.and.arrow.up") }
+                            .help("Export unfiltered application log")
                     }
                 }
             }

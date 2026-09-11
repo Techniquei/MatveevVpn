@@ -7,10 +7,11 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 - Selective routing by domain, application name or executable path.
 - All Traffic mode with private and local networks kept direct.
 - Native TUN, DNS interception and VPN-side DNS re-resolution.
-- HTTPS subscriptions or direct VLESS links, node selection and settings that survive app updates.
+- HTTPS subscriptions or direct VLESS links, measured node latency and settings that survive app updates.
 - Modern REALITY and XHTTP through Xray-core; sing-box handles TUN and routing.
 - Connection diagnostics, traffic graphs, menu-bar controls and launch at login.
-- Atomic configuration reload, automatic rollback and runtime recovery.
+- Atomic configuration reload, automatic rollback and bounded node failover.
+- A private application event log capped at 3 MB and exportable unchanged from Settings or an error notification.
 - Signed Sparkle update feed.
 
 ## Supported VLESS links

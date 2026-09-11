@@ -18,6 +18,8 @@ DNS_CALL_LOG="$RUNTIME/dns-calls"
 /usr/bin/printf 'on\n' > "$RUNTIME/run/desired-state"
 /usr/bin/printf '9.9.9.9\n' > "$CURRENT_DNS"
 : > "$DNS_CALL_LOG"
+/bin/dd if=/dev/zero of="$RUNTIME/vpn.log" bs=3100000 count=1 2>/dev/null
+/bin/dd if=/dev/zero of="$RUNTIME/vpn.error.log" bs=3100000 count=1 2>/dev/null
 
 MATVEEV_BASE_DIR="$RUNTIME" \
 MATVEEV_LOG_FILE="$RUNTIME/vpn.log" \
@@ -66,6 +68,8 @@ send_action_expect() {
 }
 
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
+[[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action off
 wait_for_file_value "$CONTROL/runtime-status" "stopped"
@@ -83,6 +87,8 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 /usr/bin/printf '{"fail_run":true}\n' > "$CONTROL/pending-config.json"
 send_action_expect reload error
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ -f "$CONTROL/last-error.log" ]]
+/usr/bin/grep -q 'Controller status:' "$CONTROL/last-error.log"
 if /usr/bin/grep -q 'fail_run' "$RUNTIME/config.json"; then
   echo "Failed configuration was not rolled back." >&2
   exit 1
@@ -98,6 +104,10 @@ wait_for_file_value "$RUNTIME/run/desired-state" "off"
 send_action reset
 [[ ! -e "$RUNTIME/config.json" ]]
 [[ ! -e "$CONTROL/config-sha256" ]]
+[[ ! -e "$CONTROL/last-error.log" ]]
 send_action_expect on error
-send_action off
-echo "controller: reload preserves off state; reset removes credentials"
+wait_for_file_value "$RUNTIME/run/desired-state" "off"
+wait_for_file_value "$CONTROL/runtime-status" "error: retry limit reached"
+[[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
+[[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
+echo "controller: reload preserves off state; reset removes credentials; retries and logs are bounded"
