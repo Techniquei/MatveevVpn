@@ -26,7 +26,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "8"
+    static let version = "9"
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { Self.base.appendingPathComponent("control") }
@@ -49,7 +49,7 @@ struct SystemService {
         let token = UUID().uuidString
         let response = control.appendingPathComponent("response-\(token)")
         try privateWrite(Data("\(action) \(token)\n".utf8), to: control.appendingPathComponent("command"))
-        for _ in 0..<100 {
+        for _ in 0..<150 {
             if let value = try? String(contentsOf: response, encoding: .utf8) {
                 try? FileManager.default.removeItem(at: response)
                 guard value.hasPrefix("ok") else {
@@ -59,7 +59,7 @@ struct SystemService {
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        throw VPNError.diagnostic("The controller did not respond within 10 seconds.", recentRuntimeErrors())
+        throw VPNError.diagnostic("The controller did not respond within 15 seconds.", recentRuntimeErrors())
     }
 
     func generate(_ state: SavedState, at stage: URL) async throws -> URL {
@@ -108,11 +108,11 @@ struct SystemService {
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let result = await Command.run("/usr/bin/osascript", ["-e", "do shell script \"\(escaped)\" with administrator privileges"])
         guard result.status == 0 else { throw VPNError.message("System installation failed or was cancelled. Your settings were preserved.") }
-        for _ in 0..<100 {
+        for _ in 0..<150 {
             if currentVersion == Self.version && (!desiredOn || running) { return }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        throw VPNError.diagnostic("The service was installed but did not become ready within 10 seconds.", recentRuntimeErrors())
+        throw VPNError.diagnostic("The service was installed but did not become ready within 15 seconds.", recentRuntimeErrors())
     }
 
     func recentRuntimeErrors() -> String {

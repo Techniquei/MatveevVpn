@@ -65,11 +65,11 @@ fi
 /usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
-/usr/bin/printf '8\n' > "$BASE/control/version"
+/usr/bin/printf '9\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /bin/launchctl enable system/com.matveev.vpn
 /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist
-for _ in {1..100}; do
+for _ in {1..150}; do
   ACTUAL="$(/usr/bin/head -n 1 "$BASE/control/runtime-status" 2>/dev/null || true)"
   if [[ "$DESIRED" == on && "$ACTUAL" == running || "$DESIRED" == off && "$ACTUAL" == stopped ]]; then
     COMPLETED=true

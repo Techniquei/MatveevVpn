@@ -170,24 +170,25 @@ publish_config_hash() {
   /bin/mv -f "$temporary" "$CONTROL_DIR/config-sha256"
 }
 
-dns_policy() {
+routing_mode() {
   /usr/bin/ruby -rjson -e '
     config = JSON.parse(File.read(ARGV.fetch(0)))
-    puts config.dig("route", "final") == "vpn" ? "system" : "tunnel-only"
+    puts config.dig("route", "final") == "vpn" ? "all" : "selective"
   ' "$CONFIG_FILE" 2>/dev/null || /usr/bin/printf 'unknown\n'
 }
 
 configure_system_dns() {
   [[ -x "$DNS_MANAGER" ]] || return 0
-  local policy
-  policy="$(dns_policy)"
-  if [[ "$policy" == "system" ]]; then
-    "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
-    log_event "DNS policy: system override enabled for All Traffic mode"
-  else
-    "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
-    log_event "DNS policy: physical network DNS preserved for Selective mode"
+  "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
+  log_event "DNS policy: system override enabled for $(routing_mode) routing"
+}
+
+tunnel_dns_ready() {
+  if [[ -n "${MATVEEV_BASE_DIR:-}" ]]; then
+    return 0
   fi
+  /usr/bin/dig +time=1 +tries=1 +short @198.18.0.2 api4.ipify.org A 2>/dev/null |
+    /usr/bin/awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/ { found=1 } END { exit !found }'
 }
 
 start_child() {
@@ -238,8 +239,20 @@ start_child() {
         write_status "error"
         return 1
       fi
-      write_status "running"
-      return 0
+      local dns_attempt
+      for dns_attempt in {1..8}; do
+        child_running || break
+        if tunnel_dns_ready; then
+          log_event "tunnel DNS is ready after $dns_attempt check(s)"
+          write_status "running"
+          return 0
+        fi
+        /bin/sleep 0.25
+      done
+      log_event "tunnel DNS did not become ready before the startup deadline"
+      stop_child
+      write_status "error"
+      return 1
     fi
     /bin/sleep 0.2
   done
@@ -541,7 +554,7 @@ else
 fi
 LAST_NETWORK_SIGNATURE="$(network_signature)"
 LAST_DEFAULT_ROUTE_SIGNATURE="$(default_route_signature)"
-log_event "network state: physical=$LAST_NETWORK_SIGNATURE default=$LAST_DEFAULT_ROUTE_SIGNATURE DNS=$(dns_policy)"
+log_event "network state: physical=$LAST_NETWORK_SIGNATURE default=$LAST_DEFAULT_ROUTE_SIGNATURE routing=$(routing_mode)"
 LAST_NETWORK_CHECK="$(/bin/date +%s)"
 
 while true; do

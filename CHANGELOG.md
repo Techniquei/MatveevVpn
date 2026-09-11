@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.3
+
+- Restores the macOS system DNS override in Selective mode after real-world testing showed that native TUN DNS alone could intermittently leave routed sites unreachable.
+- Waits for the VPN-routed tunnel DNS probe to succeed before reporting the connection as running.
+- Fails startup with an explicit bounded-log event when tunnel DNS does not become ready, instead of briefly exposing a connected state with unusable routed sites.
+- Extends controller response and installation readiness deadlines to 15 seconds for the additional health check.
+
 ## 1.2.2
 
 - Adds optional Happ subscription compatibility for providers that select responses by User-Agent or enforce device limits, importing VLESS outbounds from Happ/Xray JSON with a stable random provider-scoped identifier.

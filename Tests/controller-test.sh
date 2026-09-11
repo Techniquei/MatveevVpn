@@ -68,6 +68,7 @@ send_action_expect() {
 }
 
 wait_for_file_value "$CONTROL/runtime-status" "running"
+/usr/bin/grep -q 'tunnel DNS is ready' "$RUNTIME/vpn.log"
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
@@ -79,13 +80,14 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action restart
 wait_for_file_value "$CONTROL/runtime-status" "running"
-# Selective routing must preserve the physical network service's DNS.
+# Selective routing still needs the macOS system DNS override; native TUN DNS
+# alone can become intermittently unreachable in sing-box CLI mode.
 /usr/bin/printf '{"route":{"final":"direct"}}\n' > "$CONTROL/pending-config.json"
 send_action reload
 wait_for_file_value "$CONTROL/runtime-status" "running"
-[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
-/usr/bin/grep -q 'physical network DNS preserved for Selective mode' "$RUNTIME/vpn.log"
-# All Traffic still needs the system DNS override used by existing releases.
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+/usr/bin/grep -q 'system override enabled for selective routing' "$RUNTIME/vpn.log"
+# All Traffic uses the same system DNS override.
 /bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"
 /usr/bin/printf '{"valid":true}\n' > "$CONTROL/pending-xray.json"
 send_action reload
