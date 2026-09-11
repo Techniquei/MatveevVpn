@@ -79,10 +79,18 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action restart
 wait_for_file_value "$CONTROL/runtime-status" "running"
+# Selective routing must preserve the physical network service's DNS.
+/usr/bin/printf '{"route":{"final":"direct"}}\n' > "$CONTROL/pending-config.json"
+send_action reload
+wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+/usr/bin/grep -q 'physical network DNS preserved for Selective mode' "$RUNTIME/vpn.log"
+# All Traffic still needs the system DNS override used by existing releases.
 /bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"
 /usr/bin/printf '{"valid":true}\n' > "$CONTROL/pending-xray.json"
 send_action reload
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 [[ -f "$RUNTIME/xray.json" && -f "$RUNTIME/run/xray.pid" ]]
 /usr/bin/printf '{"fail_run":true}\n' > "$CONTROL/pending-config.json"
 send_action_expect reload error

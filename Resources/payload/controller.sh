@@ -31,6 +31,7 @@ XRAY_PID=""
 LAST_TICK="$(/bin/date +%s)"
 LAST_NETWORK_CHECK=0
 LAST_NETWORK_SIGNATURE=""
+LAST_DEFAULT_ROUTE_SIGNATURE=""
 TUN_MISSES=0
 LAST_STATUS_PUBLISH=0
 START_FAILURES=0
@@ -169,6 +170,26 @@ publish_config_hash() {
   /bin/mv -f "$temporary" "$CONTROL_DIR/config-sha256"
 }
 
+dns_policy() {
+  /usr/bin/ruby -rjson -e '
+    config = JSON.parse(File.read(ARGV.fetch(0)))
+    puts config.dig("route", "final") == "vpn" ? "system" : "tunnel-only"
+  ' "$CONFIG_FILE" 2>/dev/null || /usr/bin/printf 'unknown\n'
+}
+
+configure_system_dns() {
+  [[ -x "$DNS_MANAGER" ]] || return 0
+  local policy
+  policy="$(dns_policy)"
+  if [[ "$policy" == "system" ]]; then
+    "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
+    log_event "DNS policy: system override enabled for All Traffic mode"
+  else
+    "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
+    log_event "DNS policy: physical network DNS preserved for Selective mode"
+  fi
+}
+
 start_child() {
   if runtime_running; then
     write_status "running"
@@ -211,8 +232,8 @@ start_child() {
   for ready_attempt in {1..25}; do
     child_running || break
     if tunnel_ready; then
-      if [[ -x "$DNS_MANAGER" ]] && ! "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE"); then
-        log_event "could not activate tunnel DNS"
+      if ! configure_system_dns; then
+        log_event "could not apply the DNS policy"
         stop_child
         write_status "error"
         return 1
@@ -373,6 +394,18 @@ network_signature() {
   fi
 }
 
+default_route_signature() {
+  local route_info interface gateway
+  route_info="$(/sbin/route -n get default 2>/dev/null || true)"
+  interface="$(/usr/bin/awk '/interface:/{print $2; exit}' <<< "$route_info")"
+  gateway="$(/usr/bin/awk '/gateway:/{print $2; exit}' <<< "$route_info")"
+  if [[ -n "$interface" ]]; then
+    /usr/bin/printf '%s|%s\n' "$interface" "${gateway:-link}"
+  else
+    /usr/bin/printf 'unavailable\n'
+  fi
+}
+
 tunnel_ready() {
   if [[ -n "${MATVEEV_BASE_DIR:-}" ]]; then
     return 0
@@ -403,7 +436,7 @@ start_with_limit() {
 }
 
 run_watchdog() {
-  local now gap signature recovered=false
+  local now gap signature default_route recovered=false
   now="$(/bin/date +%s)"
   gap=$((now - LAST_TICK))
 
@@ -414,7 +447,13 @@ run_watchdog() {
 
   if [[ $((now - LAST_NETWORK_CHECK)) -ge 5 ]]; then
     signature="$(network_signature)"
+    default_route="$(default_route_signature)"
+    if [[ -n "$LAST_DEFAULT_ROUTE_SIGNATURE" && "$default_route" != "$LAST_DEFAULT_ROUTE_SIGNATURE" ]]; then
+      log_event "default route changed: $LAST_DEFAULT_ROUTE_SIGNATURE -> $default_route"
+    fi
+    LAST_DEFAULT_ROUTE_SIGNATURE="$default_route"
     if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]] && runtime_running; then
+      log_event "physical network changed: $LAST_NETWORK_SIGNATURE -> $signature"
       recover_child "a network interface change"
       recovered=true
     fi
@@ -439,6 +478,7 @@ run_watchdog() {
 
   if [[ "$recovered" == true ]]; then
     LAST_NETWORK_SIGNATURE="$(network_signature)"
+    LAST_DEFAULT_ROUTE_SIGNATURE="$(default_route_signature)"
     LAST_NETWORK_CHECK="$now"
     TUN_MISSES=0
   fi
@@ -500,6 +540,8 @@ else
   write_status "stopped"
 fi
 LAST_NETWORK_SIGNATURE="$(network_signature)"
+LAST_DEFAULT_ROUTE_SIGNATURE="$(default_route_signature)"
+log_event "network state: physical=$LAST_NETWORK_SIGNATURE default=$LAST_DEFAULT_ROUTE_SIGNATURE DNS=$(dns_policy)"
 LAST_NETWORK_CHECK="$(/bin/date +%s)"
 
 while true; do

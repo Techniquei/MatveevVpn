@@ -11,6 +11,12 @@ struct ConnectionView: View {
                 .foregroundStyle(.secondary)
             SecureField("HTTPS subscription URL or VLESS link", text: $controller.candidateURL)
                 .textFieldStyle(.roundedBorder)
+            Toggle("Happ subscription compatibility", isOn: Binding(
+                get: { controller.happCompatibilityEnabled },
+                set: { controller.setHappCompatibility($0) }
+            ))
+            Text("Uses a Happ User-Agent and a stable random provider-specific device ID, then imports VLESS servers from Happ/Xray JSON. Provider-specific routing is ignored.")
+                .font(.caption).foregroundStyle(.secondary)
             Button("Load / Refresh Nodes") { controller.fetchSubscription() }
             Picker("Node", selection: $controller.candidateID) {
                 Text("Choose a node").tag(Optional<String>.none)

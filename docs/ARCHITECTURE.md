@@ -45,8 +45,11 @@ destinations are excluded from TUN so LAN and mesh interfaces retain ownership
 of their routes. Full mode changes route and DNS finals and prefers IPv4 DNS;
 IPv6 is disabled while connected because VLESS nodes do not consistently provide
 IPv6 egress.
-sing-box 1.14 native TUN DNS hijacking installs the derived tunnel DNS endpoint
-on macOS, preventing the physical router resolver from bypassing DNS rules.
+sing-box 1.14 native TUN DNS hijacking installs the derived tunnel DNS endpoint.
+Selective mode preserves the physical network service's DNS configuration so
+independent VPN clients can establish their own routes without a system DNS
+override. All Traffic mode additionally assigns the tunnel resolver to the
+physical service and restores the previous value when it stops.
 After sniffing, hostnames selected for VPN routing are resolved through `dns-vpn`
 before the terminal outbound rule. This replaces locally filtered destination
 addresses while preserving direct bootstrap resolution for the VPN server itself.

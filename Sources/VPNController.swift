@@ -3,10 +3,11 @@ import AppKit
 import ServiceManagement
 import Network
 import UserNotifications
+import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.2.1"
+    static let releaseVersion = "1.2.2"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -29,6 +30,7 @@ final class VPNController: ObservableObject {
     @Published var testingNodes = false
     @Published var notificationsEnabled = UserDefaults.standard.bool(forKey: "failureNotifications")
     @Published var autoFailoverEnabled = true
+    @Published var happCompatibilityEnabled = false
     private var candidateSubscription = ""
     private var loadedURL = ""
     private let store = StateStore()
@@ -52,8 +54,9 @@ final class VPNController: ObservableObject {
 
     init() {
         _ = AppUpdater.shared
-        UserDefaults.standard.register(defaults: ["automaticFailover": true])
+        UserDefaults.standard.register(defaults: ["automaticFailover": true, "happSubscriptionCompatibility": false])
         autoFailoverEnabled = UserDefaults.standard.bool(forKey: "automaticFailover")
+        happCompatibilityEnabled = UserDefaults.standard.bool(forKey: "happSubscriptionCompatibility")
         do { state = try store.load() }
         catch {
             message = "Could not load settings: \(error.localizedDescription)"
@@ -198,6 +201,7 @@ final class VPNController: ObservableObject {
     }
     func fetchSubscription() {
         let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let useHappCompatibility = happCompatibilityEnabled
         perform("Load subscription") {
             let data: Data
             if input.hasPrefix("vless://") {
@@ -206,10 +210,21 @@ final class VPNController: ObservableObject {
                 guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
                     throw VPNError.message("Enter an HTTPS subscription URL or a VLESS link.")
                 }
-                data = try await SubscriptionFetcher.fetch(url)
+                let deviceID = useHappCompatibility ? Self.happDeviceID(for: url) : nil
+                data = try await SubscriptionFetcher.fetch(
+                    url,
+                    as: useHappCompatibility ? .happ : .matveevVpn,
+                    deviceID: deviceID
+                )
             }
-            let decoded = try Subscription.decode(data)
+            let decoded = try Subscription.decode(data, allowHappJSON: useHappCompatibility)
             let nodes = try Subscription.nodes(decoded)
+            if nodes.allSatisfy({ $0.port == 1 && $0.name.localizedCaseInsensitiveContains("not supported") }) {
+                let message = useHappCompatibility
+                    ? "The provider rejected the Happ-compatible request or device identifier. Check the subscription's device limit."
+                    : "This provider requires Happ subscription compatibility. Enable it and reload the subscription."
+                throw VPNError.message(message)
+            }
             let old = self.availableNodes.first { $0.id == self.state.selectedNodeID }
             let fallback = nodes.filter { $0.name == old?.name && $0.host == old?.host && $0.port == old?.port }
             let matched = nodes.first { $0.id == old?.id } ?? (fallback.count == 1 ? fallback.first : nil)
@@ -220,6 +235,27 @@ final class VPNController: ObservableObject {
             self.loadedURL = input
             self.nodeMessage = self.candidateID == nil ? "Your previous node is missing. Choose a replacement." : "Subscription loaded. Choose a node and apply."
         }
+    }
+    func setHappCompatibility(_ enabled: Bool) {
+        happCompatibilityEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "happSubscriptionCompatibility")
+        loadedURL = ""
+        nodeMessage = "Reload the subscription to apply the client compatibility setting."
+    }
+
+    private static func happDeviceID(for url: URL) -> String {
+        let defaults = UserDefaults.standard
+        let scope = (url.host ?? url.absoluteString).lowercased()
+        let scopeKey = SHA256.hash(data: Data(scope.utf8)).map { String(format: "%02x", $0) }.joined()
+        var identifiers = defaults.dictionary(forKey: "happSubscriptionDeviceIDs") as? [String: String] ?? [:]
+        if let existing = identifiers[scopeKey],
+           existing.range(of: "^[A-Za-z0-9=-]{10,64}$", options: .regularExpression) != nil {
+            return existing
+        }
+        let generated = "mvp-" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        identifiers[scopeKey] = generated
+        defaults.set(identifiers, forKey: "happSubscriptionDeviceIDs")
+        return generated
     }
     func applySubscription() {
         guard candidateURL.trimmingCharacters(in: .whitespacesAndNewlines) == loadedURL else {
@@ -655,6 +691,8 @@ final class VPNController: ObservableObject {
             self.loadFailed = false
             try self.store.finishTransaction()
             UserDefaults.standard.removeObject(forKey: "automaticFailoverSwitchTimestamps")
+            UserDefaults.standard.removeObject(forKey: "happSubscriptionCompatibility")
+            self.happCompatibilityEnabled = false
             self.setLogin(false)
             self.setNotifications(false)
             self.prepareConnection(); self.showConnection = true

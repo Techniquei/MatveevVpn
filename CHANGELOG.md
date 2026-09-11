@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+- Adds optional Happ subscription compatibility for providers that select responses by User-Agent or enforce device limits, importing VLESS outbounds from Happ/Xray JSON with a stable random provider-scoped identifier.
+- Preserves the physical network service's DNS configuration in Selective mode, reducing interference with OpenVPN and other independently routed VPN clients.
+- Keeps the existing tunnel DNS override in All Traffic mode and restores any stale override when entering Selective mode.
+- Logs physical-network and default-route transitions so intermittent multi-VPN startup conflicts can be diagnosed after they occur.
+
 ## 1.2.1
 
 - Measures direct, physical-interface ICMP latency for subscription nodes at launch and refreshes a node's result when selected, with a labelled direct TCP fallback when ICMP is blocked.

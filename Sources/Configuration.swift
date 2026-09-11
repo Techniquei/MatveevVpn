@@ -60,11 +60,16 @@ struct VPNNode: Identifiable, Hashable {
 }
 
 enum Subscription {
-    static func decode(_ data: Data) throws -> String {
+    static func decode(_ data: Data, allowHappJSON: Bool = false) throws -> String {
         guard data.count <= 4_194_304, let raw = String(data: data, encoding: .utf8) else {
             throw VPNError.message("The subscription is too large or is not text.")
         }
         let cleaned = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}")))
+        if allowHappJSON, let links = happVLESSLinks(cleaned), !links.isEmpty {
+            let result = links.joined(separator: "\n") + "\n"
+            _ = try nodes(result)
+            return result
+        }
         let compact = cleaned.components(separatedBy: .whitespacesAndNewlines).joined()
         let padded = compact + String(repeating: "=", count: (4 - compact.count % 4) % 4)
         let base64 = padded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -81,6 +86,114 @@ enum Subscription {
         let result = lines.joined(separator: "\n") + "\n"
         _ = try nodes(result)
         return result
+    }
+
+    private static func happVLESSLinks(_ text: String) -> [String]? {
+        guard let data = text.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        let configurations: [[String: Any]]
+        if let array = value as? [[String: Any]] {
+            configurations = array
+        } else if let object = value as? [String: Any] {
+            configurations = [object]
+        } else {
+            return nil
+        }
+
+        var links: [String] = []
+        for configuration in configurations {
+            let remarks = configuration["remarks"] as? String
+            let outbounds = configuration["outbounds"] as? [[String: Any]] ?? []
+            let vlessOutbounds = outbounds.filter { ($0["protocol"] as? String)?.lowercased() == "vless" }
+            for (outboundIndex, outbound) in vlessOutbounds.enumerated() {
+                guard let settings = outbound["settings"] as? [String: Any],
+                      let vnext = settings["vnext"] as? [[String: Any]] else { continue }
+                for (serverIndex, server) in vnext.enumerated() {
+                    guard let host = server["address"] as? String, !host.isEmpty,
+                          let port = integer(server["port"]), (1...65535).contains(port),
+                          let users = server["users"] as? [[String: Any]] else { continue }
+                    for user in users {
+                        guard let id = user["id"] as? String, UUID(uuidString: id) != nil else { continue }
+                        var components = URLComponents()
+                        components.scheme = "vless"
+                        components.user = id
+                        components.host = host
+                        components.port = port
+
+                        let stream = outbound["streamSettings"] as? [String: Any] ?? [:]
+                        let network = string(stream["network"]) ?? "raw"
+                        let security = string(stream["security"]) ?? "none"
+                        var query = [URLQueryItem(name: "encryption", value: string(user["encryption"]) ?? "none")]
+                        query.append(URLQueryItem(name: "type", value: network))
+                        query.append(URLQueryItem(name: "security", value: security))
+                        append(string(user["flow"]), named: "flow", to: &query)
+
+                        if security == "reality", let reality = stream["realitySettings"] as? [String: Any] {
+                            append(string(reality["serverName"]), named: "sni", to: &query)
+                            append(string(reality["fingerprint"]), named: "fp", to: &query)
+                            append(string(reality["publicKey"]) ?? string(reality["password"]), named: "pbk", to: &query)
+                            append(string(reality["shortId"]), named: "sid", to: &query, includeEmpty: true)
+                            append(string(reality["spiderX"]), named: "spx", to: &query)
+                            append(string(reality["mldsa65Verify"]), named: "pqv", to: &query)
+                        } else if security == "tls", let tls = stream["tlsSettings"] as? [String: Any] {
+                            append(string(tls["serverName"]), named: "sni", to: &query)
+                            append(string(tls["fingerprint"]), named: "fp", to: &query)
+                            if let alpn = tls["alpn"] as? [String], !alpn.isEmpty {
+                                query.append(URLQueryItem(name: "alpn", value: alpn.joined(separator: ",")))
+                            }
+                        }
+
+                        switch network {
+                        case "ws":
+                            let ws = stream["wsSettings"] as? [String: Any] ?? [:]
+                            append(string(ws["path"]), named: "path", to: &query)
+                            if let headers = ws["headers"] as? [String: Any] {
+                                append(string(headers["Host"]) ?? string(headers["host"]), named: "host", to: &query)
+                            }
+                        case "grpc":
+                            let grpc = stream["grpcSettings"] as? [String: Any] ?? [:]
+                            append(string(grpc["serviceName"]), named: "serviceName", to: &query, includeEmpty: true)
+                        case "xhttp", "splithttp":
+                            let xhttp = stream["xhttpSettings"] as? [String: Any] ?? [:]
+                            append(string(xhttp["host"]), named: "host", to: &query)
+                            append(string(xhttp["path"]), named: "path", to: &query)
+                            append(string(xhttp["mode"]), named: "mode", to: &query)
+                            if let extra = xhttp["extra"], JSONSerialization.isValidJSONObject(extra),
+                               let data = try? JSONSerialization.data(withJSONObject: extra),
+                               let encoded = String(data: data, encoding: .utf8) {
+                                query.append(URLQueryItem(name: "extra", value: encoded))
+                            }
+                        default: break
+                        }
+
+                        components.queryItems = query
+                        let tag = string(outbound["tag"])
+                        let suffixNeeded = vlessOutbounds.count > 1 || vnext.count > 1 || users.count > 1
+                        let fallbackName = tag ?? "Happ VLESS"
+                        let suffix = suffixNeeded ? " \(outboundIndex + 1).\(serverIndex + 1)" : ""
+                        components.fragment = (remarks?.isEmpty == false ? remarks! : fallbackName) + suffix
+                        if let link = components.string { links.append(link) }
+                    }
+                }
+            }
+        }
+        return links
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        guard let value = value as? String else { return nil }
+        return value
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        if let number = value as? NSNumber { return number.intValue }
+        if let text = value as? String { return Int(text) }
+        return nil
+    }
+
+    private static func append(_ value: String?, named name: String, to items: inout [URLQueryItem], includeEmpty: Bool = false) {
+        guard let value, includeEmpty || !value.isEmpty else { return }
+        items.append(URLQueryItem(name: name, value: value))
     }
 
     static func nodes(_ text: String) throws -> [VPNNode] {

@@ -28,6 +28,16 @@ import Foundation
         precondition(decodedMixed == text)
         let decodedDirect = try Subscription.decode(Data(a.utf8))
         precondition(decodedDirect == a + "\n")
+        let happJSON = """
+        [{"remarks":"Happ Test","outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"happ.example.com","port":443,"users":[{"id":"33333333-3333-3333-3333-333333333333","encryption":"none","flow":"xtls-rprx-vision"}]}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverName":"cover.example.com","fingerprint":"chrome","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","shortId":"0123456789abcdef","spiderX":"/"}}},{"tag":"direct","protocol":"freedom"}]}]
+        """
+        let decodedHapp = try Subscription.decode(Data(happJSON.utf8), allowHappJSON: true)
+        let happComponents = URLComponents(string: decodedHapp.trimmingCharacters(in: .whitespacesAndNewlines))!
+        let happQuery = Dictionary(uniqueKeysWithValues: happComponents.queryItems!.map { ($0.name, $0.value ?? "") })
+        precondition(happComponents.host == "happ.example.com" && happComponents.port == 443)
+        precondition(happComponents.fragment == "Happ Test")
+        precondition(happQuery["type"] == "tcp" && happQuery["security"] == "reality")
+        precondition(happQuery["pbk"] == "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" && happQuery["sid"] == "0123456789abcdef")
         do { _ = try Subscription.decode(Data("garbage".utf8)); fatalError("Invalid subscription accepted") } catch {}
         try Data(text.utf8).write(to: service.appendingPathComponent("private/subscription.decoded"))
         try Data("2\n".utf8).write(to: service.appendingPathComponent("current-server.txt"))

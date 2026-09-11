@@ -7,6 +7,7 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 - Selective routing by domain, application name or executable path.
 - All Traffic mode with private and local networks kept direct.
 - Native TUN, DNS interception and VPN-side DNS re-resolution.
+- Physical Wi-Fi/Ethernet DNS is preserved in Selective mode for compatibility with other VPN clients.
 - HTTPS subscriptions or direct VLESS links, measured node latency and settings that survive app updates.
 - Modern REALITY and XHTTP through Xray-core; sing-box handles TUN and routing.
 - Connection diagnostics, traffic graphs, menu-bar controls and launch at login.
@@ -18,6 +19,10 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 
 Subscriptions may contain plain, standard Base64 or URL-safe Base64-encoded
 `vless://` links. Supported VLESS entries are imported from mixed protocol lists.
+The optional **Happ subscription compatibility** setting requests a Happ-specific
+response and extracts VLESS outbounds from Happ/Xray JSON subscriptions. It does
+so with a stable random device identifier scoped to the provider domain; it does
+not use hardware identifiers or import provider-specific routing.
 
 | Area | Supported values and parameters |
 | --- | --- |
