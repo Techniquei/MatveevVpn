@@ -42,7 +42,23 @@ cleanup() {
     fi
     /usr/bin/shasum -a 256 "$BASE/config.json" | /usr/bin/awk '{print $1}' > "$BASE/control/config-sha256"
     /bin/chmod 644 "$BASE/control/config-sha256"
-    /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist || true
+    if /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist; then
+      ROLLBACK_DESIRED="$(/usr/bin/head -n 1 "$BACKUP/desired-state" | /usr/bin/tr -d '[:space:]')"
+      ROLLBACK_READY=false
+      for _ in {1..150}; do
+        ROLLBACK_STATUS="$(/usr/bin/head -n 1 "$BASE/control/runtime-status" 2>/dev/null || true)"
+        if [[ "$ROLLBACK_DESIRED" == on && "$ROLLBACK_STATUS" == running || "$ROLLBACK_DESIRED" == off && "$ROLLBACK_STATUS" == stopped ]]; then
+          ROLLBACK_READY=true
+          break
+        fi
+        /bin/sleep 0.1
+      done
+      if [[ "$ROLLBACK_READY" != true ]]; then
+        /usr/bin/printf 'Previous VPN service was restored but did not become ready before the rollback deadline.\n' >&2
+      fi
+    else
+      /usr/bin/printf 'Could not restart the previous VPN service during rollback.\n' >&2
+    fi
   fi
   /bin/rm -rf "$BACKUP"
 }
@@ -65,7 +81,7 @@ fi
 /usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
-/usr/bin/printf '9\n' > "$BASE/control/version"
+/usr/bin/printf '10\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /bin/launchctl enable system/com.matveev.vpn
 /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist

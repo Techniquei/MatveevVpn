@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.4
+
+- Prevents a failed service install or repair from being misclassified as an unexpected tunnel crash and immediately starting automatic recovery.
+- Suppresses recovery for 30 seconds after a failed managed operation so rollback can settle without competing restart and failover commands.
+- Waits up to 15 seconds for the previous controller to become ready after installer rollback and records an explicit rollback error if it does not.
+
 ## 1.2.3
 
 - Restores the macOS system DNS override in Selective mode after real-world testing showed that native TUN DNS alone could intermittently leave routed sites unreachable.

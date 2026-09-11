@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.2.3"
+    static let releaseVersion = "1.2.4"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -43,6 +43,7 @@ final class VPNController: ObservableObject {
     private var nodeTest: Task<Void, Never>?
     private var healthCheck: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
+    private var recoverySuppressedUntil = Date.distantPast
     private var lastHealthCheck = Date.distantPast
     private var consecutiveHealthFailures = 0
 
@@ -79,7 +80,8 @@ final class VPNController: ObservableObject {
         isInstalled = service.installed
         isRunning = service.running
         let wasRunning = previouslyRunning
-        if wasRunning == true && !isRunning && state.desiredOn {
+        let recoverySuppressed = Date() < recoverySuppressedUntil
+        if wasRunning == true && !isRunning && state.desiredOn && !recoverySuppressed {
             AppLogger.shared.write("VPN runtime stopped unexpectedly")
             message = autoFailoverEnabled ? "Connection interrupted. Starting safe recovery…" : "VPN connection interrupted."
             if notificationsEnabled {
@@ -94,7 +96,7 @@ final class VPNController: ObservableObject {
         if message == "Checking status…" {
             message = isInstalled && state.selectedNodeID != nil ? "" : "Add a subscription to get started."
         }
-        if !isRunning && state.desiredOn && isInstalled && !needsUpgrade && (wasRunning == true || wasRunning == nil) {
+        if !recoverySuppressed && !isRunning && state.desiredOn && isInstalled && !needsUpgrade && (wasRunning == true || wasRunning == nil) {
             beginAutomaticRecovery(reason: "the VPN runtime stopped")
         } else if isRunning {
             scheduleHealthCheckIfNeeded()
@@ -119,6 +121,8 @@ final class VPNController: ObservableObject {
             }
             catch {
                 if let recovered = try? store.load() { state = recovered }
+                recoverySuppressedUntil = Date().addingTimeInterval(30)
+                AppLogger.shared.write("automatic recovery suppressed for 30 seconds after failed operation: \(operationName)")
                 message = error.localizedDescription; rulesMessage = message; nodeMessage = message
                 failureReport = error.localizedDescription
                 let context = await connectionContext()
@@ -151,6 +155,8 @@ final class VPNController: ObservableObject {
                 self.message = "Configuration updated."
                 self.checkConnection()
             } catch {
+                self.recoverySuppressedUntil = Date().addingTimeInterval(30)
+                AppLogger.shared.write("automatic recovery suppressed for 30 seconds after installed-configuration reconciliation failed")
                 self.message = "Could not update the installed configuration: \(error.localizedDescription)"
             }
         }
@@ -405,7 +411,8 @@ final class VPNController: ObservableObject {
 
     private func beginAutomaticRecovery(reason: String) {
         guard autoFailoverEnabled, recoveryTask == nil, !isBusy, state.desiredOn,
-              isInstalled, !needsUpgrade, state.selectedNodeID != nil else { return }
+              Date() >= recoverySuppressedUntil, isInstalled, !needsUpgrade,
+              state.selectedNodeID != nil else { return }
         healthCheck?.cancel()
         healthCheck = nil
         recoveryTask = Task {
