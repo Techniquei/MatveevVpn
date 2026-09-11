@@ -57,7 +57,7 @@ enum NodeProbe {
         let result = await Command.run("/usr/sbin/scutil", ["--nwi"])
         guard result.status == 0 else { return nil }
         let candidates = result.output.split(separator: "\n").compactMap { line -> String? in
-            let fields = line.split(whereSeparator: \Character.isWhitespace)
+            let fields = line.split(whereSeparator: { $0.isWhitespace })
             guard fields.count >= 3, fields[1] == ":", fields[2] == "flags" else { return nil }
             let name = String(fields[0])
             guard !name.hasPrefix("utun"), name != "lo0", !name.hasPrefix("awdl"), !name.hasPrefix("llw") else { return nil }

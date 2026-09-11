@@ -620,7 +620,7 @@ final class VPNController: ObservableObject {
 
     private nonisolated static func hasPhysicalNetwork(in output: String) -> Bool {
         output.split(separator: "\n").contains { line in
-            let fields = line.split(whereSeparator: \Character.isWhitespace)
+            let fields = line.split(whereSeparator: { $0.isWhitespace })
             guard fields.count >= 3, fields[1] == ":", fields[2] == "flags" else { return false }
             return !fields[0].hasPrefix("utun") && fields[0] != "lo0"
         }
