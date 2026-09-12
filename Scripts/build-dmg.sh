@@ -3,13 +3,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.2.4"
-BUILD_NUMBER="1204"
+VERSION="1.3.0"
+BUILD_NUMBER="1300"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
 XRAY_VERSION="26.3.27"
 XRAY_ARCHIVE_SHA256="2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf"
+HAGEZI_COMMIT="bc57a04f9f516be32f3d7853feedb0e1d068187e"
+HAGEZI_RULES_SHA256="8a4f9ec58dca9b558096763d3753cb9f28d498faac0942e2481cc58cc39e19da"
+HAGEZI_LICENSE_SHA256="3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
 DIST_DIR="${1:-$ROOT_DIR/dist}"
 WORK_DIR="$(/usr/bin/mktemp -d /private/tmp/matveev-vpn-build.XXXXXX)"
 APP="$WORK_DIR/matveevVpn.app"
@@ -26,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$DIST_DIR" "$APP/Contents/MacOS" "$APP/Contents/Resources/.payload/tools"
+mkdir -p "$DIST_DIR" "$APP/Contents/MacOS" "$APP/Contents/Resources/.payload/tools" "$APP/Contents/Resources/.payload/rules"
 
 echo "Compiling matveevVpn $VERSION..."
 /bin/bash "$ROOT_DIR/Scripts/fetch-sparkle.sh"
@@ -81,11 +84,22 @@ fi
 /usr/bin/install -m 644 "$ROOT_DIR/LICENSE" "$APP/Contents/Resources/LICENSE"
 /usr/bin/install -m 644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 /usr/bin/install -m 644 "$ROOT_DIR/.build/sparkle/LICENSE" "$APP/Contents/Resources/Sparkle-LICENSE"
+
+HAGEZI_RULES="$WORK_DIR/hagezi-pro-mini.txt"
+HAGEZI_LICENSE="$WORK_DIR/Hagezi-LICENSE"
+echo "Downloading pinned HaGeZi Multi PRO mini rules..."
+/usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
+  "https://raw.githubusercontent.com/hagezi/dns-blocklists/$HAGEZI_COMMIT/wildcard/pro.mini-onlydomains.txt" -o "$HAGEZI_RULES"
+/usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
+  "https://raw.githubusercontent.com/hagezi/dns-blocklists/$HAGEZI_COMMIT/LICENSE" -o "$HAGEZI_LICENSE"
+[[ "$(/usr/bin/shasum -a 256 "$HAGEZI_RULES" | /usr/bin/awk '{print $1}')" == "$HAGEZI_RULES_SHA256" ]] || { echo "HaGeZi rules checksum mismatch" >&2; exit 1; }
+[[ "$(/usr/bin/shasum -a 256 "$HAGEZI_LICENSE" | /usr/bin/awk '{print $1}')" == "$HAGEZI_LICENSE_SHA256" ]] || { echo "HaGeZi license checksum mismatch" >&2; exit 1; }
+/usr/bin/install -m 644 "$HAGEZI_RULES" "$APP/Contents/Resources/.payload/rules/hagezi-pro-mini.txt"
+/usr/bin/install -m 644 "$HAGEZI_LICENSE" "$APP/Contents/Resources/Hagezi-LICENSE"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/install-service.sh" "$APP/Contents/Resources/.payload/install-service.sh"
 /usr/bin/install -m 644 "$ROOT_DIR/Resources/payload/com.matveev.vpn.plist" "$APP/Contents/Resources/.payload/com.matveev.vpn.plist"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/controller.sh" "$APP/Contents/Resources/.payload/controller.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/dns-manager.sh" "$APP/Contents/Resources/.payload/dns-manager.sh"
-/usr/bin/install -m 644 "$ROOT_DIR/Resources/payload/default-rules.json" "$APP/Contents/Resources/.payload/default-rules.json"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/tools/build-config.rb" "$APP/Contents/Resources/.payload/tools/build-config.rb"
 
 if [[ -n "${MATVEEV_SING_BOX_BINARY:-}" ]]; then

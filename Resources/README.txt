@@ -1,4 +1,4 @@
-matveevVpn 1.2.4 for macOS (Apple Silicon)
+matveevVpn 1.3.0 for macOS (Apple Silicon)
 ========================================
 
 Move matveevVpn to Applications, open it, and choose Install and set up.
@@ -6,12 +6,14 @@ Enter an HTTPS VLESS subscription URL or a direct VLESS link, load nodes, choose
 macOS requests administrator permission to install or repair the system service.
 Routine connection and routing changes do not need a password.
 
-Choose Selective to route matching domains/applications, or All Traffic for a
-full tunnel. Local destinations remain direct. Domain patterns example.com and
-*.example.com both include the base domain and all subdomains.
-Add Application includes helpers within that application's bundle.
-Fresh installations include editable routes for YouTube, Telegram, ChatGPT,
-Claude and Cursor. App updates do not overwrite rules you have already saved.
+Choose Selective to route selected service presets and matching custom rules, or
+All Traffic for a full tunnel. Local destinations remain direct. Domain patterns
+example.com and *.example.com both include the base domain and all subdomains.
+Add Application includes helpers within that application's bundle. Preset rules
+are downloaded from MetaCubeX through the VPN, cached and refreshed daily.
+Optional DNS-level ad blocking uses HaGeZi Multi PRO mini, starts from a bundled
+copy and refreshes the validated list through the VPN every eight hours. It
+cannot remove ads served from the same domain as video content.
 
 Settings survive app replacement and reinstalling. Version 1.0 settings are
 migrated once from the canonical ~/VPN folder, without scanning backups.

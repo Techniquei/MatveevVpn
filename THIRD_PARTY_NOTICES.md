@@ -25,3 +25,15 @@ Sparkle-LICENSE in the application's resources.
 
 - https://github.com/sparkle-project/Sparkle
 - https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6
+
+When service presets are enabled, matveevVpn downloads binary rule sets from
+MetaCubeX/meta-rules-dat. The repository is licensed under GPL-3.0 and
+incorporates data from the upstream projects listed in its notices.
+
+- https://github.com/MetaCubeX/meta-rules-dat
+
+Advertising blocking uses HaGeZi Multi PRO mini from the HaGeZi DNS Blocklists
+repository. The pinned initial list and its GPL-3.0 license are bundled as
+`Hagezi-LICENSE`; updates are fetched directly from the official repository.
+
+- https://github.com/hagezi/dns-blocklists

@@ -249,10 +249,14 @@ private struct ConnectionOverviewCard: View {
 private struct RoutingRulesView: View {
     @ObservedObject var controller: VPNController
     @Environment(\.dismiss) private var dismiss
+    @State private var automaticRoutingEnabled = true
+    @State private var automaticServices = Set<String>()
+    @State private var adBlockingEnabled = false
     @State private var domainsText = ""
     @State private var applicationsText = ""
     @State private var pathsText = ""
     @State private var confirmClear = false
+    private let presetColumns = [GridItem(.adaptive(minimum: 145), spacing: 10)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -266,19 +270,70 @@ private struct RoutingRulesView: View {
                 Button("Done") { dismiss() }
             }
 
-            HStack(alignment: .top, spacing: 14) {
-                editor(title: "Domains", hint: "example.com or *.example.com", text: $domainsText)
-                editor(title: "Application process names", hint: "Example App", text: $applicationsText)
-            }
-            editor(title: "Application paths (regular expressions)", hint: "Use Add Application to include its helpers", text: $pathsText)
-            Button("Add Application…") {
-                let panel = NSOpenPanel()
-                panel.allowedContentTypes = [.applicationBundle]
-                panel.directoryURL = URL(fileURLWithPath: "/Applications")
-                if panel.runModal() == .OK, let url = panel.url {
-                    let pattern = "^.*/" + NSRegularExpression.escapedPattern(for: url.lastPathComponent) + "/Contents/.*"
-                    pathsText += (pathsText.isEmpty ? "" : "\n") + pattern
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Automatically route selected services", isOn: $automaticRoutingEnabled)
+                                .font(.headline)
+                            Text("Preset domain lists are updated daily from MetaCubeX. Custom rules below are applied in addition to these presets.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 9) {
+                                ForEach(AutomaticRoutingCatalog.services, id: \.self) { service in
+                                    Toggle(AutomaticRoutingCatalog.title(for: service), isOn: presetBinding(service))
+                                        .toggleStyle(.checkbox)
+                                }
+                            }
+                            .disabled(!automaticRoutingEnabled)
+                            .opacity(automaticRoutingEnabled ? 1 : 0.55)
+
+                            HStack {
+                                Text("Selected: \(automaticServices.count) of \(AutomaticRoutingCatalog.services.count)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Select All") { automaticServices = Set(AutomaticRoutingCatalog.services) }
+                                    .disabled(!automaticRoutingEnabled || automaticServices.count == AutomaticRoutingCatalog.services.count)
+                                Button("Clear Presets") { automaticServices.removeAll() }
+                                    .disabled(!automaticRoutingEnabled || automaticServices.isEmpty)
+                            }
+                            .controlSize(.small)
+
+                            Divider()
+                            Toggle("Block ads and trackers", isOn: $adBlockingEnabled)
+                                .font(.headline)
+                            Text("Blocks known third-party advertising and tracking domains. Ads delivered from the same domain as a video may still appear.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(4)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Custom rules").font(.headline)
+                        Text("One entry per line. Use these for sites and applications that are not covered by a preset.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(alignment: .top, spacing: 14) {
+                        editor(title: "Domains", hint: "example.com or *.example.com", text: $domainsText, height: 145)
+                        editor(title: "Application process names", hint: "Example App", text: $applicationsText, height: 145)
+                    }
+                    editor(title: "Application paths (regular expressions)", hint: "Use Add Application to include its helpers", text: $pathsText, height: 120)
+                    Button("Add Application…") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.applicationBundle]
+                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                        if panel.runModal() == .OK, let url = panel.url {
+                            let pattern = "^.*/" + NSRegularExpression.escapedPattern(for: url.lastPathComponent) + "/Contents/.*"
+                            pathsText += (pathsText.isEmpty ? "" : "\n") + pattern
+                        }
+                    }
                 }
+                .padding(.trailing, 8)
             }
 
             HStack {
@@ -288,9 +343,12 @@ private struct RoutingRulesView: View {
                     .lineLimit(2)
                 Spacer()
                 Button("Revert Changes") { load(controller.currentRoutingRules()) }
-                Button("Clear All…") { confirmClear = true }
+                Button("Clear Custom…") { confirmClear = true }
                 Button("Save and Apply") {
                     controller.applyRoutingRules(
+                        automaticRoutingEnabled: automaticRoutingEnabled,
+                        automaticServices: automaticServices,
+                        adBlockingEnabled: adBlockingEnabled,
                         domains: lines(domainsText),
                         applications: lines(applicationsText),
                         paths: lines(pathsText)
@@ -301,9 +359,9 @@ private struct RoutingRulesView: View {
             }
         }
         .padding(16)
-        .frame(width: 620, height: 580)
-        .confirmationDialog("Clear all routing rules?", isPresented: $confirmClear) {
-            Button("Clear All", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
+        .frame(width: 680, height: 720)
+        .confirmationDialog("Clear custom routing rules?", isPresented: $confirmClear) {
+            Button("Clear Custom Rules", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
         } message: { Text("Changes take effect after Save and Apply.") }
         .preferredColorScheme(.dark)
         .onAppear {
@@ -312,7 +370,7 @@ private struct RoutingRulesView: View {
         }
     }
 
-    private func editor(title: String, hint: String, text: Binding<String>) -> some View {
+    private func editor(title: String, hint: String, text: Binding<String>, height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title).font(.headline)
             Text("For example: \(hint)").font(.caption).foregroundStyle(.secondary)
@@ -321,8 +379,19 @@ private struct RoutingRulesView: View {
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
+                .frame(height: height)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func presetBinding(_ service: String) -> Binding<Bool> {
+        Binding(
+            get: { automaticServices.contains(service) },
+            set: { selected in
+                if selected { automaticServices.insert(service) }
+                else { automaticServices.remove(service) }
+            }
+        )
     }
 
     private func lines(_ text: String) -> [String] {
@@ -330,6 +399,9 @@ private struct RoutingRulesView: View {
     }
 
     private func load(_ rules: RoutingRules) {
+        automaticRoutingEnabled = rules.automaticRoutingEnabled
+        automaticServices = Set(rules.automaticServices)
+        adBlockingEnabled = rules.adBlockingEnabled
         domainsText = rules.domains.joined(separator: "\n")
         applicationsText = rules.applications.joined(separator: "\n")
         pathsText = rules.processPathRegexes.joined(separator: "\n")

@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.2.4"
+    static let releaseVersion = "1.3.0"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -36,6 +36,7 @@ final class VPNController: ObservableObject {
     private let store = StateStore()
     private let service = SystemService()
     private let coordinator = ConfigurationCoordinator()
+    private let adBlockRuleStore = AdBlockRuleStore()
     private var timer: Timer?
     private var loadFailed = false
     private var previouslyRunning: Bool?
@@ -43,6 +44,8 @@ final class VPNController: ObservableObject {
     private var nodeTest: Task<Void, Never>?
     private var healthCheck: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
+    private var adBlockRefresh: Task<Void, Never>?
+    private var adBlockRulesNeedApply = false
     private var recoverySuppressedUntil = Date.distantPast
     private var lastHealthCheck = Date.distantPast
     private var consecutiveHealthFailures = 0
@@ -68,7 +71,7 @@ final class VPNController: ObservableObject {
         refresh()
         testNodes(automatic: true)
         reconcileInstalledConfiguration()
-        AppLogger.shared.write("app started; automatic failover \(autoFailoverEnabled ? "enabled" : "disabled")")
+        AppLogger.shared.write("app \(Self.releaseVersion) started; automatic failover \(autoFailoverEnabled ? "enabled" : "disabled")")
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let controller = self else { return }
             Task { @MainActor in controller.refresh() }
@@ -100,6 +103,7 @@ final class VPNController: ObservableObject {
             beginAutomaticRecovery(reason: "the VPN runtime stopped")
         } else if isRunning {
             scheduleHealthCheckIfNeeded()
+            scheduleAdBlockRefreshIfNeeded()
         }
     }
     func refreshWhenActive() { refresh() }
@@ -179,7 +183,7 @@ final class VPNController: ObservableObject {
         var next = state; next.rules.mode = mode
         perform { try await self.commit(next) }
     }
-    func applyRoutingRules(domains: [String], applications: [String], paths: [String]) {
+    func applyRoutingRules(automaticRoutingEnabled: Bool, automaticServices: Set<String>, adBlockingEnabled: Bool, domains: [String], applications: [String], paths: [String]) {
         var next = state
         func clean(_ lines: [String]) -> [String] {
             var seen = Set<String>()
@@ -188,6 +192,9 @@ final class VPNController: ObservableObject {
         next.rules.domains = clean(domains).map { $0.lowercased() }
         next.rules.applications = clean(applications)
         next.rules.processPathRegexes = clean(paths)
+        next.rules.automaticRoutingEnabled = automaticRoutingEnabled
+        next.rules.automaticServices = AutomaticRoutingCatalog.services.filter(automaticServices.contains)
+        next.rules.adBlockingEnabled = adBlockingEnabled
         perform { try await self.commit(next); self.rulesMessage = "Rules applied." }
     }
     func selectNode(_ id: String) {
@@ -316,6 +323,43 @@ final class VPNController: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: "automaticFailover")
         consecutiveHealthFailures = 0
         AppLogger.shared.write("automatic failover \(enabled ? "enabled" : "disabled")")
+    }
+
+    private func scheduleAdBlockRefreshIfNeeded() {
+        guard adBlockRefresh == nil, !isBusy, state.rules.adBlockingEnabled,
+              adBlockRuleStore.needsRefresh || adBlockRulesNeedApply else { return }
+        adBlockRefresh = Task {
+            defer { self.adBlockRefresh = nil }
+            do {
+                if self.adBlockRuleStore.needsRefresh {
+                    let changed = try await self.adBlockRuleStore.refresh()
+                    self.adBlockRulesNeedApply = self.adBlockRulesNeedApply || changed
+                    AppLogger.shared.write("HaGeZi advertising rules refreshed\(changed ? " and changed" : "")")
+                }
+                guard self.adBlockRulesNeedApply, self.state.rules.adBlockingEnabled,
+                      self.service.running, !self.isBusy else { return }
+
+                self.isBusy = true
+                self.message = "Updating advertising rules…"
+                defer {
+                    self.isBusy = false
+                    self.message = ""
+                    self.refresh()
+                }
+                let snapshot = self.state
+                let stage = try temporaryDirectory()
+                defer { try? FileManager.default.removeItem(at: stage) }
+                let config = try await self.service.generate(snapshot, at: stage)
+                if !self.service.configurationMatches(config) {
+                    try await self.service.deploy(config)
+                    self.checkConnection()
+                }
+                self.adBlockRulesNeedApply = false
+            } catch {
+                self.adBlockRulesNeedApply = false
+                AppLogger.shared.write("HaGeZi advertising-rule refresh failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func syncNotificationPreference() {
@@ -541,7 +585,7 @@ final class VPNController: ObservableObject {
             let (direct, vpn, dns, tunnelDNS) = await (directIPv4, vpnIPv4, resolver, tunnelResolver)
             guard !Task.isCancelled else { return }
             let path = direct != "unavailable" && vpn != "unavailable" ? (direct == vpn ? "same" : "different") : "unavailable"
-            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nSystem DNS: \(dns)\nTunnel DNS: \(tunnelDNS)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nWhile connected, Tunnel DNS should be reachable. The two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
+            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nSystem DNS: \(dns)\nTunnel DNS: \(tunnelDNS)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nService presets: \(snapshot.rules.automaticRoutingEnabled ? snapshot.rules.automaticServices.count : 0)\nAd blocking: \(snapshot.rules.adBlockingEnabled ? "on" : "off")\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nWhile connected, Tunnel DNS should be reachable. The two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
         }
     }
     private nonisolated static func publicIP(endpoint: String) async -> String {

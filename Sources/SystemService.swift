@@ -71,6 +71,12 @@ struct SystemService {
         let config = stage.appendingPathComponent("config.json")
         try privateWrite(Data(state.subscription.utf8), to: subscription)
         try privateWrite(JSONEncoder().encode(state.rules), to: rules)
+        if state.rules.adBlockingEnabled {
+            try AdBlockRuleStore().materialize(
+                in: stage,
+                bundledFile: payload.appendingPathComponent("rules/hagezi-pro-mini.txt")
+            )
+        }
         let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(node.index), rules.path])
         guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.", generated.output) }
         let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path])

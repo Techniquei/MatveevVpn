@@ -44,15 +44,12 @@ import Foundation
         try Data("https://example.com/private-token\n".utf8).write(to: service.appendingPathComponent("private/subscription-url.txt"))
         try Data("{\"domains\":[\"example.com\"],\"applications\":[\"Example\"]}".utf8).write(to: legacy.appendingPathComponent("routing-rules.json"))
         let hashFile = root.appendingPathComponent("runtime-hash")
-        let defaultsFile = root.appendingPathComponent("default-rules.json")
-        let defaultRules = """
-        {"domains":["youtube.com","cursor.com"],"applications":["Cursor"],"processPathRegexes":["^.*/Cursor\\\\.app/Contents/.*"],"mode":"selective"}
-        """
-        try Data(defaultRules.utf8).write(to: defaultsFile)
-        let store = StateStore(directory: root.appendingPathComponent("settings"), legacyDirectory: legacy, runtimeHashFile: hashFile, defaultRulesFile: defaultsFile)
+        let store = StateStore(directory: root.appendingPathComponent("settings"), legacyDirectory: legacy, runtimeHashFile: hashFile)
         var state = try store.load()
         precondition(state.migratedFromV1 && state.selectedNodeID == nodes[1].id)
         precondition(state.rules.domains == ["example.com"] && state.rules.processPathRegexes.isEmpty)
+        precondition(state.rules.automaticRoutingEnabled && state.rules.automaticServices == AutomaticRoutingCatalog.recommended)
+        precondition(!state.rules.adBlockingEnabled)
         state.rules.mode = .all
         try store.save(state)
         let saved = try store.load()
@@ -71,15 +68,18 @@ import Foundation
         precondition(unchanged.rules.domains == next.rules.domains, "Rejected transaction must not replace settings")
         var invalid = RoutingRules(); invalid.domains = ["https://example.com"]
         do { try invalid.validate(); fatalError("URL accepted as domain") } catch {}
+        var invalidPreset = RoutingRules(); invalidPreset.automaticServices = ["not-a-real-preset"]
+        do { try invalidPreset.validate(); fatalError("Unknown service preset accepted") } catch {}
         try store.save(try store.freshState())
         let reset = try store.load()
         precondition(reset.subscription.isEmpty, "Reset must not remigrate legacy settings")
-        precondition(reset.rules.domains == ["youtube.com", "cursor.com"] && reset.rules.applications == ["Cursor"], "Reset must restore bundled defaults")
-        precondition(reset.rules.processPathRegexes == ["^.*/Cursor\\.app/Contents/.*"], "Default helper path must be preserved")
+        precondition(reset.rules.domains.isEmpty && reset.rules.applications.isEmpty && reset.rules.processPathRegexes.isEmpty, "Reset must clear custom routes")
+        precondition(reset.rules.automaticRoutingEnabled && reset.rules.automaticServices == AutomaticRoutingCatalog.recommended, "Reset must enable every service preset")
+        precondition(!reset.rules.adBlockingEnabled, "Ad blocking must remain opt-in")
 
-        let freshStore = StateStore(directory: root.appendingPathComponent("fresh-settings"), legacyDirectory: root.appendingPathComponent("missing-legacy"), runtimeHashFile: hashFile, defaultRulesFile: defaultsFile)
+        let freshStore = StateStore(directory: root.appendingPathComponent("fresh-settings"), legacyDirectory: root.appendingPathComponent("missing-legacy"), runtimeHashFile: hashFile)
         let fresh = try freshStore.load()
-        precondition(fresh.rules == reset.rules, "Fresh installs must load bundled routing defaults")
+        precondition(fresh.rules == reset.rules, "Fresh installs must use service presets without hidden custom rules")
         var customized = fresh
         customized.rules.domains = ["custom.example.com"]
         try freshStore.save(customized)
@@ -91,10 +91,10 @@ import Foundation
         try FileManager.default.createDirectory(at: incompleteService.appendingPathComponent("private"), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: incompleteService.appendingPathComponent("private/subscription.decoded"))
         try Data("1\n".utf8).write(to: incompleteService.appendingPathComponent("current-server.txt"))
-        let incompleteStore = StateStore(directory: root.appendingPathComponent("incomplete-settings"), legacyDirectory: incompleteLegacy, runtimeHashFile: hashFile, defaultRulesFile: defaultsFile)
+        let incompleteStore = StateStore(directory: root.appendingPathComponent("incomplete-settings"), legacyDirectory: incompleteLegacy, runtimeHashFile: hashFile)
         let recoveredLegacy = try incompleteStore.load()
         precondition(recoveredLegacy.selectedNodeID == nodes[0].id, "Incomplete legacy subscription must still migrate")
-        precondition(recoveredLegacy.rules == fresh.rules, "Missing legacy routing rules must fall back to bundled defaults")
-        print("configuration: defaults, migration, persistence, transaction recovery, reset, node identity and decoding passed")
+        precondition(recoveredLegacy.rules == fresh.rules, "Missing legacy routing rules must fall back to service presets")
+        print("configuration: presets, migration, persistence, transaction recovery, reset, node identity and decoding passed")
     }
 }

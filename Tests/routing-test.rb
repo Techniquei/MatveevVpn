@@ -3,33 +3,21 @@ require 'tmpdir'
 require 'rbconfig'
 require 'uri'
 
-defaults_path = File.expand_path('../Resources/payload/default-rules.json', __dir__)
-defaults = JSON.parse(File.read(defaults_path))
-expected_domains = %w[youtube.com googlevideo.com telegram.org chatgpt.com openai.com claude.ai anthropic.com cursor.com cursor.sh]
-missing_domains = expected_domains - defaults.fetch('domains')
-raise "default service domains missing: #{missing_domains.join(', ')}" unless missing_domains.empty?
-expected_apps = %w[ChatGPT Codex Claude Telegram Cursor]
-missing_apps = expected_apps - defaults.fetch('applications')
-raise "default applications missing: #{missing_apps.join(', ')}" unless missing_apps.empty?
-raise 'Cursor helper path is missing from defaults' unless defaults.fetch('processPathRegexes').include?('^.*/Cursor\\.app/Contents/.*')
-
 Dir.mktmpdir('matveev-routing') do |dir|
   sub, rules, config = %w[sub rules config].map { |name| File.join(dir, name) }
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Test\n")
   builder = File.expand_path('../Resources/payload/tools/build-config.rb', __dir__)
   %w[selective all].each do |mode|
-    File.write(rules, JSON.generate({domains: ['*.example.com'], applications: ['Example'], processPathRegexes: ['^.*/Cursor\\.app/Contents/.*'], mode: mode}))
+    File.write(rules, JSON.generate({domains: ['*.example.com'], applications: ['Example'], processPathRegexes: ['^.*/Cursor\\.app/Contents/.*'], mode: mode, automaticRoutingEnabled: false, adBlockingEnabled: false}))
     raise 'generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
     value = JSON.parse(File.read(config))
     raise 'wrong final' unless value['route']['final'] == (mode == 'all' ? 'vpn' : 'direct')
     raise 'wrong DNS final' unless value['dns']['final'] == (mode == 'all' ? 'dns-vpn' : 'dns-direct')
     direct_dns = value['dns']['servers'].find { |server| server['tag'] == 'dns-direct' }
-    raise 'direct DNS must read DHCP without using the overridden system resolver' unless direct_dns && direct_dns['type'] == 'dhcp'
+    raise 'direct DNS must use HTTPS with a numeric address outside the overridden system resolver' unless direct_dns && direct_dns['type'] == 'https' && direct_dns['server'] == '8.8.8.8' && direct_dns['server_port'] == 443 && direct_dns['detour'] == 'direct'
     raise 'recursive local DNS bootstrap was reintroduced' if value['dns']['servers'].any? { |server| server['type'] == 'local' }
-    raise 'VPN server must use an independent bootstrap resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-bootstrap'
-    bootstrap = value['dns']['servers'].find { |server| server['tag'] == 'dns-bootstrap' }
-    raise 'VPN bootstrap must use direct HTTPS with a numeric address' unless bootstrap && bootstrap['type'] == 'https' && bootstrap['server'] == '8.8.8.8' && bootstrap['server_port'] == 443 && bootstrap['detour'] == 'direct'
-    raise 'external UDP bootstrap DNS was reintroduced' if value['dns']['servers'].any? { |server| server['tag'] == 'dns-bootstrap' && server['type'] == 'udp' }
+    raise 'VPN server must use the independent direct HTTPS resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-direct'
+    raise 'obsolete duplicate bootstrap resolver was retained' if value['dns']['servers'].any? { |server| server['tag'] == 'dns-bootstrap' }
     raise 'IPv6 TUN regression was reintroduced' if value['inbounds'][0]['address'].any? { |a| a.include?(':') }
     raise 'private routes must bypass TUN' unless value['inbounds'][0]['route_exclude_address'] == ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
     raise 'DNS should prefer IPv4 without returning NXDOMAIN for IPv6 queries' unless value['dns']['strategy'] == 'prefer_ipv4'
@@ -51,13 +39,41 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise "invalid domain accepted: #{domain}" if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
   end
 
-  raise 'default generation failed' unless system(RbConfig.ruby, builder, sub, config, '1')
-  generated_defaults = JSON.parse(File.read(config))
-  default_route = generated_defaults.fetch('route').fetch('rules').find { |rule| rule['outbound'] == 'vpn' && rule.key?('domain_suffix') }
-  raise 'bundled defaults are not applied by the config generator' unless default_route && expected_domains.all? { |domain| default_route['domain_suffix'].include?(domain) }
-  raise 'bundled Cursor helper route is missing' unless generated_defaults.fetch('route').fetch('rules').any? { |rule| rule['outbound'] == 'vpn' && rule['process_path_regex']&.include?('^.*/Cursor\\.app/Contents/.*') }
+  preset_services = %w[youtube telegram discord]
+  File.write(File.join(dir, 'ad-block-domains.txt'), "videoroll.net\nadnxs.com\n")
+  File.write(rules, JSON.generate({domains: [], applications: [], processPathRegexes: [], mode: 'selective', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: true}))
+  raise 'preset generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  generated_presets = JSON.parse(File.read(config))
+  rule_sets = generated_presets.fetch('route').fetch('rule_set')
+  tags = rule_sets.map { |rule| rule.fetch('tag') }
+  expected_tags = %w[preset-youtube preset-telegram preset-discord preset-telegram-ip ad-block]
+  raise 'selected preset rule sets are missing' unless expected_tags.all? { |tag| tags.include?(tag) }
+  raise 'unselected presets were generated' if tags.include?('preset-openai')
+  youtube_set = rule_sets.find { |rule| rule['tag'] == 'preset-youtube' }
+  raise 'preset source is incorrect' unless youtube_set['url'].end_with?('/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs') && youtube_set['update_interval'] == '1d'
+  raise 'rule downloads must use the VPN' unless generated_presets.fetch('http_clients') == [{'tag' => 'rules-download', 'detour' => 'vpn'}]
+  raise 'remote rule cache is missing' unless generated_presets.dig('experimental', 'cache_file', 'enabled') == true
+  raise 'preset DNS must use VPN DNS' unless generated_presets.fetch('dns').fetch('rules').any? { |rule| rule['rule_set'] == preset_services.map { |service| "preset-#{service}" } && rule['server'] == 'dns-vpn' }
+  expected_ad_domains = %w[videoroll.net adnxs.com]
+  ad_rule_set = rule_sets.find { |rule| rule['tag'] == 'ad-block' }
+  raise 'HaGeZi inline rule set is missing' unless ad_rule_set && ad_rule_set['type'] == 'inline' && ad_rule_set.dig('rules', 0, 'domain_suffix') == expected_ad_domains
+  raise 'HaGeZi domains are missing from DNS blocking' unless generated_presets.fetch('dns').fetch('rules').any? { |rule| rule['rule_set'] == ['ad-block'] && rule['action'] == 'reject' }
+  raise 'HaGeZi domains are missing from route blocking' unless generated_presets.fetch('route').fetch('rules').any? { |rule| rule['rule_set'] == ['ad-block'] && rule['action'] == 'reject' }
+  raise 'HaGeZi updates are not routed through VPN DNS' unless generated_presets.fetch('dns').fetch('rules').any? { |rule| rule['domain'] == ['raw.githubusercontent.com'] && rule['server'] == 'dns-vpn' }
+  raise 'HaGeZi updates are not routed through VPN' unless generated_presets.fetch('route').fetch('rules').any? { |rule| rule['domain'] == ['raw.githubusercontent.com'] && rule['outbound'] == 'vpn' }
+  raise 'presets are not routed through VPN' unless generated_presets.fetch('route').fetch('rules').any? { |rule| expected_tags[0...4].all? { |tag| rule.fetch('rule_set', []).include?(tag) } && rule['outbound'] == 'vpn' }
 
-  File.write(rules, JSON.generate({domains: ['example.com'], applications: [], processPathRegexes: [], mode: 'selective'}))
+  File.write(rules, JSON.generate({mode: 'selective', automaticRoutingEnabled: false, automaticServices: preset_services, adBlockingEnabled: false}))
+  raise 'disabled preset generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  raise 'disabled presets still generated remote rules' if JSON.parse(File.read(config)).fetch('route').key?('rule_set')
+  File.write(rules, JSON.generate({mode: 'all', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: false}))
+  raise 'all traffic generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  raise 'all traffic mode should not download service presets' if JSON.parse(File.read(config)).fetch('route').key?('rule_set')
+  File.write(rules, JSON.generate({automaticServices: ['unsupported-service']}))
+  raise 'unknown service preset accepted' if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
+  raise 'rules argument unexpectedly remained optional' if system(RbConfig.ruby, builder, sub, config, '1', out: File::NULL, err: File::NULL)
+
+  File.write(rules, JSON.generate({domains: ['example.com'], applications: [], processPathRegexes: [], mode: 'selective', automaticRoutingEnabled: false, adBlockingEnabled: false}))
   reality_key = 'A' * 43
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@reality.example.com:443?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&fp=chrome&sni=cover.example.com&pbk=#{reality_key}&sid=0123456789abcdef&spx=%2Fmodern#Reality\n")
   raise 'REALITY generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
@@ -102,4 +118,4 @@ Dir.mktmpdir('matveev-routing') do |dir|
   ws_tls = JSON.parse(File.read(config)).fetch('outbounds').first
   raise 'TLS ALPN was not applied to WebSocket' unless ws_tls.fetch('transport')['type'] == 'ws' && ws_tls.fetch('tls')['alpn'] == ['http/1.1']
 end
-puts 'routing: defaults, modes, secure DNS, Xray transports, TLS aliases, wildcards and process paths passed'
+puts 'routing: presets, ad blocking, modes, secure DNS, Xray transports, TLS aliases, wildcards and process paths passed'

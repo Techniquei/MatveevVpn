@@ -91,6 +91,12 @@ enum RuleInspector {
                 return "VPN — application path rule: \(pattern)"
             }
         }
+        if rules.automaticRoutingEnabled && !rules.automaticServices.isEmpty {
+            return "Automatic service presets are enabled. Downloaded MetaCubeX rules are evaluated by the VPN engine; this inspector only predicts custom rules."
+        }
+        if rules.adBlockingEnabled {
+            return "Ad blocking is enabled. Downloaded advertising rules are evaluated by the VPN engine; this inspector only predicts custom rules."
+        }
         return "Direct — no matching rule. This predicts configured rules; it does not inspect a live connection or DNS cache."
     }
 }

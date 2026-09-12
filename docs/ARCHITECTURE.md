@@ -52,8 +52,9 @@ sing-box CLI mode on macOS. The previous DNS configuration is restored when the
 tunnel stops.
 After sniffing, hostnames selected for VPN routing are resolved through `dns-vpn`
 before the terminal outbound rule. This replaces locally filtered destination
-addresses while preserving direct bootstrap resolution for the VPN server itself.
-The VPN server's own bootstrap lookup necessarily uses the direct resolver.
+addresses. Other hostnames and the VPN server itself use a numeric direct
+DNS-over-HTTPS resolver. It does not read the macOS resolver after that resolver
+has been replaced by the tunnel endpoint, avoiding a circular DHCP lookup.
 For REALITY and XHTTP nodes, Xray-core owns only the VLESS transport on a loopback SOCKS
 endpoint because current servers can reject the legacy client version
 advertised by sing-box. sing-box still owns TUN, DNS and routing; an explicit

@@ -4,10 +4,9 @@ require "json"
 require "digest"
 require "uri"
 
-abort "usage: build-config.rb SUBSCRIPTION OUTPUT INDEX [RULES]" unless (3..4).cover?(ARGV.length)
+abort "usage: build-config.rb SUBSCRIPTION OUTPUT INDEX RULES" unless ARGV.length == 4
 
 subscription_path, output_path, index_text, rules_path = ARGV
-rules_path ||= File.expand_path("../default-rules.json", __dir__)
 File.delete(output_path + ".xray.json") if File.exist?(output_path + ".xray.json")
 index = Integer(index_text, 10)
 lines = File.readlines(subscription_path, chomp: true).reject(&:empty?)
@@ -25,7 +24,7 @@ vpn_outbound = {
   "server_port" => uri.port,
   "uuid" => URI.decode_www_form_component(uri.user.to_s),
   "domain_resolver" => {
-    "server" => "dns-bootstrap",
+    "server" => "dns-direct",
     "strategy" => "prefer_ipv4"
   }
 }
@@ -162,6 +161,25 @@ else
 end
 
 rules_data = JSON.parse(File.read(rules_path))
+automatic_service_catalog = %w[
+  youtube telegram whatsapp instagram facebook twitter discord openai anthropic
+  google-gemini cursor github-copilot spotify
+].freeze
+automatic_enabled = rules_data.fetch("automaticRoutingEnabled", true)
+ad_blocking_enabled = rules_data.fetch("adBlockingEnabled", false)
+ad_block_domains = []
+if ad_blocking_enabled
+  ad_block_path = File.join(File.dirname(rules_path), "ad-block-domains.txt")
+  abort "Advertising rule data is missing" unless File.file?(ad_block_path)
+  ad_block_domains = File.readlines(ad_block_path, chomp: true).map(&:strip).reject { |value| value.empty? || value.start_with?("#") }.map(&:downcase).uniq
+  abort "Advertising rule data is unexpectedly small" if ad_block_domains.empty?
+  ad_block_domains.each do |domain|
+    abort "Invalid advertising domain" unless domain.length <= 253 && domain.split(".", -1).length >= 2 && domain.split(".", -1).all? { |label| label.match?(/\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z/) }
+  end
+end
+requested_services = Array(rules_data.fetch("automaticServices", automatic_service_catalog)).map { |value| value.to_s.strip }.reject(&:empty?).uniq
+unknown_services = requested_services - automatic_service_catalog
+abort "Unsupported service preset: #{unknown_services.first}" unless unknown_services.empty?
 routed_domains = Array(rules_data["domains"]).map { |value| value.to_s.strip.downcase }.reject(&:empty?).uniq
 routed_apps = Array(rules_data["applications"]).map { |value| value.to_s.strip }.reject(&:empty?).uniq
 routed_domains = routed_domains.map do |domain|
@@ -172,13 +190,48 @@ end.uniq
 paths = Array(rules_data["processPathRegexes"]).map(&:strip).reject(&:empty?).uniq
 paths.each { |pattern| Regexp.new(pattern) }
 full = rules_data.fetch("mode", "selective") == "all"
+automatic_services = automatic_enabled && !full ? automatic_service_catalog.select { |service| requested_services.include?(service) } : []
+domain_rule_set_tags = automatic_services.map { |service| "preset-#{service}" }
+ip_rule_set_services = automatic_services & %w[telegram facebook twitter]
+ip_rule_set_tags = ip_rule_set_services.map { |service| "preset-#{service}-ip" }
+remote_rule_sets = automatic_services.map do |service|
+  {
+    "type" => "remote",
+    "tag" => "preset-#{service}",
+    "format" => "binary",
+    "url" => "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/#{service}.srs",
+    "http_client" => "rules-download",
+    "update_interval" => "1d"
+  }
+end
+remote_rule_sets.concat(ip_rule_set_services.map do |service|
+  {
+    "type" => "remote",
+    "tag" => "preset-#{service}-ip",
+    "format" => "binary",
+    "url" => "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/#{service}.srs",
+    "http_client" => "rules-download",
+    "update_interval" => "1d"
+  }
+end)
+rule_sets = remote_rule_sets.dup
+if ad_blocking_enabled
+  rule_sets << {
+    "type" => "inline",
+    "tag" => "ad-block",
+    "rules" => [{ "domain_suffix" => ad_block_domains }]
+  }
+end
 diagnostic_vpn_domains = ["api4.ipify.org"]
 diagnostic_direct_domains = ["api64.ipify.org"]
+ad_block_update_domains = ["raw.githubusercontent.com"]
 
 dns_rules = [
   { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" },
   { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "prefer_ipv4" }
 ]
+dns_rules << { "domain" => ad_block_update_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } if ad_blocking_enabled
+dns_rules << { "rule_set" => ["ad-block"], "action" => "reject" } if ad_blocking_enabled
 unless paths.empty?
   dns_rules << { "process_path_regex" => paths, "action" => "route", "server" => "dns-vpn" }
 end
@@ -187,6 +240,9 @@ unless routed_apps.empty?
 end
 unless routed_domains.empty?
   dns_rules << { "domain_suffix" => routed_domains, "action" => "route", "server" => "dns-vpn" }
+end
+unless domain_rule_set_tags.empty?
+  dns_rules << { "rule_set" => domain_rule_set_tags, "action" => "route", "server" => "dns-vpn" }
 end
 
 route_rules = [
@@ -197,33 +253,34 @@ route_rules.concat([
   { "action" => "sniff", "sniffer" => ["http", "tls", "quic", "dns"], "timeout" => "500ms" },
   { "protocol" => "dns", "action" => "hijack-dns" }
 ])
+route_rules << { "rule_set" => ["ad-block"], "action" => "reject" } if ad_blocking_enabled
 route_rules << { "domain" => diagnostic_direct_domains, "action" => "route", "outbound" => "direct" }
 if full
   route_rules << { "domain_regex" => [".+"], "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" }
 else
+  route_rules << { "rule_set" => domain_rule_set_tags, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless domain_rule_set_tags.empty?
   route_rules << { "domain_suffix" => routed_domains, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless routed_domains.empty?
   route_rules << { "process_name" => routed_apps, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless routed_apps.empty?
   route_rules << { "process_path_regex" => paths, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless paths.empty?
 end
 route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
 route_rules << { "domain" => diagnostic_vpn_domains, "action" => "route", "outbound" => "vpn" }
+route_rules << { "domain" => ad_block_update_domains, "action" => "route", "outbound" => "vpn" } if ad_blocking_enabled
 route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" } unless routed_apps.empty?
 route_rules << { "process_path_regex" => paths, "action" => "route", "outbound" => "vpn" } unless paths.empty?
 unless routed_domains.empty?
   route_rules << { "domain_suffix" => routed_domains, "action" => "route", "outbound" => "vpn" }
 end
+all_rule_set_tags = domain_rule_set_tags + ip_rule_set_tags
+route_rules << { "rule_set" => all_rule_set_tags, "action" => "route", "outbound" => "vpn" } unless all_rule_set_tags.empty?
 
 config = {
   "log" => { "level" => "warn", "timestamp" => true },
   "dns" => {
     "servers" => [
       {
-        "type" => "dhcp",
-        "tag" => "dns-direct",
-      },
-      {
         "type" => "https",
-        "tag" => "dns-bootstrap",
+        "tag" => "dns-direct",
         "server" => "8.8.8.8",
         "server_port" => 443,
         "path" => "/dns-query",
@@ -277,6 +334,18 @@ config = {
     "final" => full ? "vpn" : "direct"
   }
 }
+
+config["route"]["rule_set"] = rule_sets unless rule_sets.empty?
+
+unless remote_rule_sets.empty?
+  config["http_clients"] = [{ "tag" => "rules-download", "detour" => "vpn" }]
+  config["experimental"] = {
+    "cache_file" => {
+      "enabled" => true,
+      "path" => "/Library/Application Support/matveevVpn/run/rule-set-cache.db"
+    }
+  }
+end
 
 if xray_config
   # Keep the primary config identity tied to the private sidecar so transaction

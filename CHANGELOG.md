@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.3.0
+
+- Promotes the source-based HaGeZi Multi PRO mini ad-blocking implementation
+  to the 1.3.0 release, with a pinned bundled fallback and validated refreshes
+  through the VPN every eight hours.
+- Preserves selectable service presets, custom routing and both sing-box and
+  Xray transport modes.
+
+## 1.2.7
+
+- Replaces the narrower MetaCubeX advertising category with the official HaGeZi Multi PRO mini list, including the VideoRoll network observed on Lordfilm mirrors.
+- Bundles a pinned, checksum-verified initial list and validates updates fetched directly from HaGeZi through the VPN every eight hours.
+
+## 1.2.6
+
+- Replaces the Selective-mode DHCP resolver with numeric direct DNS-over-HTTPS after runtime logs showed DHCP discovery timing out behind the macOS tunnel DNS override.
+- Reuses that direct resolver for VPN-node hostname bootstrap instead of keeping a duplicate resolver.
+- Includes the application version in startup log entries.
+
+## 1.2.5
+
+- Adds a default-on list of selectable service presets for services unavailable or restricted in Russia.
+- Downloads compact MetaCubeX rule sets through the VPN, caches them locally and refreshes them daily.
+- Adds optional DNS-level advertising and tracker blocking with the MetaCubeX `category-ads-all` rule set.
+- Keeps custom domain, process-name and executable-path routing available alongside presets.
+- Removes the hidden bundled default-rule file and migrates its unchanged routes to the visible preset selection.
+
 ## 1.2.4
 
 - Prevents a failed service install or repair from being misclassified as an unexpected tunnel crash and immediately starting automatic recovery.

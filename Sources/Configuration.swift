@@ -19,11 +19,33 @@ enum VPNError: LocalizedError {
 
 enum RoutingMode: String, Codable, CaseIterable { case selective, all }
 
+enum AutomaticRoutingCatalog {
+    static let services = [
+        "youtube", "telegram", "whatsapp", "instagram", "facebook", "twitter", "discord",
+        "openai", "anthropic", "google-gemini", "cursor", "github-copilot", "spotify"
+    ]
+    static let recommended = services
+
+    static func title(for identifier: String) -> String {
+        let known = [
+            "youtube": "YouTube", "telegram": "Telegram", "whatsapp": "WhatsApp",
+            "instagram": "Instagram", "facebook": "Facebook", "twitter": "X (Twitter)",
+            "discord": "Discord",
+            "openai": "ChatGPT", "anthropic": "Claude", "google-gemini": "Google Gemini",
+            "cursor": "Cursor", "github-copilot": "GitHub Copilot", "spotify": "Spotify"
+        ]
+        return known[identifier] ?? identifier.replacingOccurrences(of: "-", with: " ").capitalized
+    }
+}
+
 struct RoutingRules: Codable, Equatable {
     var domains: [String] = []
     var applications: [String] = []
     var processPathRegexes: [String] = []
     var mode: RoutingMode = .selective
+    var automaticRoutingEnabled = true
+    var automaticServices = AutomaticRoutingCatalog.recommended
+    var adBlockingEnabled = false
     init() {}
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -31,8 +53,15 @@ struct RoutingRules: Codable, Equatable {
         applications = try c.decodeIfPresent([String].self, forKey: .applications) ?? []
         processPathRegexes = try c.decodeIfPresent([String].self, forKey: .processPathRegexes) ?? []
         mode = try c.decodeIfPresent(RoutingMode.self, forKey: .mode) ?? .selective
+        automaticRoutingEnabled = try c.decodeIfPresent(Bool.self, forKey: .automaticRoutingEnabled) ?? true
+        automaticServices = try c.decodeIfPresent([String].self, forKey: .automaticServices) ?? AutomaticRoutingCatalog.recommended
+        adBlockingEnabled = try c.decodeIfPresent(Bool.self, forKey: .adBlockingEnabled) ?? false
     }
     func validate() throws {
+        let unknownServices = Set(automaticServices).subtracting(AutomaticRoutingCatalog.services)
+        guard unknownServices.isEmpty else {
+            throw VPNError.message("The routing configuration contains an unsupported service preset.")
+        }
         for (index, entry) in domains.enumerated() {
             let domain = entry.hasPrefix("*.") ? String(entry.dropFirst(2)) : entry
             let labels = domain.split(separator: ".", omittingEmptySubsequences: false)
@@ -230,12 +259,10 @@ struct StateStore {
     let directory: URL
     let legacyDirectory: URL
     let runtimeHashFile: URL
-    let defaultRulesFile: URL?
-    init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/matveevVpn"), legacyDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("VPN"), runtimeHashFile: URL = URL(fileURLWithPath: "/Library/Application Support/matveevVpn/control/config-sha256"), defaultRulesFile: URL? = Bundle.main.resourceURL?.appendingPathComponent(".payload/default-rules.json")) {
+    init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/matveevVpn"), legacyDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("VPN"), runtimeHashFile: URL = URL(fileURLWithPath: "/Library/Application Support/matveevVpn/control/config-sha256")) {
         self.directory = directory
         self.legacyDirectory = legacyDirectory
         self.runtimeHashFile = runtimeHashFile
-        self.defaultRulesFile = defaultRulesFile
     }
     var file: URL { directory.appendingPathComponent("settings.json") }
     var pendingFile: URL { directory.appendingPathComponent("pending.json") }
@@ -247,8 +274,9 @@ struct StateStore {
             if activeHash != nil { try FileManager.default.removeItem(at: pendingFile) }
         }
         guard FileManager.default.fileExists(atPath: file.path) else { return try migrate() }
-        let value = try JSONDecoder().decode(SavedState.self, from: Data(contentsOf: file))
+        var value = try JSONDecoder().decode(SavedState.self, from: Data(contentsOf: file))
         guard value.schemaVersion == 2 else { throw VPNError.message("These settings require a newer app version.") }
+        if value.rules.removeLegacyBundledDefaultsIfUnchanged() { try save(value) }
         return value
     }
     func stage(_ state: SavedState, config: Data) throws {
@@ -269,15 +297,7 @@ struct StateStore {
         try encoder.encode(state).write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
-    func freshState() throws -> SavedState {
-        guard let defaultRulesFile, FileManager.default.fileExists(atPath: defaultRulesFile.path) else {
-            return SavedState()
-        }
-        var state = SavedState()
-        state.rules = try JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: defaultRulesFile))
-        try state.rules.validate()
-        return state
-    }
+    func freshState() throws -> SavedState { SavedState() }
     private func migrate() throws -> SavedState {
         let legacy = legacyDirectory
         let subscriptionFile = legacy.appendingPathComponent(".service/private/subscription.decoded")
@@ -297,5 +317,27 @@ struct StateStore {
         state.migratedFromV1 = true
         try save(state)
         return state
+    }
+}
+
+private extension RoutingRules {
+    mutating func removeLegacyBundledDefaultsIfUnchanged() -> Bool {
+        let legacyDomains = [
+            "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "cdn.openaimerge.com",
+            "anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com",
+            "telegram.org", "telegram.me", "telegram.dog", "t.me", "telegra.ph", "telesco.pe", "stel.com", "tg.dev",
+            "youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com", "youtube-nocookie.com", "youtubeeducation.com", "youtubekids.com", "yt.be", "youtube.googleapis.com", "youtubei.googleapis.com",
+            "cursor.com", "cursor.sh", "cursorapi.com", "cursor-cdn.com", "cursorusercontent.com", "anysphere.com", "anysphere.co", "anysphere.dev", "anysphereinc.com"
+        ]
+        let legacyApplications = ["ChatGPT", "Codex", "Claude", "Telegram", "Telegram Lite", "Telegram Desktop", "Cursor"]
+        let legacyPaths = [
+            "^.*/ChatGPT\\.app/Contents/.*", "^.*/Claude\\.app/Contents/.*",
+            "^.*/Telegram[^/]*\\.app/Contents/.*", "^.*/Cursor\\.app/Contents/.*"
+        ]
+        guard domains == legacyDomains, applications == legacyApplications, processPathRegexes == legacyPaths else { return false }
+        domains = []
+        applications = []
+        processPathRegexes = []
+        return true
     }
 }

@@ -4,7 +4,9 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 
 ## Features
 
-- Selective routing by domain, application name or executable path.
+- Selective routing with per-service presets for commonly restricted services in Russia.
+- Custom routing by domain, application name or executable path alongside presets.
+- Optional DNS-level advertising and tracker blocking.
 - All Traffic mode with private and local networks kept direct.
 - Native TUN, DNS interception and VPN-side DNS re-resolution.
 - HTTPS subscriptions or direct VLESS links, measured node latency and settings that survive app updates.
@@ -46,6 +48,16 @@ a node, then select **Install and set up**.
 
 The system component requires one administrator prompt on first installation or
 repair. Normal connection and configuration changes do not require a password.
+
+Service presets use binary rule sets from
+[MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat). Selected
+sets are downloaded through the VPN, cached locally and checked for updates once
+per day. Ad blocking uses the official
+[HaGeZi Multi PRO mini](https://github.com/hagezi/dns-blocklists) domain list. A
+pinned copy works immediately, then the app validates and refreshes it through
+the VPN every eight hours. DNS-level blocking removes many third-party banners,
+trackers and ad inserts, but cannot remove ads served from the same domain as the
+requested video.
 
 Current builds are ad-hoc signed and not notarized by Apple. If macOS blocks the
 app, allow it in System Settings → Privacy & Security. The tunnel is IPv4-only.
