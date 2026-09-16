@@ -24,6 +24,7 @@ DNS_CALL_LOG="$RUNTIME/dns-calls"
 MATVEEV_BASE_DIR="$RUNTIME" \
 MATVEEV_LOG_FILE="$RUNTIME/vpn.log" \
 MATVEEV_ERROR_FILE="$RUNTIME/vpn.error.log" \
+MATVEEV_START_RETRY_SECONDS=1 \
 MATVEEV_NETWORKSETUP="$RUNTIME/bin/networksetup" \
 MATVEEV_DEFAULT_INTERFACE="test0" \
 MATVEEV_FAKE_DNS="$CURRENT_DNS" \
@@ -116,8 +117,11 @@ send_action reset
 [[ ! -e "$CONTROL/config-sha256" ]]
 [[ ! -e "$CONTROL/last-error.log" ]]
 send_action_expect on error
-wait_for_file_value "$RUNTIME/run/desired-state" "off"
-wait_for_file_value "$CONTROL/runtime-status" "error: retry limit reached"
+wait_for_file_value "$RUNTIME/run/desired-state" "on"
+wait_for_file_value "$CONTROL/runtime-status" "waiting to retry"
+START_FAILURE_COUNT="$(/usr/bin/grep -c 'VPN start failed' "$RUNTIME/vpn.log")"
+/bin/sleep 1.5
+[[ "$(/usr/bin/grep -c 'VPN start failed' "$RUNTIME/vpn.log")" -gt "$START_FAILURE_COUNT" ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
-echo "controller: reload preserves off state; reset removes credentials; retries and logs are bounded"
+echo "controller: reload preserves off state; reset removes credentials; retries persist and logs are bounded"

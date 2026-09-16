@@ -596,13 +596,40 @@ private struct MainView: View {
 
 }
 
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var openMainWindow: (() -> Void)?
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let openMainWindow else { return true }
+        openMainWindow()
+        sender.activate(ignoringOtherApps: true)
+        return false
+    }
+}
+
+private struct MainWindowContent: View {
+    let appDelegate: AppDelegate
+    @ObservedObject var controller: VPNController
+    @ObservedObject var speedMonitor: SpeedMonitor
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        MainView(controller: controller, speedMonitor: speedMonitor)
+            .onAppear {
+                appDelegate.openMainWindow = { openWindow(id: "main") }
+            }
+    }
+}
+
 @main
 struct MatveevVPNApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var controller = VPNController()
     @StateObject private var speedMonitor = SpeedMonitor()
     var body: some Scene {
         Window("matveevVpn", id: "main") {
-            MainView(controller: controller, speedMonitor: speedMonitor)
+            MainWindowContent(appDelegate: appDelegate, controller: controller, speedMonitor: speedMonitor)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)

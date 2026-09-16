@@ -78,9 +78,11 @@ TCP handshake as a clearly labelled fallback. While the VPN is expected to be on
 runs every 15 seconds. Three consecutive failures start recovery: two restarts
 of the current node, then up to three alternate nodes ordered by known TCP
 latency. A persistent circuit breaker permits at most three actual node switches
-in ten minutes. Exhausting either path turns the VPN off and surfaces an error.
-The privileged controller independently stops trying to launch a failing runtime
-after three attempts, so recovery cannot loop when the UI is absent.
+in ten minutes. Exhausting a recovery cycle surfaces an error and schedules the
+next cycle after 30 seconds without clearing the desired-on state. The privileged
+controller independently retries a failing runtime every 30 seconds, including
+when the UI is absent. A physical-network change after wake clears the delay and
+triggers the next startup attempt immediately.
 
 The user-readable event log lives under `~/Library/Logs/matveevVpn`. Each append
 atomically retains at most 3,000,000 bytes, and Settings or an error action exports its bytes

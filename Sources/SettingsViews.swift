@@ -65,7 +65,7 @@ struct SettingsView: View {
                 Toggle("Failure notifications", isOn: Binding(get: { controller.notificationsEnabled }, set: { controller.setNotifications($0) }))
             }
             Toggle("Automatic node failover", isOn: Binding(get: { controller.autoFailoverEnabled }, set: { controller.setAutoFailover($0) }))
-            Text("After three failed health checks, matveevVpn retries the current node twice, then tries up to three alternatives. It turns off if recovery fails or the 10-minute switch limit is reached.")
+            Text("After three failed health checks, matveevVpn retries the current node twice, then tries up to three alternatives. If recovery fails, it keeps the VPN enabled and retries every 30 seconds; the 10-minute switch limit still prevents rapid node changes.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("Check for Updates…") { AppUpdater.shared.check() }.disabled(!AppUpdater.shared.available)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1
+
+- Reopens the main window when the Dock icon is clicked after closing the window.
+
+- Keeps the desired VPN state enabled after startup or automatic recovery fails,
+  and continues retrying every 30 seconds instead of stopping after a fixed limit.
+- Retries immediately when the physical network returns after system sleep.
+
 ## 1.3.0
 
 - Promotes the source-based HaGeZi Multi PRO mini ad-blocking implementation

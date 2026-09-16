@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.3.0"
+    static let releaseVersion = "1.3.1"
     @Published var isBusy = false
     @Published var isInstalled = false
     @Published var isRunning = false
@@ -47,6 +47,8 @@ final class VPNController: ObservableObject {
     private var adBlockRefresh: Task<Void, Never>?
     private var adBlockRulesNeedApply = false
     private var recoverySuppressedUntil = Date.distantPast
+    private var nextRecoveryAttempt = Date.distantPast
+    private var recoveryFailureNotified = false
     private var lastHealthCheck = Date.distantPast
     private var consecutiveHealthFailures = 0
 
@@ -55,6 +57,7 @@ final class VPNController: ObservableObject {
     private static let currentNodeRestartAttempts = 2
     private static let maximumNodeSwitchesPerWindow = 3
     private static let failoverWindow: TimeInterval = 10 * 60
+    private static let recoveryRetryInterval: TimeInterval = 30
 
     init() {
         _ = AppUpdater.shared
@@ -99,7 +102,7 @@ final class VPNController: ObservableObject {
         if message == "Checking status…" {
             message = isInstalled && state.selectedNodeID != nil ? "" : "Add a subscription to get started."
         }
-        if !recoverySuppressed && !isRunning && state.desiredOn && isInstalled && !needsUpgrade && (wasRunning == true || wasRunning == nil) {
+        if !recoverySuppressed && !isRunning && state.desiredOn && isInstalled && !needsUpgrade {
             beginAutomaticRecovery(reason: "the VPN runtime stopped")
         } else if isRunning {
             scheduleHealthCheckIfNeeded()
@@ -169,13 +172,27 @@ final class VPNController: ObservableObject {
     func run(_ action: String) {
         perform(action == "off" ? "Disconnect VPN" : "Connect VPN") {
             let wasRunning = self.service.running
-            try await self.service.send(action)
             var next = self.state
             next.desiredOn = action != "off"
-            do { try self.store.save(next) }
-            catch { try? await self.service.send(wasRunning ? "on" : "off"); throw error }
+            if action != "off" {
+                try self.store.save(next)
+                self.state = next
+            }
+            do { try await self.service.send(action) }
+            catch {
+                if action == "off" { try? await self.service.send(wasRunning ? "on" : "off") }
+                throw error
+            }
+            if action == "off" {
+                do { try self.store.save(next) }
+                catch { try? await self.service.send(wasRunning ? "on" : "off"); throw error }
+            }
             self.state = next
-            if action == "off" { self.consecutiveHealthFailures = 0 }
+            if action == "off" {
+                self.consecutiveHealthFailures = 0
+                self.nextRecoveryAttempt = .distantPast
+                self.recoveryFailureNotified = false
+            }
             self.checkConnection()
         }
     }
@@ -455,7 +472,8 @@ final class VPNController: ObservableObject {
 
     private func beginAutomaticRecovery(reason: String) {
         guard autoFailoverEnabled, recoveryTask == nil, !isBusy, state.desiredOn,
-              Date() >= recoverySuppressedUntil, isInstalled, !needsUpgrade,
+              Date() >= recoverySuppressedUntil, Date() >= nextRecoveryAttempt,
+              isInstalled, !needsUpgrade,
               state.selectedNodeID != nil else { return }
         healthCheck?.cancel()
         healthCheck = nil
@@ -466,8 +484,10 @@ final class VPNController: ObservableObject {
             do {
                 try await self.recoverConnection()
                 self.failureReport = ""
+                self.nextRecoveryAttempt = .distantPast
+                self.recoveryFailureNotified = false
             } catch {
-                await self.disableAfterRecoveryFailure(error)
+                await self.scheduleRetryAfterRecoveryFailure(error)
             }
             self.consecutiveHealthFailures = 0
             self.lastHealthCheck = Date()
@@ -554,23 +574,19 @@ final class VPNController: ObservableObject {
         return true
     }
 
-    private func disableAfterRecoveryFailure(_ error: Error) async {
-        try? await service.send("off")
-        var next = state
-        next.desiredOn = false
-        do {
-            try store.save(next)
-            state = next
-        } catch {
-            AppLogger.shared.write("failed to save disabled state after recovery failure")
-        }
-        let recoveryError = VPNError.message("VPN was turned off to prevent uncontrolled switching. \(error.localizedDescription)")
+    private func scheduleRetryAfterRecoveryFailure(_ error: Error) async {
+        nextRecoveryAttempt = Date().addingTimeInterval(Self.recoveryRetryInterval)
+        let seconds = Int(Self.recoveryRetryInterval)
+        let recoveryError = VPNError.message("VPN is still unavailable. Automatic recovery will retry in \(seconds) seconds. \(error.localizedDescription)")
         message = recoveryError.localizedDescription
         nodeMessage = message
         failureReport = recoveryError.localizedDescription
         let context = await connectionContext()
         AppLogger.shared.write(makeLogReport(operation: "Automatic connection recovery", error: recoveryError) + "\n" + context)
-        if notificationsEnabled { notify("VPN turned off", "Automatic recovery reached its safety limit.") }
+        if notificationsEnabled && !recoveryFailureNotified {
+            recoveryFailureNotified = true
+            notify("VPN connection unavailable", "Automatic recovery will keep retrying every \(seconds) seconds.")
+        }
     }
 
     func checkConnection() {

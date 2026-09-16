@@ -24,7 +24,7 @@ LOG_FILE="${MATVEEV_LOG_FILE:-$RUN_DIR/vpn.log}"
 ERROR_FILE="${MATVEEV_ERROR_FILE:-$RUN_DIR/vpn.error.log}"
 WATCHDOG_GAP_SECONDS="${MATVEEV_WATCHDOG_GAP_SECONDS:-10}"
 MAX_LOG_BYTES="${MATVEEV_MAX_LOG_BYTES:-3000000}"
-MAX_START_FAILURES="${MATVEEV_MAX_START_FAILURES:-3}"
+START_RETRY_SECONDS="${MATVEEV_START_RETRY_SECONDS:-30}"
 
 CHILD_PID=""
 XRAY_PID=""
@@ -35,6 +35,7 @@ LAST_DEFAULT_ROUTE_SIGNATURE=""
 TUN_MISSES=0
 LAST_STATUS_PUBLISH=0
 START_FAILURES=0
+NEXT_START_ATTEMPT=0
 
 /bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
 
@@ -430,21 +431,25 @@ recover_child() {
   local reason="$1"
   log_event "restarting VPN after $reason"
   stop_child
-  start_with_limit || true
+  start_with_retry || true
 }
 
-start_with_limit() {
+start_with_retry() {
+  local now
+  now="$(/bin/date +%s)"
+  if [[ "$now" -lt "$NEXT_START_ATTEMPT" ]]; then
+    return 1
+  fi
   if start_child; then
     START_FAILURES=0
+    NEXT_START_ATTEMPT=0
     return 0
   fi
   START_FAILURES=$((START_FAILURES + 1))
-  log_event "VPN start failed ($START_FAILURES/$MAX_START_FAILURES)"
-  if [[ "$START_FAILURES" -ge "$MAX_START_FAILURES" ]]; then
-    set_desired "off"
-    write_status "error: retry limit reached"
-    log_event "VPN disabled after reaching the startup retry limit"
-  fi
+  now="$(/bin/date +%s)"
+  NEXT_START_ATTEMPT=$((now + START_RETRY_SECONDS))
+  write_status "waiting to retry"
+  log_event "VPN start failed (attempt $START_FAILURES); retrying in $START_RETRY_SECONDS seconds"
   return 1
 }
 
@@ -465,10 +470,15 @@ run_watchdog() {
       log_event "default route changed: $LAST_DEFAULT_ROUTE_SIGNATURE -> $default_route"
     fi
     LAST_DEFAULT_ROUTE_SIGNATURE="$default_route"
-    if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]] && runtime_running; then
+    if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]]; then
       log_event "physical network changed: $LAST_NETWORK_SIGNATURE -> $signature"
-      recover_child "a network interface change"
-      recovered=true
+      if runtime_running; then
+        recover_child "a network interface change"
+        recovered=true
+      else
+        NEXT_START_ATTEMPT=0
+        log_event "physical network became available; retrying VPN immediately"
+      fi
     fi
     LAST_NETWORK_SIGNATURE="$signature"
     LAST_NETWORK_CHECK="$now"
@@ -511,7 +521,8 @@ process_command() {
     on)
       set_desired "on"
       START_FAILURES=0
-      if start_with_limit; then write_response "$token" "ok"; else write_response "$token" "error"; fi
+      NEXT_START_ATTEMPT=0
+      if start_with_retry; then write_response "$token" "ok"; else write_response "$token" "error"; fi
       ;;
     off)
       set_desired "off"
@@ -521,8 +532,9 @@ process_command() {
     restart)
       set_desired "on"
       START_FAILURES=0
+      NEXT_START_ATTEMPT=0
       stop_child
-      if start_with_limit; then write_response "$token" "ok"; else write_response "$token" "error"; fi
+      if start_with_retry; then write_response "$token" "ok"; else write_response "$token" "error"; fi
       ;;
     reload)
       if reload_config; then write_response "$token" "ok"; else write_response "$token" "error"; fi
@@ -547,7 +559,7 @@ trap shutdown TERM INT HUP
 publish_config_hash
 
 if [[ "$(desired_state)" == "on" ]]; then
-  start_with_limit || true
+  start_with_retry || true
 else
   if [[ -x "$DNS_MANAGER" ]]; then "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || true; fi
   write_status "stopped"
@@ -562,7 +574,7 @@ while true; do
     process_command
   fi
   if [[ "$(desired_state)" == "on" ]] && ! child_running; then
-    start_with_limit || true
+    start_with_retry || true
   fi
   if [[ "$(desired_state)" == "on" ]]; then
     run_watchdog
