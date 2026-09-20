@@ -7,8 +7,10 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.3.1"
+    static let releaseVersion = "1.3.2"
     @Published var isBusy = false
+    @Published private(set) var isRecovering = false
+    @Published private(set) var isStoppingRecovery = false
     @Published var isInstalled = false
     @Published var isRunning = false
     @Published var needsUpgrade = false
@@ -479,19 +481,71 @@ final class VPNController: ObservableObject {
         healthCheck = nil
         recoveryTask = Task {
             self.isBusy = true
+            self.isRecovering = true
             self.message = "Connection problem detected. Trying to recover…"
             AppLogger.shared.write("automatic recovery started: \(reason)")
             do {
                 try await self.recoverConnection()
+                try Task.checkCancellation()
                 self.failureReport = ""
                 self.nextRecoveryAttempt = .distantPast
                 self.recoveryFailureNotified = false
+            } catch is CancellationError {
+                AppLogger.shared.write("automatic recovery cancelled by the user")
             } catch {
-                await self.scheduleRetryAfterRecoveryFailure(error)
+                if !Task.isCancelled && self.state.desiredOn {
+                    await self.scheduleRetryAfterRecoveryFailure(error)
+                }
             }
             self.consecutiveHealthFailures = 0
             self.lastHealthCheck = Date()
+            if !self.isStoppingRecovery {
+                self.isBusy = false
+                self.isRecovering = false
+                self.recoveryTask = nil
+                self.refresh()
+            }
+        }
+    }
+
+    func cancelAutomaticRecovery() {
+        guard recoveryTask != nil, !isStoppingRecovery else { return }
+        var next = state
+        next.desiredOn = false
+        state = next
+        do { try store.save(next) }
+        catch { AppLogger.shared.write("could not persist recovery cancellation: \(error.localizedDescription)") }
+        recoverySuppressedUntil = Date().addingTimeInterval(30)
+        nextRecoveryAttempt = .distantPast
+        consecutiveHealthFailures = 0
+        recoveryFailureNotified = false
+        isStoppingRecovery = true
+        recoveryTask?.cancel()
+        message = "Stopping automatic recovery…"
+        AppLogger.shared.write("user requested automatic recovery cancellation")
+        Task {
+            var stopped = false
+            do {
+                try await self.service.send("off")
+                stopped = true
+            }
+            catch {
+                AppLogger.shared.write("controller did not confirm recovery cancellation: \(error.localizedDescription)\nDetails:\n\(self.rawErrorDetails(error))")
+                stopped = self.service.runtimeStatus == "stopped"
+                if !stopped {
+                    var restored = self.state
+                    restored.desiredOn = true
+                    self.state = restored
+                    try? self.store.save(restored)
+                    self.failureReport = error.localizedDescription
+                }
+            }
+            self.message = stopped
+                ? "Automatic recovery stopped. VPN is off."
+                : "Automatic recovery was cancelled, but the controller did not confirm that the VPN stopped. Try Turn Off or Repair Service."
+            self.isStoppingRecovery = false
             self.isBusy = false
+            self.isRecovering = false
             self.recoveryTask = nil
             self.refresh()
         }
@@ -632,15 +686,20 @@ final class VPNController: ObservableObject {
     }
     func exportLog() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "matveevVpn.log"
+        panel.nameFieldStringValue = AppLogger.exportFileName()
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
-            let data = try Data(contentsOf: AppLogger.shared.file)
+            var contents = AppLogger.shared.contents()
+            if let runtime = service.recentRuntimeErrorDetails() {
+                if !contents.hasSuffix("\n") { contents += "\n" }
+                contents += "\nLatest captured privileged VPN runtime failure\n================================================\n\(runtime)\n"
+            }
+            let data = Data(contents.utf8)
             try data.write(to: destination, options: .atomic)
-            message = "Application log exported."
-            AppLogger.shared.write("application log exported")
+            message = "Diagnostic log exported."
+            AppLogger.shared.write("diagnostic log exported as \(destination.lastPathComponent)")
         } catch {
-            message = "Could not export the application log: \(error.localizedDescription)"
+            message = "Could not export the diagnostic log: \(error.localizedDescription)"
         }
     }
 

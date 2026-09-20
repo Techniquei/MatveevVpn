@@ -17,6 +17,9 @@ import Foundation
         precondition(!text.contains("entry-0 "), "Old entries must be removed")
         let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as! NSNumber
         precondition(permissions.intValue == 0o600)
-        print("app logger: hard size limit and retention passed")
+        let date = Date(timeIntervalSince1970: 1_782_637_445)
+        let name = AppLogger.exportFileName(at: date, timeZone: TimeZone(secondsFromGMT: 0)!)
+        precondition(name == "matveevVpn-2026-06-28_09-04-05.log", "Exported logs need a unique, sortable timestamp: \(name)")
+        print("app logger: hard size limit, retention and export filename passed")
     }
 }

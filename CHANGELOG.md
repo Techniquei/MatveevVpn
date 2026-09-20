@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.2
+
+- Adds an always-available Stop Recovery action while automatic retry and node
+  failover are running. Stopping recovery saves the VPN as off, cancels the
+  current recovery task and unlocks the interface.
+- Captures unexpected sing-box and Xray exit status in a user-readable runtime
+  diagnostic snapshot before the controller retries.
+- Includes privileged runtime diagnostics in exported logs when available.
+- Preserves the latest runtime failure when the VPN is turned off, so cancelling
+  recovery does not erase the evidence needed for support.
+- Includes the system installer output when installation or authorization fails.
+- Gives every exported diagnostic log a sortable local date-and-time filename.
+
 ## 1.3.1
 
 - Reopens the main window when the Dock icon is clicked after closing the window.

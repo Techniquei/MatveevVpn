@@ -538,12 +538,26 @@ private struct MainView: View {
                     controller: controller
                 )
 
+                if controller.isRecovering {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Automatic recovery is running")
+                            .font(.caption)
+                        Spacer()
+                        Button(controller.isStoppingRecovery ? "Stopping…" : "Stop Recovery") { controller.cancelAutomaticRecovery() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(controller.isStoppingRecovery)
+                    }
+                    .padding(9)
+                    .background(.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+                }
+
                 HStack(spacing: 12) {
-                    ActionIconButton(systemName: "power", title: !controller.isInstalled || controller.state.selectedNodeID == nil ? "Install and set up" : (controller.isRunning ? "Turn off" : "Turn on"), primary: true, active: controller.isRunning, loading: controller.isBusy) {
+                    ActionIconButton(systemName: "power", title: !controller.isInstalled || controller.state.selectedNodeID == nil ? "Install and set up" : (controller.state.desiredOn ? "Turn off" : "Turn on"), primary: true, active: controller.isRunning, loading: controller.isBusy) {
                         if !controller.isInstalled || controller.state.selectedNodeID == nil {
                             controller.openSetup()
                         } else {
-                            controller.run(controller.isRunning ? "off" : "on")
+                            controller.run(controller.state.desiredOn ? "off" : "on")
                         }
                     }
 
@@ -645,8 +659,12 @@ private struct MenuContent: View {
     var body: some View {
             Text(controller.isRunning ? "Connected" : "Disconnected")
             Text(controller.node)
-            Button(controller.isRunning ? "Turn Off" : "Turn On") { controller.run(controller.isRunning ? "off" : "on") }
+            Button(controller.state.desiredOn ? "Turn Off" : "Turn On") { controller.run(controller.state.desiredOn ? "off" : "on") }
                 .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil)
+            if controller.isRecovering {
+                Button(controller.isStoppingRecovery ? "Stopping Automatic Recovery…" : "Stop Automatic Recovery") { controller.cancelAutomaticRecovery() }
+                    .disabled(controller.isStoppingRecovery)
+            }
             Button("Open matveevVpn") { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
             Divider()
             Button("Quit") { NSApp.terminate(nil) }

@@ -109,6 +109,18 @@ publish_recent_errors() {
   /bin/mv -f "$temporary" "$CONTROL_DIR/last-error.log"
 }
 
+record_unexpected_exit() {
+  local process_name="$1" pid="$2" exit_status
+  if wait "$pid" 2>/dev/null; then
+    exit_status=0
+  else
+    exit_status=$?
+  fi
+  bounded_log_line "$ERROR_FILE" "$(/bin/date '+%Y-%m-%d %H:%M:%S') controller: $process_name exited unexpectedly (pid=$pid, status=$exit_status)"
+  write_status "error"
+  publish_recent_errors || true
+}
+
 write_status() {
   local value="$1"
   local temporary
@@ -123,7 +135,7 @@ write_response() {
   local value="$2"
   local response="$CONTROL_DIR/response-$token"
   local temporary
-  if [[ "$value" != "ok" ]]; then publish_recent_errors || true; else /bin/rm -f "$CONTROL_DIR/last-error.log"; fi
+  if [[ "$value" != "ok" ]]; then publish_recent_errors || true; fi
   temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.response.XXXXXX")" || return 1
   /usr/bin/printf '%s\n' "$value" > "$temporary"
   /bin/chmod 644 "$temporary"
@@ -495,6 +507,9 @@ run_watchdog() {
     fi
   fi
   if child_running && [[ -f "$XRAY_CONFIG_FILE" ]] && ! xray_running; then
+    record_unexpected_exit "xray" "$XRAY_PID"
+    XRAY_PID=""
+    /bin/rm -f "$XRAY_PID_FILE"
     recover_child "the Xray transport stopped"
     recovered=true
   fi
@@ -572,6 +587,11 @@ LAST_NETWORK_CHECK="$(/bin/date +%s)"
 while true; do
   if [[ -f "$COMMAND_FILE" ]]; then
     process_command
+  fi
+  if [[ "$(desired_state)" == "on" && -n "$CHILD_PID" ]] && ! child_running; then
+    record_unexpected_exit "sing-box" "$CHILD_PID"
+    CHILD_PID=""
+    /bin/rm -f "$PID_FILE"
   fi
   if [[ "$(desired_state)" == "on" ]] && ! child_running; then
     start_with_retry || true

@@ -13,7 +13,7 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 - Modern REALITY and XHTTP through Xray-core; sing-box handles TUN and routing.
 - Connection diagnostics, traffic graphs, menu-bar controls and launch at login.
 - Atomic configuration reload, automatic rollback and bounded node failover.
-- A private application event log capped at 3 MB and exportable unchanged from Settings or an error notification.
+- A private application event log capped at 3 MB, exported with a sortable date-and-time filename together with the latest available privileged runtime diagnostics.
 - Signed Sparkle update feed.
 
 ## Supported VLESS links

@@ -1,12 +1,16 @@
-# matveevVpn 1.3.1
+# matveevVpn 1.3.2
 
-- Keeps retrying VPN startup with a 30-second delay after failures, including
-  after system startup and sleep, without automatically turning the VPN off.
-- Retries immediately when a physical-network change is detected after wake.
-- Preserves the limit on frequent node switches while allowing later recovery
-  attempts to continue.
-- Reopens the main window when the Dock icon is clicked after closing the window.
-- Updates the system controller to version 11.
+- Adds Stop Recovery to the main window and menu bar. It cancels automatic
+  retry/failover, turns the desired VPN state off and unlocks the interface.
+- Records unexpected sing-box and Xray exits, including their exit status, in a
+  diagnostic snapshot that the application can export without administrator
+  access.
+- Includes available privileged runtime diagnostics in exported logs.
+- Preserves the latest runtime failure after stopping recovery and includes the
+  underlying installer output when setup fails.
+- Names exported logs with the local date and time, for example
+  `matveevVpn-2026-09-20_16-30-45.log`.
+- Updates the system controller to version 12.
 
 Settings, subscription, selected node and routing rules are preserved.
 

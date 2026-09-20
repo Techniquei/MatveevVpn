@@ -44,7 +44,7 @@ struct AdBlockRuleStore: Sendable {
         defer { session.invalidateAndCancel() }
 
         var request = URLRequest(url: Self.sourceURL)
-        request.setValue("matveevVpn/1.3.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("matveevVpn/1.3.2", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw VPNError.message("The advertising-rule source returned an unexpected response.")

@@ -40,6 +40,15 @@ final class AppLogger: @unchecked Sendable {
         return (try? String(contentsOf: file, encoding: .utf8)) ?? ""
     }
 
+    static func exportFileName(at date: Date = Date(), timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        return "matveevVpn-\(formatter.string(from: date)).log"
+    }
+
     private func trimIfNeeded() {
         lock.lock()
         defer { lock.unlock() }

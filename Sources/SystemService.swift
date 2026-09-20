@@ -26,7 +26,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "11"
+    static let version = "12"
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { Self.base.appendingPathComponent("control") }
@@ -113,7 +113,11 @@ struct SystemService {
         let command = ["/bin/bash", script.path, payload.path, config.path, String(getuid()), String(getgid()), desiredOn ? "on" : "off"].map(Self.quote).joined(separator: " ")
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let result = await Command.run("/usr/bin/osascript", ["-e", "do shell script \"\(escaped)\" with administrator privileges"])
-        guard result.status == 0 else { throw VPNError.message("System installation failed or was cancelled. Your settings were preserved.") }
+        guard result.status == 0 else {
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let details = output.isEmpty ? "osascript exited with status \(result.status)." : output
+            throw VPNError.diagnostic("System installation failed or was cancelled. Your settings were preserved.", details)
+        }
         for _ in 0..<150 {
             if currentVersion == Self.version && (!desiredOn || running) { return }
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -122,13 +126,17 @@ struct SystemService {
     }
 
     func recentRuntimeErrors() -> String {
+        recentRuntimeErrorDetails() ?? "The VPN runtime did not provide an error log."
+    }
+
+    func recentRuntimeErrorDetails() -> String? {
         let files = [control.appendingPathComponent("last-error.log"), Self.base.appendingPathComponent("run/vpn.error.log")]
         for file in files {
             if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
                 return text.split(separator: "\n").suffix(80).joined(separator: "\n")
             }
         }
-        return "The VPN runtime did not provide an error log."
+        return nil
     }
 
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }

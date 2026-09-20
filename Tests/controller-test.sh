@@ -54,6 +54,21 @@ wait_for_file_value() {
   return 1
 }
 
+wait_for_file_text() {
+  local file="$1"
+  local expected="$2"
+  local attempt=0
+  while [[ "$attempt" -lt 100 ]]; do
+    if [[ -f "$file" ]] && /usr/bin/grep -q "$expected" "$file"; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    /bin/sleep 0.1
+  done
+  echo "Timed out waiting for $file to contain $expected" >&2
+  return 1
+}
+
 send_action() {
   local action="$1"
   send_action_expect "$action" "ok"
@@ -73,6 +88,11 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+# Unexpected runtime exits publish a user-readable snapshot before retrying.
+/bin/kill -KILL "$(/usr/bin/head -n 1 "$RUNTIME/run/sing-box.pid")"
+wait_for_file_text "$CONTROL/last-error.log" 'sing-box exited unexpectedly'
+/usr/bin/grep -Eq 'status=(9|137)' "$CONTROL/last-error.log"
+wait_for_file_value "$CONTROL/runtime-status" "running"
 send_action off
 wait_for_file_value "$CONTROL/runtime-status" "stopped"
 [[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
@@ -124,4 +144,4 @@ START_FAILURE_COUNT="$(/usr/bin/grep -c 'VPN start failed' "$RUNTIME/vpn.log")"
 [[ "$(/usr/bin/grep -c 'VPN start failed' "$RUNTIME/vpn.log")" -gt "$START_FAILURE_COUNT" ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
-echo "controller: reload preserves off state; reset removes credentials; retries persist and logs are bounded"
+echo "controller: unexpected exits are published; reload preserves off state; reset removes credentials; retries persist and logs are bounded"
