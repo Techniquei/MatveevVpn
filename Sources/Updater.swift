@@ -1,6 +1,4 @@
 import Foundation
-import AppKit
-import Darwin
 #if canImport(Sparkle)
 import Sparkle
 #endif
@@ -30,15 +28,15 @@ final class AppUpdater: NSObject {
 #if canImport(Sparkle)
 extension AppUpdater: SPUUpdaterDelegate {
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
-        // Sparkle has already extracted and validated the update at this point.
-        // Closing the app releases its bundle so the installer can replace it.
-        NSApplication.shared.terminate(nil)
+        AppLogger.shared.write("Sparkle prepared update \(item.displayVersionString); waiting for its managed install and relaunch")
+    }
 
-        // A modal window or an AppKit termination edge case must not leave the
-        // old process alive while Sparkle is waiting to install the update.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            Darwin.exit(EXIT_SUCCESS)
-        }
+    func updaterShouldRelaunchApplication(_ updater: SPUUpdater) -> Bool {
+        true
+    }
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        AppLogger.shared.write("Sparkle is relaunching the updated application")
     }
 }
 #endif

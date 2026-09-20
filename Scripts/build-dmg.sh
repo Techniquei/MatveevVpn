@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.3.2"
-BUILD_NUMBER="1302"
+VERSION="1.3.3"
+BUILD_NUMBER="1303"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
@@ -100,6 +100,7 @@ echo "Downloading pinned HaGeZi Multi PRO mini rules..."
 /usr/bin/install -m 644 "$ROOT_DIR/Resources/payload/com.matveev.vpn.plist" "$APP/Contents/Resources/.payload/com.matveev.vpn.plist"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/controller.sh" "$APP/Contents/Resources/.payload/controller.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/dns-manager.sh" "$APP/Contents/Resources/.payload/dns-manager.sh"
+/usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/service-lifecycle.sh" "$APP/Contents/Resources/.payload/service-lifecycle.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/tools/build-config.rb" "$APP/Contents/Resources/.payload/tools/build-config.rb"
 
 if [[ -n "${MATVEEV_SING_BOX_BINARY:-}" ]]; then

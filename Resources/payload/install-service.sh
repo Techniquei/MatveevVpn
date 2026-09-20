@@ -7,6 +7,10 @@ OWNER_UID="$3"
 OWNER_GID="$4"
 DESIRED="$5"
 BASE='/Library/Application Support/matveevVpn'
+SERVICE_LABEL='com.matveev.vpn'
+SERVICE_PLIST='/Library/LaunchDaemons/com.matveev.vpn.plist'
+. "$PAYLOAD/service-lifecycle.sh"
+
 "$PAYLOAD/sing-box" check -c "$CONFIG" >/dev/null 2>&1
 if [[ -f "$CONFIG.xray.json" ]]; then
   "$PAYLOAD/xray" run -test -c "$CONFIG.xray.json" >/dev/null 2>&1
@@ -25,7 +29,7 @@ fi
 COMPLETED=false
 cleanup() {
   if [[ "$COMPLETED" != true && "$HAD_PREVIOUS" == true ]]; then
-    /bin/launchctl bootout system/com.matveev.vpn 2>/dev/null || true
+    bootout_service || true
     /usr/bin/ditto "$BACKUP/bin" "$BASE/bin"
     /usr/bin/install -m 600 "$BACKUP/config.json" "$BASE/config.json"
     if [[ -f "$BACKUP/xray.json" ]]; then
@@ -42,7 +46,7 @@ cleanup() {
     fi
     /usr/bin/shasum -a 256 "$BASE/config.json" | /usr/bin/awk '{print $1}' > "$BASE/control/config-sha256"
     /bin/chmod 644 "$BASE/control/config-sha256"
-    if /bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist; then
+    if bootstrap_service; then
       ROLLBACK_DESIRED="$(/usr/bin/head -n 1 "$BACKUP/desired-state" | /usr/bin/tr -d '[:space:]')"
       ROLLBACK_READY=false
       for _ in {1..150}; do
@@ -63,7 +67,7 @@ cleanup() {
   /bin/rm -rf "$BACKUP"
 }
 trap cleanup EXIT
-/bin/launchctl bootout system/com.matveev.vpn 2>/dev/null || true
+bootout_service
 /usr/bin/install -d -o root -g wheel -m 755 "$BASE/bin"
 /usr/bin/install -d -o root -g wheel -m 700 "$BASE/run"
 /usr/bin/install -d -o "$OWNER_UID" -g "$OWNER_GID" -m 700 "$BASE/control"
@@ -77,14 +81,14 @@ if [[ -f "$CONFIG.xray.json" ]]; then
 else
   /bin/rm -f "$BASE/xray.json"
 fi
-/usr/bin/install -o root -g wheel -m 644 "$PAYLOAD/com.matveev.vpn.plist" /Library/LaunchDaemons/com.matveev.vpn.plist
+/usr/bin/install -o root -g wheel -m 644 "$PAYLOAD/com.matveev.vpn.plist" "$SERVICE_PLIST"
 /usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
 /usr/bin/printf '12\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /bin/launchctl enable system/com.matveev.vpn
-/bin/launchctl bootstrap system /Library/LaunchDaemons/com.matveev.vpn.plist
+bootstrap_service
 for _ in {1..150}; do
   ACTUAL="$(/usr/bin/head -n 1 "$BASE/control/runtime-status" 2>/dev/null || true)"
   if [[ "$DESIRED" == on && "$ACTUAL" == running || "$DESIRED" == off && "$ACTUAL" == stopped ]]; then

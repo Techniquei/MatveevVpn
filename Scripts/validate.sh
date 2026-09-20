@@ -26,6 +26,8 @@ trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 "$TEST_BUILD/coordinator-tests"
 /usr/bin/ruby "$ROOT_DIR/Tests/routing-test.rb"
 /bin/bash -n "$ROOT_DIR/Resources/payload/install-service.sh"
+/bin/bash -n "$ROOT_DIR/Resources/payload/service-lifecycle.sh"
+/bin/bash "$ROOT_DIR/Tests/service-lifecycle-test.sh"
 
 if /usr/bin/grep -Eq 'ByteCountFormatter|catmullRom|AreaMark' "$ROOT_DIR/Sources/matveevVpn.swift"; then
   echo "Unstable speed chart formatting was reintroduced." >&2

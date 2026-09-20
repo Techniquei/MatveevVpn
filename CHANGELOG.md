@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.3
+
+- Lets Sparkle own the complete terminate-install-relaunch sequence instead of
+  force-exiting from the pre-install delegate callback, restoring automatic
+  application relaunch after an update.
+- Waits for the previous launch daemon to finish booting out before registering
+  its replacement and retries transient `launchctl bootstrap` failures.
+- Uses the same guarded launch-daemon restart path during installer rollback.
+- Distinguishes a cancelled administrator prompt from an actual installation
+  failure and points failed installations to the diagnostic log.
+
 ## 1.3.2
 
 - Adds an always-available Stop Recovery action while automatic retry and node

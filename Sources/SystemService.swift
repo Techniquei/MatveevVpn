@@ -116,7 +116,11 @@ struct SystemService {
         guard result.status == 0 else {
             let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             let details = output.isEmpty ? "osascript exited with status \(result.status)." : output
-            throw VPNError.diagnostic("System installation failed or was cancelled. Your settings were preserved.", details)
+            let cancelled = output.localizedCaseInsensitiveContains("user canceled") || output.contains("(-128)")
+            let summary = cancelled
+                ? "System installation was cancelled. Your settings were preserved."
+                : "System installation failed. Your settings were preserved. Export Logs for technical details."
+            throw VPNError.diagnostic(summary, details)
         }
         for _ in 0..<150 {
             if currentVersion == Self.version && (!desiredOn || running) { return }

@@ -1,0 +1,33 @@
+#!/bin/bash
+
+set -u
+STATE="${MATVEEV_FAKE_LAUNCHCTL_STATE:?}"
+command="${1:-}"
+
+case "$command" in
+  bootout)
+    /usr/bin/printf '2\n' > "$STATE/prints-before-removal"
+    exit 0
+    ;;
+  print)
+    if [[ -f "$STATE/prints-before-removal" ]]; then
+      remaining="$(/usr/bin/head -n 1 "$STATE/prints-before-removal")"
+      if [[ "$remaining" -gt 0 ]]; then
+        /usr/bin/printf '%s\n' "$((remaining - 1))" > "$STATE/prints-before-removal"
+        exit 0
+      fi
+      /bin/rm -f "$STATE/prints-before-removal" "$STATE/loaded"
+    fi
+    [[ -f "$STATE/loaded" ]]
+    ;;
+  bootstrap)
+    if [[ -f "$STATE/fail-bootstrap-once" ]]; then
+      /bin/rm -f "$STATE/fail-bootstrap-once"
+      /usr/bin/printf 'Bootstrap failed: 37: Operation already in progress\n' >&2
+      exit 5
+    fi
+    : > "$STATE/loaded"
+    exit 0
+    ;;
+  *) exit 2 ;;
+esac
