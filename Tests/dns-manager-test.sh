@@ -46,4 +46,46 @@ run_manager restore
 [[ ! -s "$CURRENT_DNS" ]]
 [[ "$(tail -n 1 "$CALL_LOG")" == "Test Network|Empty" ]]
 
+# scutil also prints REACH summary lines with the same ": flags" shape.
+# A summary must never be treated as a network interface.
+FAKE_SCUTIL="$RUNTIME/scutil"
+FAKE_ROUTE="$RUNTIME/route"
+/bin/cat > "$FAKE_SCUTIL" <<'EOF'
+#!/bin/sh
+cat <<'OUTPUT'
+IPv4 network interface information
+   REACH : flags 0x00000002 (Reachable)
+     test0 : flags 0x5 (IPv4,DNS)
+OUTPUT
+EOF
+/bin/cat > "$FAKE_ROUTE" <<'EOF'
+#!/bin/sh
+echo '  interface: test0'
+EOF
+/bin/chmod 755 "$FAKE_SCUTIL" "$FAKE_ROUTE"
+MATVEEV_BASE_DIR="$RUNTIME" \
+MATVEEV_NETWORKSETUP="$FAKE_NETWORKSETUP" \
+MATVEEV_SCUTIL="$FAKE_SCUTIL" \
+MATVEEV_ROUTE="$FAKE_ROUTE" \
+MATVEEV_FAKE_DNS="$CURRENT_DNS" \
+MATVEEV_FAKE_LOG="$CALL_LOG" \
+  "$ROOT_DIR/Resources/payload/dns-manager.sh" apply
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+[[ "$(sed -n '1p' "$RUNTIME/run/dns-state")" == "Test Network" ]]
+run_manager restore
+
+/bin/cat > "$FAKE_SCUTIL" <<'EOF'
+#!/bin/sh
+echo '   REACH : flags 0x00000002 (Reachable)'
+EOF
+MATVEEV_BASE_DIR="$RUNTIME" \
+MATVEEV_NETWORKSETUP="$FAKE_NETWORKSETUP" \
+MATVEEV_SCUTIL="$FAKE_SCUTIL" \
+MATVEEV_ROUTE="$FAKE_ROUTE" \
+MATVEEV_FAKE_DNS="$CURRENT_DNS" \
+MATVEEV_FAKE_LOG="$CALL_LOG" \
+  "$ROOT_DIR/Resources/payload/dns-manager.sh" apply
+[[ "$(sed -n '1p' "$RUNTIME/run/dns-state")" == "Test Network" ]]
+run_manager restore
+
 echo "dns manager: custom and automatic resolver restoration passed"

@@ -359,11 +359,10 @@ private struct RoutingRulesView: View {
             }
         }
         .padding(16)
-        .frame(width: 680, height: 720)
+        .frame(minWidth: 600, idealWidth: 680, minHeight: 540, idealHeight: 720)
         .confirmationDialog("Clear custom routing rules?", isPresented: $confirmClear) {
             Button("Clear Custom Rules", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
         } message: { Text("Changes take effect after Save and Apply.") }
-        .preferredColorScheme(.dark)
         .onAppear {
             controller.rulesMessage = ""
             load(controller.currentRoutingRules())
@@ -378,7 +377,7 @@ private struct RoutingRulesView: View {
                 .font(.system(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
                 .frame(height: height)
         }
         .frame(maxWidth: .infinity)
@@ -465,8 +464,7 @@ private struct NodeSelectionView: View {
             .controlSize(.large)
         }
         .padding(14)
-        .frame(width: 450, height: 210)
-        .preferredColorScheme(.dark)
+        .frame(minWidth: 420, idealWidth: 450)
         .onAppear {
             selectedIndex = controller.currentNodeIndex
             controller.nodeMessage = ""
@@ -496,7 +494,7 @@ private struct MainView: View {
                            startPoint: .topLeading, endPoint: .bottomTrailing)
                 .ignoresSafeArea()
 
-            VStack(spacing: 9) {
+            VStack(spacing: 12) {
                 HStack(spacing: 12) {
                     BrandIcon()
                     VStack(alignment: .leading, spacing: 2) {
@@ -589,7 +587,7 @@ private struct MainView: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 12)
         }

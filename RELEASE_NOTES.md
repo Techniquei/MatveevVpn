@@ -1,18 +1,16 @@
-# matveevVpn 1.3.3
+# matveevVpn 1.3.4
 
-- Restores automatic application relaunch after Sparkle installs an update.
-- Fixes a race where system-component updates attempted `launchctl bootstrap`
-  while the previous daemon was still terminating, producing `Bootstrap failed:
-  5: Input/output error`.
-- Waits for daemon removal and retries transient registration failures during
-  both installation and rollback.
-- Distinguishes a cancelled administrator prompt from a real installation
-  failure in the interface.
-- Retains the recovery cancellation and expanded diagnostics introduced in
-  1.3.2.
+- Fixes recovery after a network change when macOS reports a `REACH` summary in
+  `scutil --nwi`. The controller and DNS manager now select an IPv4 interface
+  instead of treating that summary as an interface name.
+- Corrects the physical-network status in exported diagnostics for the same case.
+- Refines spacing and controls in settings and routing windows while keeping the
+  familiar connection, routing and restart controls on the main window.
 
-Because 1.3.2 contains the relaunch bug, the application may need to be opened
-manually once after installing this update. Later updates relaunch normally.
+After updating an existing installation, open **Settings & Diagnostics → Repair
+Service…** and approve the administrator prompt. This replaces the installed
+system scripts with the corrected versions; the component protocol version did
+not change, so the app update alone does not replace them.
 
 Settings, subscription, selected node and routing rules are preserved.
 

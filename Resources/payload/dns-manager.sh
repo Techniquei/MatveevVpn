@@ -21,7 +21,7 @@ active_interface() {
     return
   fi
   local interface
-  interface="$("$SCUTIL" --nwi 2>/dev/null | /usr/bin/awk '$2 == ":" && $3 == "flags" && $1 !~ /^utun/ { print $1; exit }')"
+  interface="$("$SCUTIL" --nwi 2>/dev/null | /usr/bin/awk '$2 == ":" && $3 == "flags" && $1 !~ /^utun/ && index($0, "(IPv4") { print $1; exit }')"
   if [[ -n "$interface" ]]; then
     /usr/bin/printf '%s\n' "$interface"
     return

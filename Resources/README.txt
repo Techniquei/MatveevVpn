@@ -1,10 +1,12 @@
-matveevVpn 1.3.3 for macOS (Apple Silicon)
+matveevVpn 1.3.4 for macOS (Apple Silicon)
 ========================================
 
 Move matveevVpn to Applications, open it, and choose Install and set up.
 Enter an HTTPS VLESS subscription URL or a direct VLESS link, load nodes, choose one, and install.
 macOS requests administrator permission to install or repair the system service.
 Routine connection and routing changes do not need a password.
+After updating an existing installation to 1.3.4, choose Repair Service in
+Settings & Diagnostics to install the corrected system scripts.
 
 Choose Selective to route selected service presets and matching custom rules, or
 All Traffic for a full tunnel. Local destinations remain direct. Domain patterns

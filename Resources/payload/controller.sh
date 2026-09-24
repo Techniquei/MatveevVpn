@@ -404,7 +404,7 @@ reload_config() {
 
 network_signature() {
   local route_info interface gateway address
-  interface="$(/usr/sbin/scutil --nwi 2>/dev/null | /usr/bin/awk '$2 == ":" && $3 == "flags" && $1 !~ /^utun/ { print $1; exit }')"
+  interface="$(/usr/sbin/scutil --nwi 2>/dev/null | /usr/bin/awk '$2 == ":" && $3 == "flags" && $1 !~ /^utun/ && index($0, "(IPv4") { print $1; exit }')"
   if [[ -n "$interface" ]]; then
     route_info="$(/sbin/route -n get -ifscope "$interface" default 2>/dev/null || true)"
   else

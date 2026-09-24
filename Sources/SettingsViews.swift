@@ -5,33 +5,40 @@ struct ConnectionView: View {
     @ObservedObject var controller: VPNController
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Connection Settings").font(.title2.bold())
-            Text("Load your subscription, then choose a node. Your current connection stays active until you apply the changes.")
-                .foregroundStyle(.secondary)
-            SecureField("HTTPS subscription URL or VLESS link", text: $controller.candidateURL)
-                .textFieldStyle(.roundedBorder)
-            Toggle("Happ subscription compatibility", isOn: Binding(
-                get: { controller.happCompatibilityEnabled },
-                set: { controller.setHappCompatibility($0) }
-            ))
-            Text("Uses a Happ User-Agent and a stable random provider-specific device ID, then imports VLESS servers from Happ/Xray JSON. Provider-specific routing is ignored.")
-                .font(.caption).foregroundStyle(.secondary)
-            Button("Load / Refresh Nodes") { controller.fetchSubscription() }
-            Picker("Node", selection: $controller.candidateID) {
-                Text("Choose a node").tag(Optional<String>.none)
-                ForEach(controller.candidateNodes) { node in
-                    Text(node.name + (controller.probeResults[node.id].map { " — " + $0.displayText } ?? ""))
-                        .tag(Optional(node.id))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Load your subscription, then choose a node. Your current connection stays active until you apply the changes.")
+                        .foregroundStyle(.secondary)
+                    SecureField("HTTPS subscription URL or VLESS link", text: $controller.candidateURL)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Subscription URL or VLESS link")
+                    Toggle("Happ subscription compatibility", isOn: Binding(
+                        get: { controller.happCompatibilityEnabled },
+                        set: { controller.setHappCompatibility($0) }
+                    ))
+                    Text("Uses a Happ User-Agent and a stable random provider-specific device ID, then imports VLESS servers from Happ/Xray JSON. Provider-specific routing is ignored.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Load / Refresh Nodes") { controller.fetchSubscription() }
+                    Picker("Node", selection: $controller.candidateID) {
+                        Text("Choose a node").tag(Optional<String>.none)
+                        ForEach(controller.candidateNodes) { node in
+                            Text(node.name + (controller.probeResults[node.id].map { " — " + $0.displayText } ?? ""))
+                                .tag(Optional(node.id))
+                        }
+                    }
+                    .simultaneousGesture(TapGesture().onEnded { controller.testCandidateNodes() })
+                    if let date = controller.state.lastRefresh { Text("Last applied: \(date.formatted())").font(.caption) }
+                    Text(controller.nodeMessage).font(.caption).foregroundStyle(.secondary)
+                    Text(controller.message).font(.caption).foregroundStyle(.secondary)
+                    if !controller.failureReport.isEmpty {
+                        Button("Export Logs…") { controller.exportLog() }
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .simultaneousGesture(TapGesture().onEnded { controller.testCandidateNodes() })
-            if let date = controller.state.lastRefresh { Text("Last applied: \(date.formatted())").font(.caption) }
-            Text(controller.nodeMessage).font(.caption).foregroundStyle(.secondary)
-            Text(controller.message).font(.caption).foregroundStyle(.secondary)
-            if !controller.failureReport.isEmpty {
-                Button("Export Logs…") { controller.exportLog() }
-            }
+            Divider()
             HStack {
                 if controller.isBusy { ProgressView().controlSize(.small) }
                 Spacer()
@@ -41,7 +48,7 @@ struct ConnectionView: View {
                     .disabled(controller.candidateID == nil)
             }
         }
-        .padding(14).frame(width: 450)
+        .padding(20).frame(minWidth: 420, idealWidth: 500, minHeight: 300, idealHeight: 400)
         .disabled(controller.isBusy)
         .interactiveDismissDisabled(controller.isBusy)
         .onAppear { controller.testCandidateNodes() }
@@ -58,57 +65,70 @@ struct SettingsView: View {
     @State private var process = ""
     @State private var path = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack { Text("Settings & Diagnostics").font(.title2.bold()); Spacer(); Button("Done") { dismiss() } }
-            HStack(spacing: 16) {
-                Toggle("Launch at login", isOn: Binding(get: { controller.launchAtLogin }, set: { controller.setLogin($0) }))
-                Toggle("Failure notifications", isOn: Binding(get: { controller.notificationsEnabled }, set: { controller.setNotifications($0) }))
-            }
-            Toggle("Automatic node failover", isOn: Binding(get: { controller.autoFailoverEnabled }, set: { controller.setAutoFailover($0) }))
-            Text("After three failed health checks, matveevVpn retries the current node twice, then tries up to three alternatives. If recovery fails, it keeps the VPN enabled and retries every 30 seconds; the 10-minute switch limit still prevents rapid node changes.")
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Button("Check for Updates…") { AppUpdater.shared.check() }.disabled(!AppUpdater.shared.available)
-                Button("Change Subscription…") { controller.openSetup() }
-            }
-            if !AppUpdater.shared.available { Text("Automatic updates are not configured in this development build.").font(.caption).foregroundStyle(.secondary) }
-            HStack {
-                Button("Export Routing Rules…") { controller.exportRules() }
-                Button("Import Routing Rules…") { controller.importRules() }
-            }
-            Text("Exports include routing rules and VPN mode, without subscription credentials.").font(.caption).foregroundStyle(.secondary)
-            Divider()
-            HStack {
-                Button("Check Connection") { controller.checkConnection() }
-                Button("Repair Service…") { controller.repair() }
-                Button("Export Logs…") { controller.exportLog() }
-                    .help("Exports the complete unfiltered application log (maximum 3 MB).")
-            }
-            ScrollView { Text(controller.diagnostics.isEmpty ? "Run Check Connection to create a diagnostic report." : controller.diagnostics)
-                .font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(height: 92)
-            Text(controller.message).font(.caption).foregroundStyle(.secondary)
-            DisclosureGroup("Explain a Routing Rule") {
-                Menu("Use a Running Application") {
-                    ForEach(NSWorkspace.shared.runningApplications.filter { $0.executableURL != nil }, id: \.processIdentifier) { application in
-                        Button(application.localizedName ?? "Application") {
-                            path = application.executableURL?.path ?? ""
-                            process = application.executableURL?.lastPathComponent ?? ""
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("General").font(.headline)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Launch at login", isOn: Binding(get: { controller.launchAtLogin }, set: { controller.setLogin($0) }))
+                        Toggle("Failure notifications", isOn: Binding(get: { controller.notificationsEnabled }, set: { controller.setNotifications($0) }))
+                    }
+                    Toggle("Automatic node failover", isOn: Binding(get: { controller.autoFailoverEnabled }, set: { controller.setAutoFailover($0) }))
+                    Text("After three failed health checks, matveevVpn retries the current node twice, then tries up to three alternatives. If recovery fails, it keeps the VPN enabled and retries every 30 seconds; the 10-minute switch limit still prevents rapid node changes.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Text("Subscription and Rules").font(.headline)
+                    HStack {
+                        Button("Check for Updates…") { AppUpdater.shared.check() }.disabled(!AppUpdater.shared.available)
+                        Button("Change Subscription…") { controller.openSetup() }
+                    }
+                    if !AppUpdater.shared.available { Text("Automatic updates are not configured in this development build.").font(.caption).foregroundStyle(.secondary) }
+                    HStack {
+                        Button("Export Routing Rules…") { controller.exportRules() }
+                        Button("Import Routing Rules…") { controller.importRules() }
+                    }
+                    Text("Exports include routing rules and VPN mode, without subscription credentials.").font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Text("Diagnostics").font(.headline)
+                    HStack {
+                        Button("Check Connection") { controller.checkConnection() }
+                        Button("Repair Service…") { controller.repair() }
+                        Button("Export Logs…") { controller.exportLog() }
+                            .help("Exports the complete unfiltered application log (maximum 3 MB).")
+                    }
+                    ScrollView { Text(controller.diagnostics.isEmpty ? "Run Check Connection to create a diagnostic report." : controller.diagnostics)
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                        .frame(minHeight: 92, idealHeight: 120)
+                        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                    Text(controller.message).font(.caption).foregroundStyle(.secondary)
+                    DisclosureGroup("Explain a Routing Rule") {
+                        Menu("Use a Running Application") {
+                            ForEach(NSWorkspace.shared.runningApplications.filter { $0.executableURL != nil }, id: \.processIdentifier) { application in
+                                Button(application.localizedName ?? "Application") {
+                                    path = application.executableURL?.path ?? ""
+                                    process = application.executableURL?.lastPathComponent ?? ""
+                                }
+                            }
                         }
+                        TextField("Domain", text: $domain)
+                        TextField("Process name", text: $process)
+                        TextField("Executable path", text: $path)
+                        Text(RuleInspector.explain(domain: domain, process: process, path: path, rules: controller.state.rules)).font(.caption)
+                    }
+                    Divider()
+                    Text("Remove Data or Service").font(.headline)
+                    HStack {
+                        Button("Reset All Settings…", role: .destructive) { confirmReset = true }
+                        Spacer()
+                        Button("Uninstall…", role: .destructive) { confirmRemoval = true }
                     }
                 }
-                TextField("Domain", text: $domain)
-                TextField("Process name", text: $process)
-                TextField("Executable path", text: $path)
-                Text(RuleInspector.explain(domain: domain, process: process, path: path, rules: controller.state.rules)).font(.caption)
-            }
-            HStack {
-                Button("Reset All Settings…", role: .destructive) { confirmReset = true }
-                Spacer()
-                Button("Uninstall…", role: .destructive) { confirmRemoval = true }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(14).frame(width: 500).disabled(controller.isBusy)
+        .padding(20).frame(minWidth: 500, idealWidth: 580, minHeight: 400, idealHeight: 600)
+        .disabled(controller.isBusy)
         .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
             Button("Reset All Settings", role: .destructive) { controller.resetSettings() }
         } message: { Text("This disconnects the VPN and removes your saved subscription, node and rules.") }

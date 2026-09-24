@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.3.3"
+    static let releaseVersion = "1.3.4"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -724,7 +724,7 @@ final class VPNController: ObservableObject {
         } else {
             wifiPower = "Wi-Fi device not found"
         }
-        let connectivity = Self.hasPhysicalNetwork(in: network.output) ? "physical interface available" : "offline or no physical interface"
+        let connectivity = NodeProbe.physicalInterface(in: network.output) != nil ? "physical interface available" : "offline or no physical interface"
         return """
         Connection context:
         Connectivity: \(connectivity)
@@ -780,13 +780,6 @@ final class VPNController: ObservableObject {
         return nil
     }
 
-    private nonisolated static func hasPhysicalNetwork(in output: String) -> Bool {
-        output.split(separator: "\n").contains { line in
-            let fields = line.split(whereSeparator: { $0.isWhitespace })
-            guard fields.count >= 3, fields[1] == ":", fields[2] == "flags" else { return false }
-            return !fields[0].hasPrefix("utun") && fields[0] != "lo0"
-        }
-    }
     func repair() {
         perform {
             let stage = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: stage) }

@@ -11,6 +11,13 @@ import Foundation
         let tcp = NodeProbeResult(outcome: .reachable, latencyMilliseconds: 51, method: .tcp)
         precondition(ping.displayText == "42 ms · ping")
         precondition(tcp.displayText == "51 ms · TCP")
+        let network = """
+            REACH : flags 0x00000002 (Reachable)
+            utun4 : flags 0x5 (IPv4,DNS)
+            en0 : flags 0x5 (IPv4,DNS)
+            """
+        precondition(NodeProbe.physicalInterface(in: network) == "en0")
+        precondition(NodeProbe.physicalInterface(in: "REACH : flags 0x00000002 (Reachable)") == nil)
         print("diagnostics: ping parsing and measurement labels passed")
     }
 }

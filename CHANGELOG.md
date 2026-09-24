@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.4
+
+- Ignores `REACH` summary lines when selecting the physical IPv4 interface in
+  the privileged controller and DNS manager, avoiding a failed DNS restore after
+  network changes.
+- Reports physical-network availability accurately in exported diagnostics.
+- Refines settings and routing layouts while retaining the main window's
+  existing connection controls.
+
 ## 1.3.3
 
 - Lets Sparkle own the complete terminate-install-relaunch sequence instead of
