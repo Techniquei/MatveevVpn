@@ -7,19 +7,17 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.3.4"
+    static let releaseVersion = "1.4.0-beta.1"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
     @Published var isInstalled = false
     @Published var isRunning = false
     @Published var needsUpgrade = false
-    @Published var node = "—"
     @Published var message = "Checking status…"
     @Published var rulesMessage = ""
-    @Published var nodeMessage = ""
+    @Published private(set) var automaticRoutingLastUpdate: Date?
     @Published var availableNodes: [VPNNode] = []
-    @Published var currentNodeIndex: String?
     @Published var state = SavedState()
     @Published var showConnection = false
     @Published var diagnostics = ""
@@ -35,15 +33,14 @@ final class VPNController: ObservableObject {
     @Published var happCompatibilityEnabled = false
     private var candidateSubscription = ""
     private var loadedURL = ""
-    private let store = StateStore()
+    private let store: StateStore
     private let service = SystemService()
-    private let coordinator = ConfigurationCoordinator()
+    private let coordinator: ConfigurationCoordinator
     private let adBlockRuleStore = AdBlockRuleStore()
     private var timer: Timer?
     private var loadFailed = false
     private var previouslyRunning: Bool?
     private var connectionCheck: Task<Void, Never>?
-    private var nodeTest: Task<Void, Never>?
     private var healthCheck: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
     private var adBlockRefresh: Task<Void, Never>?
@@ -61,7 +58,9 @@ final class VPNController: ObservableObject {
     private static let failoverWindow: TimeInterval = 10 * 60
     private static let recoveryRetryInterval: TimeInterval = 30
 
-    init() {
+    init(store: StateStore = StateStore()) {
+        self.store = store
+        coordinator = ConfigurationCoordinator(store: store)
         _ = AppUpdater.shared
         UserDefaults.standard.register(defaults: ["automaticFailover": true, "happSubscriptionCompatibility": false])
         autoFailoverEnabled = UserDefaults.standard.bool(forKey: "automaticFailover")
@@ -74,7 +73,11 @@ final class VPNController: ObservableObject {
         }
         syncNotificationPreference()
         refresh()
-        testNodes(automatic: true)
+        if !loadFailed && state.subscription.isEmpty {
+            prepareConnection()
+            showConnection = true
+        }
+        testNodes()
         reconcileInstalledConfiguration()
         AppLogger.shared.write("app \(Self.releaseVersion) started; automatic failover \(autoFailoverEnabled ? "enabled" : "disabled")")
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -99,8 +102,6 @@ final class VPNController: ObservableObject {
         previouslyRunning = isRunning
         needsUpgrade = isInstalled && service.currentVersion != SystemService.version
         availableNodes = (try? Subscription.nodes(state.subscription)) ?? []
-        currentNodeIndex = state.selectedNodeID
-        node = availableNodes.first { $0.id == state.selectedNodeID }?.name ?? "Not selected"
         if message == "Checking status…" {
             message = isInstalled && state.selectedNodeID != nil ? "" : "Add a subscription to get started."
         }
@@ -111,10 +112,19 @@ final class VPNController: ObservableObject {
             scheduleAdBlockRefreshIfNeeded()
         }
     }
-    func refreshWhenActive() { refresh() }
-    func openSetup() { prepareConnection(); showConnection = true }
-    func currentRoutingRules() -> RoutingRules { state.rules }
-    func loadAvailableNodes() { refresh() }
+    func openSetup() {
+        if !showConnection { prepareConnection() }
+        showConnection = true
+    }
+    var selectedNode: VPNNode? {
+        availableNodes.first { $0.id == state.selectedNodeID }
+    }
+    var unselectedNodes: [VPNNode] {
+        availableNodes.filter { $0.id != state.selectedNodeID }
+    }
+    func loadAutomaticRoutingUpdate() {
+        automaticRoutingLastUpdate = service.automaticRoutingLastUpdate
+    }
 
     private func perform(_ operationName: String = "Apply changes", allowRecovery: Bool = false, _ operation: @escaping () async throws -> Void) {
         guard !isBusy, !loadFailed || allowRecovery else { return }
@@ -132,7 +142,7 @@ final class VPNController: ObservableObject {
                 if let recovered = try? store.load() { state = recovered }
                 recoverySuppressedUntil = Date().addingTimeInterval(30)
                 AppLogger.shared.write("automatic recovery suppressed for 30 seconds after failed operation: \(operationName)")
-                message = error.localizedDescription; rulesMessage = message; nodeMessage = message
+                message = error.localizedDescription; rulesMessage = message
                 failureReport = error.localizedDescription
                 let context = await connectionContext()
                 AppLogger.shared.write(makeLogReport(operation: operationName, error: error) + "\n" + context)
@@ -217,62 +227,85 @@ final class VPNController: ObservableObject {
         perform { try await self.commit(next); self.rulesMessage = "Rules applied." }
     }
     func selectNode(_ id: String) {
-        var next = state; next.selectedNodeID = id
-        perform("Switch node") {
+        guard state.selectedNodeID != id || !state.desiredOn || !isRunning else { return }
+        var next = state
+        next.selectedNodeID = id
+        next.desiredOn = true
+        perform("Connect to server") {
             try await self.commit(next)
-            let result = await self.probeNode(id)
-            self.nodeMessage = "Node changed — \(result.displayText)."
+            await self.probeNode(id)
         }
     }
-    func prepareConnection() {
+    private func prepareConnection() {
         candidateURL = state.subscriptionURL
         loadedURL = state.subscriptionURL
         candidateSubscription = state.subscription
         candidateNodes = availableNodes
         candidateID = state.selectedNodeID
     }
+    var isInitialSetup: Bool { state.subscription.isEmpty }
+
+    func installInitialComponent() {
+        guard isInitialSetup, !service.installed else { return }
+        var next = state
+        next.selectedNodeID = nil
+        next.desiredOn = false
+        perform("Install system component") {
+            self.message = "Waiting for administrator approval and installing the system component…"
+            self.state = try await self.coordinator.apply(next, previous: self.state)
+        }
+    }
+
+    var canApplySubscription: Bool {
+        let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !input.isEmpty && (input != loadedURL || candidateID != nil)
+    }
+
     func fetchSubscription() {
         let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let useHappCompatibility = happCompatibilityEnabled
         perform("Load subscription") {
-            let data: Data
-            if input.hasPrefix("vless://") {
-                data = Data(input.utf8)
-            } else {
-                guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
-                    throw VPNError.message("Enter an HTTPS subscription URL or a VLESS link.")
-                }
-                let deviceID = useHappCompatibility ? Self.happDeviceID(for: url) : nil
-                data = try await SubscriptionFetcher.fetch(
-                    url,
-                    as: useHappCompatibility ? .happ : .matveevVpn,
-                    deviceID: deviceID
-                )
-            }
-            let decoded = try Subscription.decode(data, allowHappJSON: useHappCompatibility)
-            let nodes = try Subscription.nodes(decoded)
-            if nodes.allSatisfy({ $0.port == 1 && $0.name.localizedCaseInsensitiveContains("not supported") }) {
-                let message = useHappCompatibility
-                    ? "The provider rejected the Happ-compatible request or device identifier. Check the subscription's device limit."
-                    : "This provider requires Happ subscription compatibility. Enable it and reload the subscription."
-                throw VPNError.message(message)
-            }
-            let old = self.availableNodes.first { $0.id == self.state.selectedNodeID }
-            let fallback = nodes.filter { $0.name == old?.name && $0.host == old?.host && $0.port == old?.port }
-            let matched = nodes.first { $0.id == old?.id } ?? (fallback.count == 1 ? fallback.first : nil)
-            self.candidateSubscription = decoded
-            self.candidateNodes = nodes
-            self.candidateID = matched?.id ?? (old == nil ? nodes.first?.id : nil)
-            self.candidateURL = input
-            self.loadedURL = input
-            self.nodeMessage = self.candidateID == nil ? "Your previous node is missing. Choose a replacement." : "Subscription loaded. Choose a node and apply."
+            try await self.loadCandidateSubscription(input, useHappCompatibility: useHappCompatibility)
         }
+    }
+
+    private func loadCandidateSubscription(_ input: String, useHappCompatibility: Bool) async throws {
+        message = "Loading subscription…"
+        let data: Data
+        if input.hasPrefix("vless://") {
+            data = Data(input.utf8)
+        } else {
+            guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
+                throw VPNError.message("Enter an HTTPS subscription URL or a VLESS link.")
+            }
+            let deviceID = useHappCompatibility ? Self.happDeviceID(for: url) : nil
+            data = try await SubscriptionFetcher.fetch(
+                url,
+                as: useHappCompatibility ? .happ : .matveevVpn,
+                deviceID: deviceID
+            )
+        }
+        let decoded = try Subscription.decode(data, allowHappJSON: useHappCompatibility)
+        let nodes = try Subscription.nodes(decoded)
+        if nodes.allSatisfy({ $0.port == 1 && $0.name.localizedCaseInsensitiveContains("not supported") }) {
+            let message = useHappCompatibility
+                ? "The provider rejected the Happ-compatible request or device identifier. Check the subscription's device limit."
+                : "This provider requires Happ subscription compatibility. Enable it and reload the subscription."
+            throw VPNError.message(message)
+        }
+        let old = self.availableNodes.first { $0.id == self.state.selectedNodeID }
+        let fallback = nodes.filter { $0.name == old?.name && $0.host == old?.host && $0.port == old?.port }
+        let matched = nodes.first { $0.id == old?.id } ?? (fallback.count == 1 ? fallback.first : nil)
+        self.candidateSubscription = decoded
+        self.candidateNodes = nodes
+        self.candidateID = matched?.id ?? (old == nil ? nodes.first?.id : nil)
+        self.candidateURL = input
+        self.loadedURL = input
     }
     func setHappCompatibility(_ enabled: Bool) {
         happCompatibilityEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "happSubscriptionCompatibility")
         loadedURL = ""
-        nodeMessage = "Reload the subscription to apply the client compatibility setting."
     }
 
     private static func happDeviceID(for url: URL) -> String {
@@ -290,20 +323,25 @@ final class VPNController: ObservableObject {
         return generated
     }
     func applySubscription() {
-        guard candidateURL.trimmingCharacters(in: .whitespacesAndNewlines) == loadedURL else {
-            message = "Load the edited URL before applying it."
-            return
-        }
-        var next = state
-        next.subscriptionURL = candidateURL
-        next.subscription = candidateSubscription
-        next.selectedNodeID = candidateID
-        next.lastRefresh = Date()
-        if !isInstalled || state.selectedNodeID == nil { next.desiredOn = true }
-        perform {
+        let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let useHappCompatibility = happCompatibilityEnabled
+        perform(isInstalled ? "Apply subscription" : "Install and connect") {
+            if input != self.loadedURL || self.candidateSubscription.isEmpty {
+                try await self.loadCandidateSubscription(input, useHappCompatibility: useHappCompatibility)
+            }
+            guard let selectedID = self.candidateID else {
+                throw VPNError.message("Your previous node is missing. Choose a replacement.")
+            }
+            var next = self.state
+            next.subscriptionURL = input
+            next.subscription = self.candidateSubscription
+            next.selectedNodeID = selectedID
+            next.lastRefresh = Date()
+            if !self.isInstalled || self.state.selectedNodeID == nil { next.desiredOn = true }
+            self.message = self.isInstalled ? "Applying subscription…" : "Installing the system component…"
             try await self.commit(next)
-            if let id = next.selectedNodeID { _ = await self.probeNode(id) }
             self.showConnection = false
+            self.probeCandidateNode(selectedID)
         }
     }
     func setLogin(_ enabled: Bool) {
@@ -395,21 +433,20 @@ final class VPNController: ObservableObject {
         let content = UNMutableNotificationContent(); content.title = title; content.body = body
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "vpn-failure", content: content, trigger: nil))
     }
-    func testNodes(automatic: Bool = false) {
-        startNodeTest(availableNodes, automatic: automatic)
+    func testNodes() {
+        startNodeTest(availableNodes)
     }
 
     func testCandidateNodes() {
-        startNodeTest(candidateNodes, automatic: true)
+        startNodeTest(candidateNodes)
     }
 
-    private func startNodeTest(_ nodes: [VPNNode], automatic: Bool) {
+    private func startNodeTest(_ nodes: [VPNNode]) {
         guard !testingNodes else { return }
         guard !nodes.isEmpty else { return }
         testingNodes = true
-        nodeMessage = automatic ? "Checking direct node latency…" : "Measuring direct node latency…"
         AppLogger.shared.write("node latency check started; count=\(nodes.count)")
-        nodeTest = Task {
+        Task {
             for node in nodes { self.probeResults.removeValue(forKey: node.id) }
             await withTaskGroup(of: (String, NodeProbeResult).self) { group in
                 var iterator = nodes.makeIterator()
@@ -418,34 +455,27 @@ final class VPNController: ObservableObject {
                 }
                 for await (id, result) in group {
                     self.probeResults[id] = result
-                    if Task.isCancelled { group.cancelAll() }
-                    else if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node)) } }
+                    if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node)) } }
                 }
             }
-            let reachable = self.probeResults.values.filter(\.isReachable).count
-            self.nodeMessage = Task.isCancelled ? "Node test cancelled." : "Direct node latency checked: \(reachable) of \(nodes.count) reachable."
+            let reachable = nodes.filter { self.probeResults[$0.id]?.isReachable == true }.count
             AppLogger.shared.write("node latency check completed; reachable=\(reachable)/\(nodes.count)")
             self.testingNodes = false
-            self.nodeTest = nil
         }
     }
-    func cancelNodeTests() { nodeTest?.cancel() }
-
-    @discardableResult
-    func probeNode(_ id: String) async -> NodeProbeResult {
+    private func probeNode(_ id: String) async {
         guard let node = (availableNodes + candidateNodes).first(where: { $0.id == id }) else {
-            return NodeProbeResult(outcome: .unreachable, latencyMilliseconds: nil, method: nil)
+            return
         }
         let result = await NodeProbe.measure(node)
-        guard !Task.isCancelled else { return result }
+        guard !Task.isCancelled else { return }
         probeResults[id] = result
         AppLogger.shared.write("node probe \(id.prefix(8)): \(result.displayText)")
-        return result
     }
 
     func probeCandidateNode(_ id: String?) {
         guard let id else { return }
-        Task { _ = await probeNode(id) }
+        Task { await probeNode(id) }
     }
 
     private func scheduleHealthCheckIfNeeded() {
@@ -599,8 +629,6 @@ final class VPNController: ObservableObject {
                 try await Task.sleep(nanoseconds: 2_000_000_000)
                 let tunnelHealthy = await Self.tunnelDNSReachable()
                 if service.running && tunnelHealthy {
-                    node = candidate.name
-                    currentNodeIndex = candidate.id
                     message = "Automatically switched to \(candidate.name)."
                     AppLogger.shared.write("automatic failover succeeded on node \(candidate.id.prefix(8))")
                     if notificationsEnabled { notify("VPN node changed", "Connected to \(candidate.name).") }
@@ -633,7 +661,6 @@ final class VPNController: ObservableObject {
         let seconds = Int(Self.recoveryRetryInterval)
         let recoveryError = VPNError.message("VPN is still unavailable. Automatic recovery will retry in \(seconds) seconds. \(error.localizedDescription)")
         message = recoveryError.localizedDescription
-        nodeMessage = message
         failureReport = recoveryError.localizedDescription
         let context = await connectionContext()
         AppLogger.shared.write(makeLogReport(operation: "Automatic connection recovery", error: recoveryError) + "\n" + context)

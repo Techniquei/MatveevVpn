@@ -32,8 +32,11 @@ actor ConfigurationCoordinator {
         let config = try await transport.generate(next, at: stage)
         try store.stage(next, config: Data(contentsOf: config))
 
-        if !transport.installed || transport.currentVersion != SystemService.version {
-            try await transport.install(config, desiredOn: next.desiredOn)
+        let isFirstInstall = !transport.installed
+        let requiresInstall = isFirstInstall || transport.currentVersion != SystemService.version
+        if requiresInstall {
+            // First installation must finish without waiting for the new tunnel to reach the network.
+            try await transport.install(config, desiredOn: isFirstInstall ? false : next.desiredOn)
         } else {
             try await transport.deploy(config)
             if next.desiredOn != transport.running { try await transport.send(next.desiredOn ? "on" : "off") }
@@ -41,10 +44,13 @@ actor ConfigurationCoordinator {
 
         do { try store.save(next) }
         catch {
-            if !previous.subscription.isEmpty, let old = try? await transport.generate(previous, at: stage) {
+            if !previous.subscription.isEmpty || !isFirstInstall,
+               let old = try? await transport.generate(previous, at: stage) {
                 do {
+                    // The preinstalled configuration has no TUN and must be restored stopped.
+                    if !previous.desiredOn { try await transport.send("off") }
                     try await transport.deploy(old)
-                    try await transport.send(previous.desiredOn ? "on" : "off")
+                    if previous.desiredOn { try await transport.send("on") }
                     try store.finishTransaction()
                 } catch {
                     throw VPNError.message("The controller accepted the change, but saving and rollback failed. The recovery journal was retained; reopen the app to reconcile settings.")
@@ -53,6 +59,13 @@ actor ConfigurationCoordinator {
             throw VPNError.message("Could not save settings. The previous configuration was restored where available.")
         }
         try store.finishTransaction()
+        if isFirstInstall && next.desiredOn {
+            do { try await transport.send("on") }
+            catch {
+                let details = (error as? VPNError)?.diagnosticDetails ?? error.localizedDescription
+                throw VPNError.diagnostic("The component was installed and your subscription was saved, but the VPN could not connect. Try connecting again.", details)
+            }
+        }
         return next
     }
 }

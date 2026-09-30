@@ -43,8 +43,12 @@ URL-encoded `extra` value is passed to Xray as a JSON object. ALPN lists such as
 ## Install
 
 Download the latest DMG from [Releases](https://github.com/Techniquei/MatveevVpn/releases),
-drag `matveevVpn` to Applications and open it. Add an HTTPS subscription or direct VLESS link, choose
-a node, then select **Install and set up**.
+drag `matveevVpn` to Applications and open it. First-run setup automatically
+installs the system component and displays progress while macOS requests your
+administrator password. It remains stopped, without a tunnel or DNS changes.
+Then paste an HTTPS subscription or direct VLESS link and select **Connect**.
+The app loads the subscription and selects its first server automatically, without
+a second installation prompt. You can change the server on the main screen.
 
 The system component requires one administrator prompt on first installation or
 repair. Normal connection and configuration changes do not require a password.

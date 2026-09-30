@@ -10,6 +10,15 @@ subscription_path, output_path, index_text, rules_path = ARGV
 File.delete(output_path + ".xray.json") if File.exist?(output_path + ".xray.json")
 index = Integer(index_text, 10)
 lines = File.readlines(subscription_path, chomp: true).reject(&:empty?)
+if index.zero? && lines.empty?
+  # First-launch provisioning has no listener, tunnel or DNS policy. The controller
+  # stays stopped until the coordinator deploys a validated subscription.
+  JSON.parse(File.read(rules_path))
+  config = { "log" => { "level" => "warn" }, "inbounds" => [], "outbounds" => [{ "type" => "direct", "tag" => "direct" }] }
+  File.write(output_path, JSON.pretty_generate(config) + "\n", mode: "w", perm: 0o600)
+  File.chmod(0o600, output_path)
+  exit
+end
 abort "server index is out of range" unless index.between?(1, lines.length)
 
 uri = URI.parse(lines[index - 1])
@@ -275,7 +284,8 @@ all_rule_set_tags = domain_rule_set_tags + ip_rule_set_tags
 route_rules << { "rule_set" => all_rule_set_tags, "action" => "route", "outbound" => "vpn" } unless all_rule_set_tags.empty?
 
 config = {
-  "log" => { "level" => "warn", "timestamp" => true },
+  # Remote preset success events let the controller publish their last refresh.
+  "log" => { "level" => remote_rule_sets.empty? ? "warn" : "info", "timestamp" => true },
   "dns" => {
     "servers" => [
       {

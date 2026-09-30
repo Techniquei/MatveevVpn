@@ -1,18 +1,22 @@
-# matveevVpn 1.3.4
+# matveevVpn 1.4.0-beta.1
 
-- Fixes recovery after a network change when macOS reports a `REACH` summary in
-  `scutil --nwi`. The controller and DNS manager now select an IPv4 interface
-  instead of treating that summary as an interface name.
-- Corrects the physical-network status in exported diagnostics for the same case.
-- Refines spacing and controls in settings and routing windows while keeping the
-  familiar connection, routing and restart controls on the main window.
+This is an opt-in beta release. Enable **Receive beta updates** in version 1.3.5
+or install this beta DMG manually. Stable-only users keep the familiar interface.
 
-After updating an existing installation, open **Settings & Diagnostics → Repair
-Service…** and approve the administrator prompt. This replaces the installed
-system scripts with the corrected versions; the component protocol version did
-not change, so the app update alone does not replace them.
+- Redesigned main screen with a full-width server list, the active server pinned
+  first, click-to-connect server rows, bottom icon actions and hover feedback.
+- Consistent compact styling for Subscription, Settings and Routing windows;
+  auxiliary windows are movable and Compatibility opens from its entire header.
+- First launch installs the stopped component before requesting a subscription,
+  shows progress during authorization and selects the first server automatically.
+- Displays the most recent successful automatic routing data refresh.
+- Adds the beta update preference, disabled by default on new installations.
+- Removes obsolete node-picker state and fixes latency summary counts.
 
-Settings, subscription, selected node and routing rules are preserved.
+For existing installations, **Settings → Repair service…** installs the updated
+system scripts needed to publish the routing refresh date. The app update alone
+does not replace the component because its protocol is unchanged. Repair may
+briefly interrupt the connection. Existing subscriptions and routing rules remain.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

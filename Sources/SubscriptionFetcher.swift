@@ -8,7 +8,7 @@ final class SubscriptionFetcher: NSObject, URLSessionDataDelegate {
 
         var userAgent: String {
             switch self {
-            case .matveevVpn: return "matveevVpn/1.3.4"
+            case .matveevVpn: return "matveevVpn/1.4.0-beta.1"
             case .happ: return "Happ/4.2.1"
             }
         }

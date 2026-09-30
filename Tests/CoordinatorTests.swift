@@ -6,7 +6,12 @@ final class FakeTransport: ConfigurationTransport {
     var currentVersion = SystemService.version
     var running = false
     var reject = false
+    var rejectStart = false
     var active = "old"
+    var requireStoppedInstall = false
+    var installDesiredStates: [Bool] = []
+    var actions: [String] = []
+    var blockSettingsFile: URL?
     let hashFile: URL
     init(hashFile: URL) { self.hashFile = hashFile }
     func generate(_ state: SavedState, at stage: URL) async throws -> URL {
@@ -17,12 +22,27 @@ final class FakeTransport: ConfigurationTransport {
     func deploy(_ config: URL) async throws {
         if reject { throw VPNError.message("Rejected") }
         let data = try Data(contentsOf: config)
+        if data.isEmpty && running { throw VPNError.message("The unconfigured component cannot run a tunnel") }
         active = String(decoding: data, as: UTF8.self)
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         try Data(hash.utf8).write(to: hashFile)
+        if let file = blockSettingsFile {
+            try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: file.path)
+            blockSettingsFile = nil
+        }
     }
-    func install(_ config: URL, desiredOn: Bool) async throws { try await deploy(config); running = desiredOn }
-    func send(_ action: String) async throws { running = action != "off" }
+    func install(_ config: URL, desiredOn: Bool) async throws {
+        installDesiredStates.append(desiredOn)
+        if requireStoppedInstall && desiredOn { throw VPNError.message("Tunnel is not ready during installation") }
+        try await deploy(config)
+        installed = true
+        running = desiredOn
+    }
+    func send(_ action: String) async throws {
+        actions.append(action)
+        if rejectStart && action == "on" { throw VPNError.message("Could not start") }
+        running = action != "off"
+    }
 }
 
 @main struct CoordinatorTests {
@@ -49,6 +69,58 @@ final class FakeTransport: ConfigurationTransport {
         do { _ = try await coordinator.apply(old, previous: next); fatalError("Installation cancellation ignored") } catch {}
         let retained = try store.load()
         precondition(retained.subscription == "new")
-        print("coordinator: rejected deployment, successful commit and installation cancellation passed")
+        transport.reject = false
+        transport.installed = true
+        transport.currentVersion = "older"
+        _ = try await coordinator.apply(next, previous: next)
+        precondition(transport.installDesiredStates.last == true, "Upgrades must still verify a running tunnel before replacing the previous service")
+
+        let freshHash = root.appendingPathComponent("fresh-hash")
+        let freshStore = StateStore(directory: root.appendingPathComponent("fresh-state"), legacyDirectory: root.appendingPathComponent("none"), runtimeHashFile: freshHash)
+        let freshTransport = FakeTransport(hashFile: freshHash)
+        freshTransport.installed = false
+        freshTransport.requireStoppedInstall = true
+        let freshCoordinator = ConfigurationCoordinator(store: freshStore, transport: freshTransport)
+        var firstConnection = SavedState()
+        firstConnection.subscription = "first"
+        firstConnection.selectedNodeID = "first-node"
+        firstConnection.desiredOn = true
+        _ = try await freshCoordinator.apply(firstConnection, previous: SavedState())
+        let installedState = try freshStore.load()
+        precondition(freshTransport.installDesiredStates == [false] && freshTransport.actions == ["on"])
+        precondition(freshTransport.running && installedState.subscription == "first")
+        precondition(!FileManager.default.fileExists(atPath: freshStore.pendingFile.path))
+        freshTransport.installed = false
+        freshTransport.rejectStart = true
+        var retryConnection = firstConnection
+        retryConnection.subscription = "retry"
+        do {
+            _ = try await freshCoordinator.apply(retryConnection, previous: firstConnection)
+            fatalError("A failed connection was reported as successful")
+        } catch {
+            precondition(error.localizedDescription.contains("subscription was saved"))
+        }
+        let savedRetry = try freshStore.load()
+        precondition(savedRetry.subscription == "retry")
+        precondition(freshTransport.installed && !FileManager.default.fileExists(atPath: freshStore.pendingFile.path))
+
+        let provisionedHash = root.appendingPathComponent("provisioned-hash")
+        let provisionedStore = StateStore(directory: root.appendingPathComponent("provisioned-state"), legacyDirectory: root.appendingPathComponent("none"), runtimeHashFile: provisionedHash)
+        let provisionedTransport = FakeTransport(hashFile: provisionedHash)
+        let provisionedCoordinator = ConfigurationCoordinator(store: provisionedStore, transport: provisionedTransport)
+        try provisionedStore.save(SavedState())
+        provisionedTransport.active = ""
+        provisionedTransport.blockSettingsFile = provisionedStore.file
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: provisionedStore.file.path) }
+        do {
+            _ = try await provisionedCoordinator.apply(firstConnection, previous: SavedState())
+            fatalError("Settings write failure ignored")
+        } catch {}
+        let restoredProvisioned = try provisionedStore.load()
+        precondition(restoredProvisioned.subscription.isEmpty && !restoredProvisioned.desiredOn)
+        precondition(provisionedTransport.active.isEmpty && !provisionedTransport.running && provisionedTransport.actions.last == "off",
+                     "A failed first connection must restore the preinstalled, stopped configuration")
+        precondition(!FileManager.default.fileExists(atPath: provisionedStore.pendingFile.path))
+        print("coordinator: rejected deployment, commit, cancelled install and first-run install passed")
     }
 }

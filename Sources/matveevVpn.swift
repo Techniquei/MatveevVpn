@@ -1,23 +1,11 @@
 import SwiftUI
 import AppKit
-import Charts
 import Darwin
-
-struct TrafficPoint: Identifiable {
-    let slot: Int
-    let download: Double
-    let upload: Double
-
-    var id: Int { slot }
-}
 
 @MainActor
 final class SpeedMonitor: ObservableObject {
     @Published var downloadSpeed: Double = 0
     @Published var uploadSpeed: Double = 0
-    @Published var samples: [TrafficPoint] = (0..<60).map {
-        TrafficPoint(slot: $0, download: 0, upload: 0)
-    }
 
     private var previous: (received: UInt64, sent: UInt64, time: Date)?
     private var timer: Timer?
@@ -34,30 +22,25 @@ final class SpeedMonitor: ObservableObject {
         let now = Date()
         guard let totals = Self.tunnelTotals() else {
             previous = nil
-            append(download: 0, upload: 0)
+            updateSpeeds(download: 0, upload: 0)
             return
         }
 
         guard let old = previous else {
             previous = (totals.received, totals.sent, now)
-            append(download: 0, upload: 0)
+            updateSpeeds(download: 0, upload: 0)
             return
         }
         let elapsed = max(now.timeIntervalSince(old.time), 0.1)
         let receivedDelta = totals.received >= old.received ? totals.received - old.received : 0
         let sentDelta = totals.sent >= old.sent ? totals.sent - old.sent : 0
         previous = (totals.received, totals.sent, now)
-        append(download: Double(receivedDelta) / elapsed, upload: Double(sentDelta) / elapsed)
+        updateSpeeds(download: Double(receivedDelta) / elapsed, upload: Double(sentDelta) / elapsed)
     }
 
-    private func append(download: Double, upload: Double) {
+    private func updateSpeeds(download: Double, upload: Double) {
         downloadSpeed = download
         uploadSpeed = upload
-        let previous = samples.suffix(59)
-        samples = previous.enumerated().map {
-            TrafficPoint(slot: $0.offset, download: $0.element.download, upload: $0.element.upload)
-        }
-        samples.append(TrafficPoint(slot: 59, download: download, upload: upload))
     }
 
     private nonisolated static func tunnelTotals() -> (received: UInt64, sent: UInt64)? {
@@ -97,36 +80,31 @@ final class SpeedMonitor: ObservableObject {
     }
 }
 
-private struct BrandIcon: View {
-    var size: CGFloat = 52
-
-    var body: some View {
-        Image(nsImage: NSApplication.shared.applicationIconImage)
-            .resizable()
-            .interpolation(.high)
-            .frame(width: size, height: size)
-            .shadow(color: .cyan.opacity(0.28), radius: 18, y: 6)
-    }
+enum AppPalette {
+    static let cyan = Color(red: 0.25, green: 0.80, blue: 0.94)
+    static let blue = Color(red: 0.32, green: 0.48, blue: 0.95)
+    static let violet = Color(red: 0.64, green: 0.55, blue: 0.94)
+    static let background = LinearGradient(
+        colors: [Color(red: 0.035, green: 0.065, blue: 0.13), Color(red: 0.065, green: 0.055, blue: 0.15)],
+        startPoint: .topLeading, endPoint: .bottomTrailing
+    )
 }
 
 private struct ActionIconButton: View {
     let systemName: String
     let title: String
-    var primary = false
     var active = false
     var loading = false
     let action: () -> Void
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             Group {
-                if loading {
-                    ProgressView().controlSize(.small).tint(.white)
-                } else {
-                    Image(systemName: systemName).font(.system(size: 17, weight: .semibold))
-                }
+                if loading { ProgressView().controlSize(.small).tint(.white) }
+                else { Image(systemName: systemName).font(.system(size: 17, weight: .semibold)) }
             }
             .frame(width: 48, height: 48)
             .contentShape(RoundedRectangle(cornerRadius: 14))
@@ -135,93 +113,30 @@ private struct ActionIconButton: View {
         .foregroundStyle(isEnabled ? Color.white : Color.secondary)
         .background {
             RoundedRectangle(cornerRadius: 14)
-                .fill(primary && active ? Color.accentColor.opacity(hovering ? 1 : 0.88) : Color.white.opacity(hovering ? 0.14 : 0.07))
+                .fill(active ? AppPalette.blue.opacity(hovering && isEnabled ? 0.95 : 0.75) : Color.white.opacity(hovering && isEnabled ? 0.14 : 0.07))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(hovering && isEnabled ? 0.22 : 0), lineWidth: 1)
         }
-        .scaleEffect(hovering && isEnabled ? 1.045 : 1)
+        .scaleEffect(hovering && isEnabled && !reduceMotion ? 1.045 : 1)
         .opacity(isEnabled ? 1 : 0.42)
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
         .onHover { hovering = $0 }
-        .allowsHitTesting(!loading)
         .help(title)
         .accessibilityLabel(title)
     }
 }
 
-private struct ConnectionOverviewCard: View {
+private struct TrafficSummaryView: View {
     @ObservedObject var monitor: SpeedMonitor
     @ObservedObject var controller: VPNController
 
-    private var chartMaximum: Double {
-        let measured = monitor.samples.reduce(0) { maximum, point in
-            max(maximum, point.download + point.upload)
-        }
-        return max(1024, measured * 1.1)
-    }
-
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Chart(monitor.samples) { point in
-                LineMark(
-                    x: .value("Second", point.slot),
-                    y: .value("Traffic", point.download + point.upload)
-                )
-                .foregroundStyle(LinearGradient(colors: [.cyan, .pink], startPoint: .leading, endPoint: .trailing))
-                .lineStyle(StrokeStyle(lineWidth: 2.2))
-                .interpolationMethod(.stepStart)
-            }
-            .chartXScale(domain: 0...59)
-            .chartYScale(domain: 0...chartMaximum)
-            .chartXAxis(.hidden)
-            .chartYAxis(.hidden)
-            .transaction { transaction in
-                transaction.animation = nil
-            }
-            .frame(height: 54)
-            .padding(.top, 34)
-            .opacity(controller.isRunning ? 0.62 : 0.16)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text("Current node")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    HStack(spacing: 4) {
-                        speedMetric(monitor.downloadSpeed, icon: "arrow.down", activeColor: .cyan)
-                        speedMetric(monitor.uploadSpeed, icon: "arrow.up", activeColor: .pink)
-                    }
-                }
-
-                Picker("Current node", selection: Binding(
-                    get: { controller.state.selectedNodeID },
-                    set: { if let id = $0 { controller.selectNode(id) } }
-                )) {
-                    Text("Not selected").tag(Optional<String>.none)
-                    ForEach(controller.availableNodes) { node in
-                        Text(node.name + (controller.probeResults[node.id].map { " — " + $0.displayText } ?? ""))
-                            .tag(Optional(node.id))
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 230, alignment: .leading)
-                .disabled(controller.isBusy || controller.availableNodes.isEmpty)
-                .simultaneousGesture(TapGesture().onEnded { controller.testNodes(automatic: true) })
-            }
+        HStack(spacing: 10) {
+            speedMetric(monitor.downloadSpeed, title: "Download", icon: "arrow.down", activeColor: AppPalette.cyan)
+            speedMetric(monitor.uploadSpeed, title: "Upload", icon: "arrow.up", activeColor: AppPalette.violet)
         }
-        .padding(10)
-        .frame(height: 94)
-        .background(.white.opacity(controller.isRunning ? 0.06 : 0.025), in: RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            if !controller.isRunning {
-                RoundedRectangle(cornerRadius: 16).fill(.black.opacity(0.08)).allowsHitTesting(false)
-            }
-        }
-        .animation(.easeOut(duration: 0.18), value: controller.isRunning)
     }
 
     private func speedText(_ value: Double) -> String {
@@ -232,18 +147,21 @@ private struct ConnectionOverviewCard: View {
         return String(format: "%.1f GB/s", value / 1_073_741_824)
     }
 
-    private func speedMetric(_ value: Double, icon: String, activeColor: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
+    private func speedMetric(_ value: Double, title: String, icon: String, activeColor: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(speedText(value))
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
+                .foregroundStyle(controller.isRunning ? activeColor : Color.secondary)
         }
-        .font(.caption)
-        .foregroundStyle(controller.isRunning ? activeColor : Color.secondary)
-        .frame(width: 92, alignment: .trailing)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 16))
     }
-
 }
 
 private struct RoutingRulesView: View {
@@ -260,56 +178,58 @@ private struct RoutingRulesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Routing rules").font(.title2.bold())
-                    Text("One entry per line. Unmatched traffic uses the direct connection.")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Done") { dismiss() }
-            }
+            AppWindowHeader(title: "Routing", subtitle: "Choose what uses the VPN", icon: "arrow.triangle.branch")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Automatically route selected services", isOn: $automaticRoutingEnabled)
-                                .font(.headline)
-                            Text("Preset domain lists are updated daily from MetaCubeX. Custom rules below are applied in addition to these presets.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Automatically route selected services", isOn: $automaticRoutingEnabled)
+                            .font(.headline)
+                            .modifier(InteractiveHover())
+                        Text("Presets route selected services through the VPN. Lists refresh daily.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                            LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 9) {
-                                ForEach(AutomaticRoutingCatalog.services, id: \.self) { service in
-                                    Toggle(AutomaticRoutingCatalog.title(for: service), isOn: presetBinding(service))
-                                        .toggleStyle(.checkbox)
-                                }
-                            }
-                            .disabled(!automaticRoutingEnabled)
-                            .opacity(automaticRoutingEnabled ? 1 : 0.55)
-
-                            HStack {
-                                Text("Selected: \(automaticServices.count) of \(AutomaticRoutingCatalog.services.count)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Select All") { automaticServices = Set(AutomaticRoutingCatalog.services) }
-                                    .disabled(!automaticRoutingEnabled || automaticServices.count == AutomaticRoutingCatalog.services.count)
-                                Button("Clear Presets") { automaticServices.removeAll() }
-                                    .disabled(!automaticRoutingEnabled || automaticServices.isEmpty)
-                            }
-                            .controlSize(.small)
-
-                            Divider()
-                            Toggle("Block ads and trackers", isOn: $adBlockingEnabled)
-                                .font(.headline)
-                            Text("Blocks known third-party advertising and tracking domains. Ads delivered from the same domain as a video may still appear.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        if let date = controller.automaticRoutingLastUpdate {
+                            Label("Last data refresh: \(date.formatted(date: .abbreviated, time: .shortened))", systemImage: "clock")
+                                .font(.caption).foregroundStyle(AppPalette.cyan)
+                        } else {
+                            Text("Data update date is not available yet.").font(.caption).foregroundStyle(.secondary)
                         }
-                        .padding(4)
+
+                        LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 9) {
+                            ForEach(AutomaticRoutingCatalog.services, id: \.self) { service in
+                                Toggle(AutomaticRoutingCatalog.title(for: service), isOn: presetBinding(service))
+                                    .toggleStyle(.checkbox)
+                                    .modifier(InteractiveHover())
+                            }
+                        }
+                        .disabled(!automaticRoutingEnabled)
+                        .opacity(automaticRoutingEnabled ? 1 : 0.55)
+
+                        HStack {
+                            Text("Selected: \(automaticServices.count) of \(AutomaticRoutingCatalog.services.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Select All") { automaticServices = Set(AutomaticRoutingCatalog.services) }
+                                .disabled(!automaticRoutingEnabled || automaticServices.count == AutomaticRoutingCatalog.services.count)
+                            Button("Clear Presets") { automaticServices.removeAll() }
+                                .disabled(!automaticRoutingEnabled || automaticServices.isEmpty)
+                        }
+                        .controlSize(.small)
+
+                        Divider()
+                        Toggle("Block ads and trackers", isOn: $adBlockingEnabled)
+                            .font(.headline)
+                            .modifier(InteractiveHover())
+                        Text("Blocks known third-party advertising and tracking domains. Ads delivered from the same domain as a video may still appear.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .toggleStyle(.checkbox)
+                    .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Custom rules").font(.headline)
@@ -333,8 +253,10 @@ private struct RoutingRulesView: View {
                         }
                     }
                 }
-                .padding(.trailing, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollIndicators(.automatic)
+            Divider()
 
             HStack {
                 Text(controller.rulesMessage)
@@ -342,7 +264,7 @@ private struct RoutingRulesView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer()
-                Button("Revert Changes") { load(controller.currentRoutingRules()) }
+                Button("Revert Changes") { load(controller.state.rules) }
                 Button("Clear Custom…") { confirmClear = true }
                 Button("Save and Apply") {
                     controller.applyRoutingRules(
@@ -354,18 +276,24 @@ private struct RoutingRulesView: View {
                         paths: lines(pathsText)
                     )
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(HoverButtonStyle(prominent: true))
                 .disabled(controller.isBusy)
             }
         }
-        .padding(16)
-        .frame(minWidth: 600, idealWidth: 680, minHeight: 540, idealHeight: 720)
+        .controlSize(.large)
+        .tint(AppPalette.blue)
+        .padding(22)
+        .frame(width: 640, height: 700)
+        .background(AppPalette.background)
+        .preferredColorScheme(.dark)
+        .buttonStyle(HoverButtonStyle())
         .confirmationDialog("Clear custom routing rules?", isPresented: $confirmClear) {
             Button("Clear Custom Rules", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
         } message: { Text("Changes take effect after Save and Apply.") }
         .onAppear {
             controller.rulesMessage = ""
-            load(controller.currentRoutingRules())
+            controller.loadAutomaticRoutingUpdate()
+            load(controller.state.rules)
         }
     }
 
@@ -377,8 +305,9 @@ private struct RoutingRulesView: View {
                 .font(.system(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+                .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
                 .frame(height: height)
+                .modifier(InteractiveHover())
         }
         .frame(maxWidth: .infinity)
     }
@@ -407,76 +336,112 @@ private struct RoutingRulesView: View {
     }
 }
 
-private struct NodeSelectionView: View {
+private struct NodeListView: View {
     @ObservedObject var controller: VPNController
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedIndex: String?
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveringNodeID: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Choose node").font(.title2.bold())
-                    Text("Nodes are loaded from your saved subscription.")
-                        .foregroundStyle(.secondary)
-                }
+                Text("Servers").font(.headline)
+                Text("\(controller.availableNodes.count)").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Done") { dismiss() }
-            }
-
-            Picker("Node", selection: $selectedIndex) {
-                ForEach(controller.availableNodes) { node in
-                    Text(node.name + (controller.probeResults[node.id].map { " — " + $0.displayText } ?? "")).tag(Optional(node.id))
+                if controller.testingNodes {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button { controller.testNodes() } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(HoverButtonStyle())
+                        .controlSize(.small)
+                        .help("Check server latency")
+                        .accessibilityLabel("Check server latency")
+                        .disabled(controller.isBusy)
                 }
             }
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
 
-            HStack(spacing: 10) {
-                if controller.isBusy { ProgressView().controlSize(.small) }
-                Text(controller.nodeMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .frame(minHeight: 16)
-
-            HStack(spacing: 10) {
-                if controller.testingNodes {
-                    Button { controller.cancelNodeTests() } label: {
-                        Text("Cancel Test").frame(maxWidth: .infinity)
+            if controller.availableNodes.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "network").font(.title).foregroundStyle(.secondary)
+                    Text("Add your subscription to see servers.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Add subscription") {
+                        controller.openSetup()
+                        openWindow(id: "connection")
                     }
-                } else {
-                    Button { controller.testNodes() } label: {
-                        Text("Test Nodes").frame(maxWidth: .infinity)
-                    }
+                    .buttonStyle(HoverButtonStyle(prominent: true))
                     .disabled(controller.isBusy)
                 }
-                Button {
-                    if let selectedIndex { controller.selectNode(selectedIndex) }
-                } label: {
-                    Text("Switch Node").frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                if let selected = controller.selectedNode {
+                    nodeButton(selected, selected: true)
+                    Divider()
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedIndex == nil || controller.isBusy || controller.availableNodes.isEmpty)
+                if controller.unselectedNodes.isEmpty {
+                    Text("No other servers in this subscription.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 3) {
+                            ForEach(controller.unselectedNodes) { node in
+                                nodeButton(node, selected: false)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    // Unlike .hidden, .never removes the scroller gutter with a mouse attached.
+                    .scrollIndicators(.never)
+                }
             }
-            .controlSize(.large)
         }
-        .padding(14)
-        .frame(minWidth: 420, idealWidth: 450)
-        .onAppear {
-            selectedIndex = controller.currentNodeIndex
-            controller.nodeMessage = ""
-            controller.loadAvailableNodes()
-            controller.testNodes(automatic: true)
-        }
-        .onChange(of: controller.availableNodes) { nodes in
-            if selectedIndex == nil {
-                selectedIndex = controller.currentNodeIndex ?? nodes.first?.id
+        .frame(height: 320)
+        .onAppear { controller.testNodes() }
+    }
+
+    private func nodeButton(_ node: VPNNode, selected: Bool) -> some View {
+        let hovering = hoveringNodeID == node.id && !controller.isBusy
+        return Button { controller.selectNode(node.id) } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(node.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if let result = controller.probeResults[node.id] {
+                        Text(result.displayText).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppPalette.cyan)
+                } else {
+                    Image(systemName: "arrow.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(hovering ? Color.white : Color.secondary)
+                }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+            .background(selected ? AppPalette.cyan.opacity(hovering ? 0.22 : 0.12) : Color.white.opacity(hovering ? 0.11 : 0.04), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(hovering ? 0.16 : 0), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .onChange(of: selectedIndex) { controller.probeCandidateNode($0) }
+        .buttonStyle(.plain)
+        .disabled(controller.isBusy)
+        .opacity(controller.isBusy ? 0.6 : 1)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
+        .onHover { inside in
+            if inside { hoveringNodeID = node.id }
+            else if hoveringNodeID == node.id { hoveringNodeID = nil }
+        }
+        .help("Connect to " + node.name)
+        .accessibilityLabel("Connect to " + node.name)
+        .accessibilityValue(selected ? "Current server" : "")
     }
 }
 
@@ -484,33 +449,29 @@ private struct MainView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var controller: VPNController
     @ObservedObject var speedMonitor: SpeedMonitor
-    @State private var showRoutingRules = false
-    @State private var showSettings = false
+    @Environment(\.openWindow) private var openWindow
+
+    private var primaryActionTitle: String {
+        if controller.state.subscription.isEmpty { return "Add subscription" }
+        if !controller.isInstalled || controller.state.selectedNodeID == nil { return "Install and set up" }
+        return controller.state.desiredOn ? "Disconnect" : "Connect"
+    }
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(red: 0.03, green: 0.06, blue: 0.16),
-                                    Color(red: 0.06, green: 0.04, blue: 0.18)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
+            AppPalette.background.ignoresSafeArea()
 
             VStack(spacing: 12) {
                 HStack(spacing: 12) {
-                    BrandIcon()
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("matveevVpn")
-                                .font(.system(size: 24, weight: .bold, design: .rounded))
-                            Text("v\(VPNController.releaseVersion)")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        Text("Your connection · Your rules")
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        Text("matveevVpn")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                        Text("v\(VPNController.releaseVersion)")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                     Spacer()
-                    Toggle("Routing", isOn: Binding(
+                    Toggle(controller.state.rules.mode == .selective ? "Selective" : "All traffic", isOn: Binding(
                         get: { controller.state.rules.mode == .selective },
                         set: { controller.changeMode($0 ? .selective : .all) }
                     ))
@@ -518,6 +479,7 @@ private struct MainView: View {
                     .controlSize(.small)
                     .disabled(!controller.isInstalled || controller.isBusy || controller.state.selectedNodeID == nil)
                     .help("On uses selective routing rules. Off sends all traffic through the VPN.")
+                    .modifier(InteractiveHover())
                 }
 
                 if controller.needsUpgrade {
@@ -531,7 +493,14 @@ private struct MainView: View {
                     .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 13))
                 }
 
-                ConnectionOverviewCard(
+                if controller.isBusy {
+                    Text(controller.message).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                NodeListView(controller: controller)
+
+                TrafficSummaryView(
                     monitor: speedMonitor,
                     controller: controller
                 )
@@ -543,7 +512,7 @@ private struct MainView: View {
                             .font(.caption)
                         Spacer()
                         Button(controller.isStoppingRecovery ? "Stopping…" : "Stop Recovery") { controller.cancelAutomaticRecovery() }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(HoverButtonStyle(prominent: true))
                             .disabled(controller.isStoppingRecovery)
                     }
                     .padding(9)
@@ -551,24 +520,27 @@ private struct MainView: View {
                 }
 
                 HStack(spacing: 12) {
-                    ActionIconButton(systemName: "power", title: !controller.isInstalled || controller.state.selectedNodeID == nil ? "Install and set up" : (controller.state.desiredOn ? "Turn off" : "Turn on"), primary: true, active: controller.isRunning, loading: controller.isBusy) {
+                    ActionIconButton(systemName: "power", title: primaryActionTitle, active: controller.isRunning, loading: controller.isBusy) {
                         if !controller.isInstalled || controller.state.selectedNodeID == nil {
                             controller.openSetup()
+                            openWindow(id: "connection")
                         } else {
                             controller.run(controller.state.desiredOn ? "off" : "on")
                         }
                     }
+                    .disabled(controller.isBusy)
+                    .accessibilityValue(controller.isRunning ? "Connected" : "Disconnected")
 
                     ActionIconButton(systemName: "arrow.clockwise", title: "Restart VPN") { controller.run("restart") }
                     .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy)
 
                     ActionIconButton(systemName: "arrow.triangle.branch", title: "Routing rules") {
                         if controller.needsUpgrade { controller.repair() }
-                        else { showRoutingRules = true }
+                        else { openWindow(id: "routing") }
                     }
                     .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy)
 
-                    ActionIconButton(systemName: "gearshape", title: "Settings and diagnostics") { showSettings = true }
+                    ActionIconButton(systemName: "gearshape", title: "Settings and diagnostics") { openWindow(id: "settings") }
                     .disabled(controller.isBusy)
                 }
                 .padding(6)
@@ -587,21 +559,23 @@ private struct MainView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 18)
         }
-        .frame(width: 420)
+        .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
         .preferredColorScheme(.dark)
-        .sheet(isPresented: $showRoutingRules) {
-            RoutingRulesView(controller: controller)
+        .buttonStyle(HoverButtonStyle())
+        .onAppear {
+            if controller.showConnection { openWindow(id: "connection") }
         }
-        .sheet(isPresented: Binding(get: { controller.showConnection && !showSettings }, set: { controller.showConnection = $0 })) { ConnectionView(controller: controller) }
-        .sheet(isPresented: $showSettings) { SettingsView(controller: controller) }
+        .onChange(of: controller.showConnection) { presented in
+            if presented { openWindow(id: "connection") }
+        }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
-                controller.refreshWhenActive()
+                controller.refresh()
             }
         }
     }
@@ -645,6 +619,22 @@ struct MatveevVPNApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        Window("Subscription", id: "connection") {
+            ConnectionView(controller: controller)
+        }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentSize)
+        Window("Settings & Diagnostics", id: "settings") {
+            SettingsView(controller: controller)
+        }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentSize)
+        Window("Routing rules", id: "routing") {
+            RoutingRulesView(controller: controller)
+                .background(WindowCloseControl(isBusy: controller.isBusy))
+        }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentSize)
         MenuBarExtra("matveevVpn", systemImage: controller.isRunning ? "network.badge.shield.half.filled" : "network") {
             MenuContent(controller: controller)
         }
@@ -656,7 +646,7 @@ private struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
             Text(controller.isRunning ? "Connected" : "Disconnected")
-            Text(controller.node)
+            Text(controller.selectedNode?.name ?? "Not selected")
             Button(controller.state.desiredOn ? "Turn Off" : "Turn On") { controller.run(controller.state.desiredOn ? "off" : "on") }
                 .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil)
             if controller.isRecovering {

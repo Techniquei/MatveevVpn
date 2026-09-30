@@ -1,11 +1,21 @@
 # Architecture
 
 The app has one shared main-actor presentation model and one main window.
-The menu bar uses the same state and traffic monitor as the window.
+Subscription, settings and routing editors use separate, movable native windows.
+Each editor has one window instance. Closing and reopening subscription setup
+resets its draft; focusing an already open editor preserves it. Native close
+controls are disabled while a serialized user operation is running.
+The main window displays servers directly in a scrollable list. Its current server
+stays pinned above the scrolling alternatives; both derive from the saved node ID.
+Clicking a server commits its ID and desired-on state together through the coordinator.
+The menu bar uses the same state as the window. The window measures tunnel traffic
+with a shared speed monitor.
+All app windows share the same dark palette and compact header. Server rows use
+the main content margin directly, without an additional inset panel.
 
 | Component | Responsibility |
 | --- | --- |
-| SettingsViews / matveevVpn | UI, confirmation dialogs, traffic chart |
+| SettingsViews / matveevVpn | UI, confirmation dialogs, traffic indicators |
 | VPNController | Presentation state and serialized user operations |
 | ConfigurationCoordinator | Validate, deploy, commit and recovery boundary |
 | Configuration / StateStore | Versioned private state, stable node identity, migration |
@@ -17,8 +27,8 @@ The menu bar uses the same state and traffic monitor as the window.
 
 ## State and transactions
 
-The user state schema is version 2. App version (1.1.x), controller protocol version
-(3) and schema version are independent. An app-only replacement does not require
+The user state schema is version 2. App release, controller protocol and state
+schema versions are independent. An app-only replacement does not require
 reinstalling the controller. The system component remains necessary for TUN.
 
 Subscription data, node ID, routing mode/rules and desired connection state are
@@ -31,7 +41,21 @@ acceptance → atomic settings commit → journal removal. A journal stores the 
 state and SHA-256 of the generated configuration. On recovery, state is adopted
 only if the controller's active configuration hash matches. Runtime rejection
 restores the old config before answering. System installation also backs up and
-restores the existing component on startup failure.
+restores the existing component on startup failure. First installation starts
+the service stopped, commits the validated configuration, then requests the
+connection separately. A connection failure keeps the committed subscription so
+the user can retry without another administrator prompt.
+
+First-run setup installs the component automatically when its window first appears.
+The coordinator provisions an empty, stopped configuration before any subscription
+is requested. The builder's zero index is accepted only for an empty subscription;
+that configuration has no listener, TUN or DNS policy. Installation failure removes
+the partial component, so cancellation and retry cannot advance setup prematurely.
+The installer window displays indeterminate progress while macOS handles authorization.
+After installation, one serialized user operation loads and validates the subscription,
+selects its first node and applies it through the coordinator without reinstalling.
+Editing an existing subscription retains a matching node; a missing previous node
+requires an explicit replacement. Compatibility options remain available in a disclosure.
 
 An actor rejects overlapping configuration transactions; the shared UI model
 disables overlapping user commands across windows and menu controls. Temporary
@@ -39,6 +63,15 @@ files contain credentials but are private and removed when the operation exits.
 Subscription URLs are never passed in process arguments or error text.
 
 ## Routing and diagnostics
+
+The controller records the last successful remote preset download or HTTP 304
+in `control/routing-updated-at`, using sing-box 1.14 INFO success events. Remote
+preset configurations enable INFO logging; logs retain their existing size limit.
+This optional, non-sensitive epoch timestamp survives log rotation and runtime
+restarts. The app reads it when opening the routing editor, never on the status
+timer. It means the most recent successful preset refresh, not completion of
+every selected preset. Older installed components without this metadata display
+an unavailable date; cache-file modification time is not used as a substitute.
 
 DNS interception precedes application/private destination routing. Private
 destinations are excluded from TUN so LAN and mesh interfaces retain ownership
@@ -104,3 +137,13 @@ that cleanup and then moves the application to Trash.
 Sparkle replaces only the app. A changed system protocol prompts for a separate
 component update. Developer ID/notarization and live network acceptance require
 an appropriately configured Mac; compilation does not substitute for those tests.
+
+## Update channels
+
+AppUpdater owns the beta preference in app UserDefaults and exposes it directly
+as observable UI state. Beta is disabled by default; opting in permits Sparkle's
+beta channel alongside its always-available default channel. Changing the setting
+reschedules the existing updater cycle. Opting out never downgrades the app.
+Both channels use the same signed appcast. A beta release is a GitHub prerelease
+and its channel-tagged item is also published into the latest stable release's
+appcast so installed clients can discover it. Release jobs are serialized.

@@ -63,6 +63,11 @@ cleanup() {
     else
       /usr/bin/printf 'Could not restart the previous VPN service during rollback.\n' >&2
     fi
+  elif [[ "$COMPLETED" != true ]]; then
+    # A failed first installation must not look installed on the next launch.
+    bootout_service || true
+    /bin/rm -rf "$BASE"
+    /bin/rm -f "$SERVICE_PLIST"
   fi
   /bin/rm -rf "$BACKUP"
 }

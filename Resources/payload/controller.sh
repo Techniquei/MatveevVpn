@@ -71,7 +71,23 @@ bounded_log_line() {
 
 bounded_logger() {
   local file="$1" line
-  while IFS= read -r line || [[ -n "$line" ]]; do bounded_log_line "$file" "$line"; done
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    bounded_log_line "$file" "$line"
+    # sing-box 1.14 emits these only after a successful download or HTTP 304.
+    # Persist this event independently of log rotation; cache-file mtime also
+    # changes on startup and is not an update timestamp.
+    if [[ "$line" =~ INFO.*router:\ (updated\ rule-set\ preset-[a-z0-9-]+|update\ rule-set\ preset-[a-z0-9-]+:\ not\ modified)$ ]]; then
+      publish_routing_update
+    fi
+  done
+}
+
+publish_routing_update() {
+  local temporary
+  temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.routing-update.XXXXXX")" || return 1
+  /bin/date +%s > "$temporary"
+  /bin/chmod 644 "$temporary"
+  /bin/mv -f "$temporary" "$CONTROL_DIR/routing-updated-at"
 }
 
 prepare_log() {
@@ -557,7 +573,7 @@ process_command() {
     reset)
       set_desired "off"
       stop_child
-      /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG" "$PENDING_CONFIG" "$PENDING_XRAY_CONFIG" "$CONTROL_DIR/config-sha256" "$CONTROL_DIR/last-error.log"
+      /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG" "$PENDING_CONFIG" "$PENDING_XRAY_CONFIG" "$CONTROL_DIR/config-sha256" "$CONTROL_DIR/last-error.log" "$CONTROL_DIR/routing-updated-at"
       write_response "$token" "ok"
       ;;
     *)

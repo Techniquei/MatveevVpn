@@ -7,6 +7,17 @@ Dir.mktmpdir('matveev-routing') do |dir|
   sub, rules, config = %w[sub rules config].map { |name| File.join(dir, name) }
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Test\n")
   builder = File.expand_path('../Resources/payload/tools/build-config.rb', __dir__)
+  File.write(rules, '{}')
+  File.write(sub, '')
+  File.write(config + '.xray.json', 'stale')
+  raise 'unconfigured component generation failed' unless system(RbConfig.ruby, builder, sub, config, '0', rules)
+  provisioned = JSON.parse(File.read(config))
+  raise 'unconfigured component must not capture traffic or change DNS' unless provisioned['inbounds'] == [] && !provisioned.key?('dns') && !provisioned.key?('route')
+  raise 'unconfigured component retained a transport' unless provisioned['outbounds'] == [{'type' => 'direct', 'tag' => 'direct'}] && !File.exist?(config + '.xray.json')
+  raise 'unconfigured file is not private' unless File.stat(config).mode & 0o777 == 0o600
+  raise 'an empty subscription unexpectedly selected a node' if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
+  File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Test\n")
+  raise 'provisioning ignored an existing subscription' if system(RbConfig.ruby, builder, sub, config, '0', rules, out: File::NULL, err: File::NULL)
   %w[selective all].each do |mode|
     File.write(rules, JSON.generate({domains: ['*.example.com'], applications: ['Example'], processPathRegexes: ['^.*/Cursor\\.app/Contents/.*'], mode: mode, automaticRoutingEnabled: false, adBlockingEnabled: false}))
     raise 'generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
@@ -44,6 +55,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
   File.write(rules, JSON.generate({domains: [], applications: [], processPathRegexes: [], mode: 'selective', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: true}))
   raise 'preset generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   generated_presets = JSON.parse(File.read(config))
+  raise 'preset refresh events must be visible to the controller' unless generated_presets.dig('log', 'level') == 'info'
   rule_sets = generated_presets.fetch('route').fetch('rule_set')
   tags = rule_sets.map { |rule| rule.fetch('tag') }
   expected_tags = %w[preset-youtube preset-telegram preset-discord preset-telegram-ip ad-block]
@@ -66,6 +78,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
   File.write(rules, JSON.generate({mode: 'selective', automaticRoutingEnabled: false, automaticServices: preset_services, adBlockingEnabled: false}))
   raise 'disabled preset generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   raise 'disabled presets still generated remote rules' if JSON.parse(File.read(config)).fetch('route').key?('rule_set')
+  raise 'configs without remote presets must keep warning-level logging' unless JSON.parse(File.read(config)).dig('log', 'level') == 'warn'
   File.write(rules, JSON.generate({mode: 'all', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: false}))
   raise 'all traffic generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   raise 'all traffic mode should not download service presets' if JSON.parse(File.read(config)).fetch('route').key?('rule_set')

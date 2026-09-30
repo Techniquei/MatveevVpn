@@ -84,6 +84,7 @@ send_action_expect() {
 }
 
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ ! -f "$CONTROL/routing-updated-at" ]]
 /usr/bin/grep -q 'tunnel DNS is ready' "$RUNTIME/vpn.log"
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
@@ -96,8 +97,21 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 send_action off
 wait_for_file_value "$CONTROL/runtime-status" "stopped"
 [[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+/usr/bin/printf '%s\n' 'ERROR router: fetch rule-set preset-youtube: timeout' > "$RUNTIME/preset-update-log"
 send_action on
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ ! -f "$CONTROL/routing-updated-at" ]]
+send_action off
+/usr/bin/printf '%s\n' 'INFO router: updated rule-set preset-youtube' > "$RUNTIME/preset-update-log"
+send_action on
+wait_for_file_text "$CONTROL/routing-updated-at" '^[0-9][0-9]*$'
+[[ "$(/usr/bin/stat -f '%Lp' "$CONTROL/routing-updated-at")" == "644" ]]
+# A successful conditional check also refreshes the date; failures never do.
+/usr/bin/printf '1\n' > "$CONTROL/routing-updated-at"
+send_action off
+/usr/bin/printf '%s\n' 'INFO router: update rule-set preset-telegram-ip: not modified' > "$RUNTIME/preset-update-log"
+send_action on
+wait_for_file_text "$CONTROL/routing-updated-at" '^[0-9][0-9][0-9]*$'
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action restart
 wait_for_file_value "$CONTROL/runtime-status" "running"

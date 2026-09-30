@@ -1,7 +1,7 @@
 import Foundation
 
 @main struct DiagnosticsTests {
-    static func main() {
+    static func main() throws {
         let output = """
         3 packets transmitted, 3 packets received, 0.0% packet loss
         round-trip min/avg/max/stddev = 39.125/42.480/47.201/3.101 ms
@@ -18,6 +18,16 @@ import Foundation
             """
         precondition(NodeProbe.physicalInterface(in: network) == "en0")
         precondition(NodeProbe.physicalInterface(in: "REACH : flags 0x00000002 (Reachable)") == nil)
-        print("diagnostics: ping parsing and measurement labels passed")
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let updateFile = root.appendingPathComponent("routing-updated-at")
+        precondition(SystemService.routingUpdateDate(at: updateFile) == nil)
+        try privateWrite(Data("1700000000\n".utf8), to: updateFile)
+        precondition(SystemService.routingUpdateDate(at: updateFile) == Date(timeIntervalSince1970: 1700000000))
+        for invalid in ["", "error", "nan", "inf", "0", "-1", "99999999999"] {
+            try privateWrite(Data(invalid.utf8), to: updateFile)
+            precondition(SystemService.routingUpdateDate(at: updateFile) == nil)
+        }
+        print("diagnostics: ping labels and routing refresh dates passed")
     }
 }

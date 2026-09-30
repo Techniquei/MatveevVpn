@@ -7,6 +7,9 @@ case "${1:-}" in
       exit 1
     fi
     trap 'exit 0' TERM INT
+    if [[ -f "${MATVEEV_BASE_DIR:-}/preset-update-log" ]]; then
+      /bin/cat "$MATVEEV_BASE_DIR/preset-update-log"
+    fi
     while true; do /bin/sleep 1; done
     ;;
   *) exit 2 ;;

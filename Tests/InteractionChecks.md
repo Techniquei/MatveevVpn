@@ -1,0 +1,31 @@
+# Native interaction regression checks
+
+Build with `bash Scripts/preview-interactions.sh`, then open the printed app path.
+The preview uses the actual views/controller with `FirstRunBoundaryFakes.swift`;
+it never executes system commands, installs a component or contacts servers.
+Its subscription state is synthetic and its bundle ID differs from the VPN app.
+Use the Preview toolbar menu to open the other windows.
+Hover the login and notification controls without activating them: those macOS
+permission APIs remain native. Do not invoke destructive actions or file exports.
+
+## Compatibility on first launch
+
+1. In the empty Subscription window, click the word Compatibility.
+   The Happ switch and explanation must appear.
+2. Click the empty right-hand part of the same header. Content must collapse.
+3. Repeat with the arrow. Each click must toggle exactly once.
+4. Hover the header: its background and outline must highlight.
+5. Toggling the Happ switch must not collapse the section.
+
+The old standard macOS disclosure fails steps 1 and 2; only the arrow opens it.
+Verified with computer use on 2026-09-30: both clicks fail with the old disclosure
+and toggle successfully with `AppDisclosureStyle`. The hover outline is visible.
+
+## Hover coverage
+
+Check buttons, toggles, the server picker, the running-app menu, text fields and
+rule editors in Subscription, Settings and Routing; also the mode switch, server
+rows and actions in Main. Enabled controls must highlight on entry and restore
+their appearance on exit. Disabled controls must not highlight or act. Keyboard
+focus and activation remain native. System menus/dialogs use macOS highlighting.
+Do not run destructive actions or service/network checks in the installed app.

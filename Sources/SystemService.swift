@@ -36,6 +36,15 @@ struct SystemService {
         (try? String(contentsOf: control.appendingPathComponent("runtime-status"), encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unavailable"
     }
+    var automaticRoutingLastUpdate: Date? {
+        Self.routingUpdateDate(at: control.appendingPathComponent("routing-updated-at"))
+    }
+    static func routingUpdateDate(at file: URL) -> Date? {
+        guard let text = try? String(contentsOf: file, encoding: .utf8),
+              let seconds = TimeInterval(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              seconds.isFinite, seconds > 0, seconds <= Date().timeIntervalSince1970 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
     var running: Bool {
         let file = control.appendingPathComponent("runtime-status")
         guard (try? String(contentsOf: file, encoding: .utf8))?.hasPrefix("running") == true else { return false }
@@ -64,20 +73,27 @@ struct SystemService {
 
     func generate(_ state: SavedState, at stage: URL) async throws -> URL {
         try state.rules.validate()
-        let nodes = try Subscription.nodes(state.subscription)
-        guard let node = nodes.first(where: { $0.id == state.selectedNodeID }) else { throw VPNError.message("Choose a node before applying changes.") }
+        let index: Int
+        if state.subscription.isEmpty && state.selectedNodeID == nil && !state.desiredOn {
+            // Index zero provisions the stopped component before a subscription exists.
+            index = 0
+        } else {
+            let nodes = try Subscription.nodes(state.subscription)
+            guard let node = nodes.first(where: { $0.id == state.selectedNodeID }) else { throw VPNError.message("Choose a node before applying changes.") }
+            index = node.index
+        }
         let subscription = stage.appendingPathComponent("subscription")
         let rules = stage.appendingPathComponent("rules.json")
         let config = stage.appendingPathComponent("config.json")
         try privateWrite(Data(state.subscription.utf8), to: subscription)
         try privateWrite(JSONEncoder().encode(state.rules), to: rules)
-        if state.rules.adBlockingEnabled {
+        if index > 0 && state.rules.adBlockingEnabled {
             try AdBlockRuleStore().materialize(
                 in: stage,
                 bundledFile: payload.appendingPathComponent("rules/hagezi-pro-mini.txt")
             )
         }
-        let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(node.index), rules.path])
+        let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(index), rules.path])
         guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.", generated.output) }
         let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path])
         guard checked.status == 0 else { throw VPNError.diagnostic("The configuration did not pass validation. Check the node and routing expressions.", checked.output) }
