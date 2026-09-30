@@ -4,13 +4,15 @@ import Foundation
 // These tests never run system tools, contact servers or touch the installed VPN.
 struct CommandResult { let status: Int32; let output: String }
 enum Command {
+    static var tunnelDNSRequests = 0
     static func run(_ executable: String, _ arguments: [String]) async -> CommandResult {
-        CommandResult(status: 1, output: "")
+        if executable == "/usr/bin/dig" { tunnelDNSRequests += 1 }
+        return CommandResult(status: 1, output: "")
     }
 }
 
 struct SystemService {
-    static let version = "12"
+    static let version = "13"
     static var installedValue = false
     static var runningValue = false
     static var cancelInstall = false
@@ -18,9 +20,10 @@ struct SystemService {
     static var deployments = 0
     static var actions: [String] = []
     static var routingUpdateValue: Date?
+    static var currentVersionValue = version
     var installed: Bool { Self.installedValue }
     var running: Bool { Self.runningValue }
-    var currentVersion: String { Self.version }
+    var currentVersion: String { Self.currentVersionValue }
     var runtimeStatus: String { running ? "running" : "stopped" }
     var automaticRoutingLastUpdate: Date? { Self.routingUpdateValue }
     var payload: URL { FileManager.default.temporaryDirectory }
@@ -38,6 +41,7 @@ struct SystemService {
         Self.installs += 1
         if Self.cancelInstall { throw VPNError.message("System installation was cancelled. Your settings were preserved.") }
         Self.installedValue = true
+        Self.currentVersionValue = Self.version
         Self.runningValue = desiredOn
     }
     func deploy(_ config: URL) async throws { Self.deployments += 1 }
@@ -53,6 +57,8 @@ struct SystemService {
         installedValue = false; runningValue = false; cancelInstall = false
         installs = 0; deployments = 0; actions = []
         routingUpdateValue = nil
+        currentVersionValue = version
+        Command.tunnelDNSRequests = 0
         SubscriptionFetcher.requests = 0
         SubscriptionFetcher.failure = false
     }

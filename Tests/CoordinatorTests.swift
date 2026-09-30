@@ -71,7 +71,7 @@ final class FakeTransport: ConfigurationTransport {
         precondition(retained.subscription == "new")
         transport.reject = false
         transport.installed = true
-        transport.currentVersion = "older"
+        transport.currentVersion = "12"
         _ = try await coordinator.apply(next, previous: next)
         precondition(transport.installDesiredStates.last == true, "Upgrades must still verify a running tunnel before replacing the previous service")
 

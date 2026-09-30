@@ -1,22 +1,21 @@
-# matveevVpn 1.4.0-beta.1
+# matveevVpn 1.4.0-beta.2
 
-This is an opt-in beta release. Enable **Receive beta updates** in version 1.3.5
-or install this beta DMG manually. Stable-only users keep the familiar interface.
+This is an opt-in beta bug-fix release for connection stalls after updating to
+1.4.0-beta.1. Stable-only users remain on 1.3.5.
 
-- Redesigned main screen with a full-width server list, the active server pinned
-  first, click-to-connect server rows, bottom icon actions and hover feedback.
-- Consistent compact styling for Subscription, Settings and Routing windows;
-  auxiliary windows are movable and Compatibility opens from its entire header.
-- First launch installs the stopped component before requesting a subscription,
-  shows progress during authorization and selects the first server automatically.
-- Displays the most recent successful automatic routing data refresh.
-- Adds the beta update preference, disabled by default on new installations.
-- Removes obsolete node-picker state and fixes latency summary counts.
+- Replaces per-line shell logging with a persistent writer so detailed routing
+  logs cannot stall the VPN engine by filling its output pipe.
+- Keeps private runtime logs capped at 3 MB, with bounded rotation and concurrent
+  writer locking. Successful routing refresh timestamps remain available.
+- Requires system component version 13. After updating the app, click **Update**
+  on the main screen (or **Settings → Repair service…**) and approve the
+  administrator prompt. This installs the fixed controller and retains the
+  subscription, selected server, routing rules and desired connection state.
+- Defers automatic health checks and startup configuration reconciliation until
+  the incompatible system component has been updated.
 
-For existing installations, **Settings → Repair service…** installs the updated
-system scripts needed to publish the routing refresh date. The app update alone
-does not replace the component because its protocol is unchanged. Repair may
-briefly interrupt the connection. Existing subscriptions and routing rules remain.
+Updating the component briefly interrupts the connection. An app update or
+computer restart alone does not replace the privileged controller.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

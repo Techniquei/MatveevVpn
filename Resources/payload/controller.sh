@@ -40,54 +40,62 @@ NEXT_START_ATTEMPT=0
 /bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
 
 bounded_log_line() {
-  local file="$1" line="$2" lock temporary size entry_size keep lock_attempt=0
-  lock="$RUN_DIR/.log-lock-$(/usr/bin/basename "$file")"
-  while ! /bin/mkdir "$lock" 2>/dev/null; do
-    lock_attempt=$((lock_attempt + 1))
-    [[ "$lock_attempt" -lt 500 ]] || return 1
-    /bin/sleep 0.01
-  done
-  temporary="$(/usr/bin/mktemp "$RUN_DIR/.bounded-log.XXXXXX")" || { /bin/rmdir "$lock"; return 1; }
-  /usr/bin/printf '%s\n' "$line" > "$temporary"
-  entry_size="$(/usr/bin/wc -c < "$temporary" | /usr/bin/tr -d '[:space:]')"
-  if [[ "$entry_size" -gt "$MAX_LOG_BYTES" ]]; then
-    /usr/bin/tail -c "$MAX_LOG_BYTES" "$temporary" > "$file"
-  else
-    size="$(/usr/bin/wc -c < "$file" 2>/dev/null | /usr/bin/tr -d '[:space:]')"
-    size="${size:-0}"
-    if [[ $((size + entry_size)) -gt "$MAX_LOG_BYTES" ]]; then
-      keep=$((MAX_LOG_BYTES - entry_size))
-      if [[ "$keep" -gt 0 && -f "$file" ]]; then /usr/bin/tail -c "$keep" "$file" > "$temporary.retained"; else : > "$temporary.retained"; fi
-      /bin/cat "$temporary" >> "$temporary.retained"
-      /bin/mv -f "$temporary.retained" "$file"
-    else
-      /bin/cat "$temporary" >> "$file"
-    fi
-  fi
-  /bin/chmod 600 "$file" 2>/dev/null || true
-  /bin/rm -f "$temporary" "$temporary.retained"
-  /bin/rmdir "$lock"
+  printf '%s\n' "$2" | bounded_logger "$1"
 }
 
 bounded_logger() {
-  local file="$1" line
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    bounded_log_line "$file" "$line"
-    # sing-box 1.14 emits these only after a successful download or HTTP 304.
-    # Persist this event independently of log rotation; cache-file mtime also
-    # changes on startup and is not an update timestamp.
-    if [[ "$line" =~ INFO.*router:\ (updated\ rule-set\ preset-[a-z0-9-]+|update\ rule-set\ preset-[a-z0-9-]+:\ not\ modified)$ ]]; then
-      publish_routing_update
-    fi
-  done
-}
-
-publish_routing_update() {
-  local temporary
-  temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.routing-update.XXXXXX")" || return 1
-  /bin/date +%s > "$temporary"
-  /bin/chmod 644 "$temporary"
-  /bin/mv -f "$temporary" "$CONTROL_DIR/routing-updated-at"
+  # Keep one writer per engine stream: spawning utilities for every INFO line
+  # fills the output pipe and blocks the engine itself during DNS/traffic bursts.
+  /usr/bin/ruby -e '
+    require "tempfile"
+    file, control, limit_text = ARGV
+    limit = Integer(limit_text)
+    abort "invalid log limit" unless limit > 0
+    STDIN.binmode
+    STDIN.each_line do |line|
+      lock ||= File.open(file + ".lock", File::RDWR | File::CREAT, 0600)
+      line += "\n" unless line.end_with?("\n")
+      entry = line.bytesize > limit ? line.byteslice(-limit, limit) : line
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      until lock.flock(File::LOCK_EX | File::LOCK_NB)
+        exit 1 if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        sleep 0.01
+      end
+      begin
+        File.open(file, File::RDWR | File::CREAT, 0600) do |log|
+          log.chmod(0600)
+          size = log.stat.size
+          if size + entry.bytesize > limit
+            # Leave headroom so a full log is not copied again for every line.
+            keep = [size, [limit * 9 / 10 - entry.bytesize, 0].max].min
+            log.seek(size - keep)
+            retained = keep > 0 ? log.read(keep) : ""
+            Tempfile.create([".bounded-log.", ""], File.dirname(file)) do |temporary|
+              temporary.binmode
+              temporary.write(retained)
+              temporary.write(entry)
+              temporary.close
+              File.rename(temporary.path, file)
+            end
+          else
+            log.seek(0, IO::SEEK_END)
+            log.write(entry)
+          end
+        end
+      ensure
+        lock.flock(File::LOCK_UN)
+      end
+      # sing-box 1.14 emits these only after a download or HTTP 304 succeeds.
+      if line.match?(/INFO.*router: (updated rule-set preset-[a-z0-9-]+|update rule-set preset-[a-z0-9-]+: not modified)\s*\z/)
+        Tempfile.create([".routing-update.", ""], control) do |temporary|
+          temporary.write("#{Time.now.to_i}\n")
+          temporary.chmod(0644)
+          temporary.close
+          File.rename(temporary.path, File.join(control, "routing-updated-at"))
+        end
+      end
+    end
+  ' "$1" "$CONTROL_DIR" "$MAX_LOG_BYTES"
 }
 
 prepare_log() {
@@ -102,8 +110,6 @@ prepare_log() {
   /bin/chmod 600 "$file" 2>/dev/null || true
 }
 
-/bin/rmdir "$RUN_DIR/.log-lock-$(/usr/bin/basename "$LOG_FILE")" 2>/dev/null || true
-/bin/rmdir "$RUN_DIR/.log-lock-$(/usr/bin/basename "$ERROR_FILE")" 2>/dev/null || true
 prepare_log "$LOG_FILE"
 prepare_log "$ERROR_FILE"
 

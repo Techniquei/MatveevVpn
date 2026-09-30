@@ -97,6 +97,20 @@ wait_for_file_value "$CONTROL/runtime-status" "running"
 send_action off
 wait_for_file_value "$CONTROL/runtime-status" "stopped"
 [[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+# INFO traffic must drain without blocking the engine, even across rotation.
+/usr/bin/ruby -e '
+  File.open(ARGV.fetch(0), "w", 0600) do |file|
+    25000.times { |i| file.puts "INFO dns: exchanged A burst-#{i}.example.invalid. 60 IN A 192.0.2.1 #{"x" * 100}" }
+    file.puts "INFO dns: log burst drained"
+  end
+' "$RUNTIME/log-burst"
+send_action on
+wait_for_file_text "$RUNTIME/vpn.log" 'INFO dns: log burst drained'
+[[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
+[[ "$(/usr/bin/stat -f '%Lp' "$RUNTIME/vpn.log")" == "600" ]]
+[[ ! -f "$CONTROL/routing-updated-at" ]]
+send_action off
+/bin/rm "$RUNTIME/log-burst"
 /usr/bin/printf '%s\n' 'ERROR router: fetch rule-set preset-youtube: timeout' > "$RUNTIME/preset-update-log"
 send_action on
 wait_for_file_value "$CONTROL/runtime-status" "running"

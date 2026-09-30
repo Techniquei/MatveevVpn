@@ -192,6 +192,33 @@ import Foundation
         selection.loadAutomaticRoutingUpdate()
         precondition(selection.automaticRoutingLastUpdate == nil, "A missing date must not retain stale presentation state")
 
-        print("first run: component-first setup, no second install prompt, HTTPS/VLESS, first-node selection, serialization, cancellation retry and node preservation passed")
+        SystemService.reset()
+        SystemService.installedValue = true
+        SystemService.runningValue = true
+        SystemService.currentVersionValue = "12"
+        let upgradeStore = makeStore("streaming-logger-upgrade")
+        var beforeUpgrade = old
+        beforeUpgrade.desiredOn = true
+        try upgradeStore.save(beforeUpgrade)
+        let upgrade = model(upgradeStore)
+        upgrade.refresh()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(upgrade.needsUpgrade && !upgrade.isBusy)
+        precondition(Command.tunnelDNSRequests == 0 && SystemService.actions.isEmpty && SystemService.deployments == 0,
+                     "The INFO-incompatible component must be updated before health checks or configuration reconciliation")
+        upgrade.repair()
+        try await wait(upgrade)
+        let afterUpgrade = try upgradeStore.load()
+        precondition(!upgrade.needsUpgrade && SystemService.currentVersionValue == "13" && SystemService.installs == 1)
+        precondition(afterUpgrade.subscription == beforeUpgrade.subscription && afterUpgrade.selectedNodeID == beforeUpgrade.selectedNodeID && afterUpgrade.desiredOn,
+                     "Updating the logger must retain the subscription, selected node and desired connection")
+        SystemService.currentVersionValue = "12"
+        upgrade.refresh()
+        upgrade.run("restart")
+        try await wait(upgrade)
+        precondition(!upgrade.needsUpgrade && SystemService.installs == 2 && SystemService.actions.isEmpty,
+                     "A manual connection command must install the required component through the coordinator rather than restart the incompatible runtime")
+
+        print("first run: setup, serialization, cancellation retry, node preservation and required streaming-logger upgrade passed")
     }
 }

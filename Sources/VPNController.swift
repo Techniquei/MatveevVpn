@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.1"
+    static let releaseVersion = "1.4.0-beta.2"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -107,7 +107,7 @@ final class VPNController: ObservableObject {
         }
         if !recoverySuppressed && !isRunning && state.desiredOn && isInstalled && !needsUpgrade {
             beginAutomaticRecovery(reason: "the VPN runtime stopped")
-        } else if isRunning {
+        } else if isRunning && !needsUpgrade {
             scheduleHealthCheckIfNeeded()
             scheduleAdBlockRefreshIfNeeded()
         }
@@ -186,6 +186,10 @@ final class VPNController: ObservableObject {
             let wasRunning = self.service.running
             var next = self.state
             next.desiredOn = action != "off"
+            if action != "off" && self.needsUpgrade {
+                try await self.commit(next)
+                return
+            }
             if action != "off" {
                 try self.store.save(next)
                 self.state = next

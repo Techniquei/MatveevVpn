@@ -26,7 +26,9 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "12"
+    // INFO preset telemetry requires a streaming writer; earlier components can
+    // block the engine on its output pipe even though their actions are the same.
+    static let version = "13"
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { Self.base.appendingPathComponent("control") }

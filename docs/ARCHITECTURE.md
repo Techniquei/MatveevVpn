@@ -124,7 +124,15 @@ and credentials; filesystem permissions are 0600. Failure entries include the
 physical network state, Wi-Fi power, default route, VLESS URI, endpoint,
 transport, security, flow, runtime core and recent raw engine errors. Privileged
 engine output is also written through bounded appenders; each internal runtime
-log has the same hard maximum.
+log has the same hard maximum. Each engine stream uses one persistent writer,
+with a shared file lock for concurrent writers. Rotation leaves ten percent
+headroom to avoid copying a full log for each subsequent INFO line. This keeps
+traffic logging from filling the engine output pipe and stalling DNS processing.
+Controller compatibility version 13 requires this streaming writer for INFO
+preset telemetry. Version 12 cannot safely consume that configuration under load.
+Existing installations display the system component Update action (also available
+through Repair Service); health checks and startup reconciliation wait for that
+update. Fixed actions and settings schema remain unchanged.
 
 ## Platform boundaries
 
