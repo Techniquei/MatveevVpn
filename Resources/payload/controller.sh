@@ -52,6 +52,7 @@ bounded_logger() {
     limit = Integer(limit_text)
     abort "invalid log limit" unless limit > 0
     STDIN.binmode
+    lock = nil
     STDIN.each_line do |line|
       lock ||= File.open(file + ".lock", File::RDWR | File::CREAT, 0600)
       line += "\n" unless line.end_with?("\n")
