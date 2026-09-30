@@ -57,6 +57,7 @@ struct ConnectionView: View {
 }
 
 struct SettingsView: View {
+    @ObservedObject private var updater = AppUpdater.shared
     @ObservedObject var controller: VPNController
     @Environment(\.dismiss) private var dismiss
     @State private var confirmReset = false
@@ -80,10 +81,16 @@ struct SettingsView: View {
                     Divider()
                     Text("Subscription and Rules").font(.headline)
                     HStack {
-                        Button("Check for Updates…") { AppUpdater.shared.check() }.disabled(!AppUpdater.shared.available)
+                        Button("Check for Updates…") { updater.check() }.disabled(!updater.available)
                         Button("Change Subscription…") { controller.openSetup() }
                     }
-                    if !AppUpdater.shared.available { Text("Automatic updates are not configured in this development build.").font(.caption).foregroundStyle(.secondary) }
+                    Toggle("Receive beta updates", isOn: Binding(
+                        get: { updater.betaUpdatesEnabled },
+                        set: { updater.setBetaUpdates($0) }
+                    ))
+                    Text("Includes test releases. Turning this off keeps your installed version until a newer stable release.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !updater.available { Text("Automatic updates are not configured in this development build.").font(.caption).foregroundStyle(.secondary) }
                     HStack {
                         Button("Export Routing Rules…") { controller.exportRules() }
                         Button("Import Routing Rules…") { controller.importRules() }

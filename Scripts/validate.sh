@@ -12,6 +12,8 @@ trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 /usr/bin/ruby -c "$ROOT_DIR/Resources/payload/tools/build-config.rb" >/dev/null
 /usr/bin/plutil -lint "$ROOT_DIR/Resources/payload/com.matveev.vpn.plist" >/dev/null
 /usr/bin/xcrun --sdk macosx swiftc -parse-as-library -typecheck -target arm64-apple-macos13.0 "$ROOT_DIR"/Sources/*.swift
+/usr/bin/xcrun swiftc -parse-as-library "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/Updater.swift" "$ROOT_DIR/Tests/UpdaterTests.swift" -o "$TEST_BUILD/updater-tests"
+"$TEST_BUILD/updater-tests"
 "$ROOT_DIR/Tests/controller-test.sh"
 "$ROOT_DIR/Tests/dns-manager-test.sh"
 /usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Tests/ConfigurationTests.swift" -o "$TEST_BUILD/configuration-tests"

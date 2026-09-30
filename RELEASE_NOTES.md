@@ -1,18 +1,12 @@
-# matveevVpn 1.3.4
+# matveevVpn 1.3.5
 
-- Fixes recovery after a network change when macOS reports a `REACH` summary in
-  `scutil --nwi`. The controller and DNS manager now select an IPv4 interface
-  instead of treating that summary as an interface name.
-- Corrects the physical-network status in exported diagnostics for the same case.
-- Refines spacing and controls in settings and routing windows while keeping the
-  familiar connection, routing and restart controls on the main window.
+- Adds **Receive beta updates** to Settings & Diagnostics. It is off by default.
+- Opting in permits test releases alongside stable updates. Turning it off keeps
+  the installed version until a newer stable release is available.
 
-After updating an existing installation, open **Settings & Diagnostics → Repair
-Service…** and approve the administrator prompt. This replaces the installed
-system scripts with the corrected versions; the component protocol version did
-not change, so the app update alone does not replace them.
-
-Settings, subscription, selected node and routing rules are preserved.
+This stable release retains the 1.3.4 interface and system component. The redesigned
+interface is distributed only in the beta channel. Subscriptions and routing
+settings are preserved; no service repair is required for this update.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

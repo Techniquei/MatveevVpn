@@ -8,25 +8,49 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-appcast
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Verify version tag
+        id: version
         run: |
           version=$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' Scripts/build-dmg.sh)
           test "$GITHUB_REF_NAME" = "v$version"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            echo 'channel=beta' >> "$GITHUB_OUTPUT"
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'channel=stable' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Release version must be X.Y.Z or X.Y.Z-beta.N' >&2
+            exit 1
+          fi
       - name: Validate
         run: ./Scripts/validate.sh
       - name: Build DMG
         run: ./Scripts/build-dmg.sh
+      - name: Preserve the current update feed
+        id: feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stable_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          echo "stable_tag=$stable_tag" >> "$GITHUB_OUTPUT"
+          gh release download "$stable_tag" --repo "$GITHUB_REPOSITORY" --pattern appcast.xml --dir dist
       - name: Sign update feed
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           test -n "$SPARKLE_PRIVATE_KEY" || { echo 'Configure SPARKLE_PRIVATE_KEY before publishing a release.'; exit 1; }
-          bash Scripts/sign-release.sh dist "${GITHUB_REF_NAME#v}"
+          bash Scripts/sign-release.sh dist "${GITHUB_REF_NAME#v}" "${{ steps.version.outputs.channel }}"
+      - name: Verify beta opt-in with Sparkle
+        if: steps.version.outputs.channel == 'beta'
+        run: bash Scripts/test-update-feed.sh dist/appcast.xml
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -36,3 +60,10 @@ jobs:
             dist/*.dmg
             dist/appcast.xml
           fail_on_unmatched_files: true
+          prerelease: ${{ steps.version.outputs.channel == 'beta' }}
+          make_latest: ${{ steps.version.outputs.channel == 'stable' && 'true' || 'false' }}
+      - name: Make the beta item discoverable through the stable feed
+        if: steps.version.outputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.feed.outputs.stable_tag }}" dist/appcast.xml --clobber --repo "$GITHUB_REPOSITORY"

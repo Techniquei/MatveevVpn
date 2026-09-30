@@ -104,3 +104,13 @@ that cleanup and then moves the application to Trash.
 Sparkle replaces only the app. A changed system protocol prompts for a separate
 component update. Developer ID/notarization and live network acceptance require
 an appropriately configured Mac; compilation does not substitute for those tests.
+
+## Update channels
+
+AppUpdater owns the beta preference in app UserDefaults and exposes it directly
+as observable UI state. Beta is disabled by default; opting in permits Sparkle's
+beta channel alongside its always-available default channel. Changing the setting
+reschedules the existing updater cycle. Opting out never downgrades the app.
+Both channels use the same signed appcast. A beta release is a GitHub prerelease
+and its channel-tagged item is also published into the latest stable release's
+appcast so installed clients can discover it. Release jobs are serialized.
