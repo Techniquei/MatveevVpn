@@ -88,6 +88,8 @@ send_action_expect() {
   /usr/bin/printf '%s %s %s\n' "$action" "$token" "$expiry" > "$CONTROL/.command-test"
   /bin/mv -f "$CONTROL/.command-test" "$CONTROL/command"
   wait_for_file_value "$CONTROL/response-$token" "$expected"
+  LAST_COMMAND_EXPIRY="$expiry"
+  LAST_COMMAND_RESPONSE="$CONTROL/response-$token"
 }
 
 # Wi-Fi parameters stay the same while Internet connectivity arrives later.
@@ -212,18 +214,18 @@ send_action_expect off error -1
 [[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
 # A stuck privileged validation must be killed before the same deadline.
 /usr/bin/printf '{"delay_check":true}\n' > "$CONTROL/pending-config.json"
-CHECK_STARTED="$(/usr/bin/ruby -e 'puts Process.clock_gettime(Process::CLOCK_MONOTONIC)')"
 send_action_expect reload error 2
-/usr/bin/ruby - "$CHECK_STARTED" <<'RUBY'
-abort 'Privileged configuration check outlived the operation' unless Process.clock_gettime(Process::CLOCK_MONOTONIC) - ARGV[0].to_f < 2
+/usr/bin/ruby - "$LAST_COMMAND_RESPONSE" "$LAST_COMMAND_EXPIRY" <<'RUBY'
+abort 'Privileged configuration check outlived the operation' unless File.mtime(ARGV[0]).to_f * 1000 < ARGV[1].to_i
 RUBY
 [[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
 # A short remaining budget still restores configuration before rejecting reload.
 /usr/bin/printf '{"delay_run":true}\n' > "$CONTROL/pending-config.json"
-RELOAD_STARTED="$(/usr/bin/ruby -e 'puts Process.clock_gettime(Process::CLOCK_MONOTONIC)')"
-send_action_expect reload error 4
-/usr/bin/ruby - "$RELOAD_STARTED" <<'RUBY'
-abort 'Rollback received a fresh operation budget' unless Process.clock_gettime(Process::CLOCK_MONOTONIC) - ARGV[0].to_f < 4
+# Six seconds forces the delayed new runtime to fail while allowing fixed
+# rollback work on CI. Use response mtime so test polling/tool startup is excluded.
+send_action_expect reload error 6
+/usr/bin/ruby - "$LAST_COMMAND_RESPONSE" "$LAST_COMMAND_EXPIRY" <<'RUBY'
+abort 'Rollback received a fresh operation budget' unless File.mtime(ARGV[0]).to_f * 1000 < ARGV[1].to_i
 RUBY
 if /usr/bin/grep -q delay_run "$RUNTIME/config.json"; then
   echo 'Deadline rejection did not restore the prior configuration' >&2
