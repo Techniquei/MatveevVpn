@@ -21,8 +21,8 @@ DNS_CALL_LOG="$RUNTIME/dns-calls"
 /usr/bin/printf '9.9.9.9\n' > "$CURRENT_DNS"
 : > "$DNS_CALL_LOG"
 /usr/bin/printf '4\n' > "$RUNTIME/tunnel-delay"
-/bin/dd if=/dev/zero of="$RUNTIME/vpn.log" bs=3100000 count=1 2>/dev/null
-/bin/dd if=/dev/zero of="$RUNTIME/vpn.error.log" bs=3100000 count=1 2>/dev/null
+# Seed oversized text logs; binary NUL padding makes grep platform-dependent.
+/usr/bin/ruby -e 'ARGV.each { |path| File.write(path, ("x" * 99 + "\n") * 31000) }' "$RUNTIME/vpn.log" "$RUNTIME/vpn.error.log"
 
 MATVEEV_BASE_DIR="$RUNTIME" \
 MATVEEV_LOG_FILE="$RUNTIME/vpn.log" \
