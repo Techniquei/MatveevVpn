@@ -14,18 +14,27 @@ trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 /usr/bin/xcrun --sdk macosx swiftc -parse-as-library -typecheck -target arm64-apple-macos13.0 "$ROOT_DIR"/Sources/*.swift
 /usr/bin/xcrun swiftc -parse-as-library "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/Updater.swift" "$ROOT_DIR/Tests/UpdaterTests.swift" -o "$TEST_BUILD/updater-tests"
 "$TEST_BUILD/updater-tests"
+# Exercise the real Sparkle delegate callbacks as well as the development build.
+/bin/bash "$ROOT_DIR/Scripts/fetch-sparkle.sh"
+/usr/bin/xcrun swiftc -parse-as-library -target arm64-apple-macos13.0 \
+  -F "$ROOT_DIR/.build/sparkle" -framework Sparkle \
+  -Xlinker -rpath -Xlinker "$ROOT_DIR/.build/sparkle" \
+  "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/Updater.swift" "$ROOT_DIR/Tests/UpdaterTests.swift" -o "$TEST_BUILD/sparkle-updater-tests"
+"$TEST_BUILD/sparkle-updater-tests"
 "$ROOT_DIR/Tests/controller-test.sh"
 "$ROOT_DIR/Tests/dns-manager-test.sh"
 /usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Tests/ConfigurationTests.swift" -o "$TEST_BUILD/configuration-tests"
 "$TEST_BUILD/configuration-tests"
 /usr/bin/xcrun swiftc "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Tests/AppLoggerTests.swift" -o "$TEST_BUILD/app-logger-tests"
 "$TEST_BUILD/app-logger-tests"
-/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Tests/AdBlockRuleStoreTests.swift" -o "$TEST_BUILD/ad-block-rule-tests"
+/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Tests/AdBlockRuleStoreTests.swift" -o "$TEST_BUILD/ad-block-rule-tests"
 "$TEST_BUILD/ad-block-rule-tests"
-/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Sources/Diagnostics.swift" "$ROOT_DIR/Tests/DiagnosticsTests.swift" -o "$TEST_BUILD/diagnostics-tests"
+/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Sources/Diagnostics.swift" "$ROOT_DIR/Tests/DiagnosticsTests.swift" -o "$TEST_BUILD/diagnostics-tests"
 "$TEST_BUILD/diagnostics-tests"
-/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Sources/ConfigurationCoordinator.swift" "$ROOT_DIR/Tests/CoordinatorTests.swift" -o "$TEST_BUILD/coordinator-tests"
+/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Sources/ConfigurationCoordinator.swift" "$ROOT_DIR/Tests/CoordinatorTests.swift" -o "$TEST_BUILD/coordinator-tests"
 "$TEST_BUILD/coordinator-tests"
+/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Tests/SystemServiceTests.swift" -o "$TEST_BUILD/system-service-tests"
+"$TEST_BUILD/system-service-tests"
 /usr/bin/xcrun swiftc -parse-as-library "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/ConfigurationCoordinator.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/Diagnostics.swift" "$ROOT_DIR/Sources/Updater.swift" "$ROOT_DIR/Sources/VPNController.swift" "$ROOT_DIR/Tests/FirstRunBoundaryFakes.swift" "$ROOT_DIR/Tests/FirstRunTests.swift" -o "$TEST_BUILD/first-run-tests"
 "$TEST_BUILD/first-run-tests"
 /usr/bin/xcrun swiftc -parse-as-library -target arm64-apple-macos13.0 "$ROOT_DIR/Sources/WindowCloseControl.swift" "$ROOT_DIR/Tests/WindowCloseControlTests.swift" -o "$TEST_BUILD/window-close-tests"

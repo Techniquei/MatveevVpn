@@ -104,18 +104,58 @@ reported as connected. External IP checks are separate, bounded requests. They
 run after changes or on explicit request, never on the two-second status timer.
 
 Node latency is measured automatically when the app starts and again when a
-node is selected. Probes are bound to the physical network interface so the TUN
+node is selected. The selection probe runs in the background after the configuration
+transaction finishes, so it does not delay unlocking user operations. A new individual
+probe cancels the previous one; cancelled probes do not publish their results.
+The four concurrent workers in a latency batch share a fifteen-second deadline;
+no further nodes are queued after it expires, and each probe uses the remaining budget.
+Probes are bound to the physical network interface so the TUN
 cannot report a local connect time for an alternate node. Three ICMP packets
 provide the average RTT; nodes that block ICMP use one direct, interface-bound
-TCP handshake as a clearly labelled fallback. While the VPN is expected to be on, a bounded tunnel-DNS probe
+TCP handshake as a fallback. The UI displays latency without the probe method. While the VPN is expected to be on, a bounded tunnel-DNS probe
 runs every 15 seconds. Three consecutive failures start recovery: two restarts
 of the current node, then up to three alternate nodes ordered by known TCP
 latency. A persistent circuit breaker permits at most three actual node switches
 in ten minutes. Exhausting a recovery cycle surfaces an error and schedules the
 next cycle after 30 seconds without clearing the desired-on state. The privileged
 controller independently retries a failing runtime every 30 seconds, including
-when the UI is absent. A physical-network change after wake clears the delay and
-triggers the next startup attempt immediately.
+when the UI is absent. If startup DNS fails on both the VPN and the explicitly direct
+diagnostic domain, the controller keeps the engine alive in `waiting for network`.
+Its existing five-second watchdog checks DNS again, so Internet can become available
+without an IP or gateway change or another engine restart. If direct DNS recovers but
+VPN DNS still fails, normal node retry/failover resumes. `starting` and `waiting for network` leave the app's controls
+available and suppress competing UI recovery and startup reconciliation. The app gives
+launchd one 15-second startup window before escalating an unpublished initial status.
+A healthy tunnel check clears a pending automatic-recovery error even when the controller
+restored the connection itself; unrelated user-operation errors remain intact.
+A physical-network change after wake clears the delay and triggers the next startup
+attempt immediately. Every startup attempt shares one ten-second readiness budget
+across TUN and DNS, reserving time for each bounded DNS query. Exceeding that budget
+fails the attempt; offline diagnosis and cleanup/rollback follow separately. Both
+engines receive TERM together and share one five-second shutdown grace, polled every
+100 ms. User operations and each automatic-recovery cycle have one fifteen-second
+deadline shared by configuration generation/validation, controller actions, probes and
+rollback. Each command carries its absolute expiry, so queueing does not reset the
+budget. The controller converts the remaining time to a monotonic deadline and leaves
+one second for acknowledgement and settings commit. Reload reserves half its remaining
+time for rollback; cleanup kills engines that outlive the remaining grace. A restored
+configuration can remain stopped for the watchdog to retry when its readiness budget
+is exhausted. Validation/probe subprocesses are terminated at their remaining deadline.
+Failure-context collection runs after UI unlocking. The macOS administrator dialog and
+privileged install/uninstall are separate OS lifecycle operations; their existing
+transaction/authorization handling is preserved.
+Startup checks TUN readiness immediately and polls for up to six seconds, then confirms
+tunnel DNS; it has no fixed initial sleep. Both required engines must stay alive during
+these checks, and reload retains its existing rollback on failure. Monotonic millisecond
+timings cover configuration generation/validation, runtime launch, DNS readiness and
+shutdown (including DNS restoration). They use the existing bounded app/runtime logs;
+controller timings are also included in exported runtime diagnostics. No network work
+or timing probes were added to the app's status timer.
+Fixed actions and settings schema remain unchanged. Controller compatibility version
+14 requires the deadline field in commands; installations of version 13 or earlier need
+the system component Update action or Repair Service before bounded operations can run.
+Watchdog timestamps are recorded after controller work finishes, so a slow startup or
+reload is not mistaken for sleep and followed by another restart.
 
 The user-readable event log lives under `~/Library/Logs/matveevVpn`. Each append
 atomically retains at most 3,000,000 bytes, and Settings or an error action exports its bytes
@@ -128,8 +168,9 @@ log has the same hard maximum. Each engine stream uses one persistent writer,
 with a shared file lock for concurrent writers. Rotation leaves ten percent
 headroom to avoid copying a full log for each subsequent INFO line. This keeps
 traffic logging from filling the engine output pipe and stalling DNS processing.
-Controller compatibility version 13 requires this streaming writer for INFO
-preset telemetry. Version 12 cannot safely consume that configuration under load.
+The streaming writer remains required for INFO preset telemetry; version 12 cannot
+safely consume that configuration under load. Version 14 additionally enforces command
+deadlines; it retains the streaming writer introduced in version 13.
 Existing installations display the system component Update action (also available
 through Repair Service); health checks and startup reconciliation wait for that
 update. Fixed actions and settings schema remain unchanged.
@@ -145,6 +186,10 @@ that cleanup and then moves the application to Trash.
 Sparkle replaces only the app. A changed system protocol prompts for a separate
 component update. Developer ID/notarization and live network acceptance require
 an appropriately configured Mac; compilation does not substitute for those tests.
+AppUpdater requests normal AppKit termination on the next main-queue turn after
+Sparkle's relaunch callback. This lets Sparkle send the install-and-relaunch
+instruction first and avoids relying on an external quit event. Preparing an
+update or choosing installation on quit does not close the app.
 
 ## Update channels
 

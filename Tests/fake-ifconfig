@@ -1,0 +1,6 @@
+#!/bin/bash
+
+if [[ -f "$MATVEEV_BASE_DIR/tunnel-ready" && -f "$MATVEEV_BASE_DIR/run/sing-box.pid" ]] &&
+   [[ "$(cat "$MATVEEV_BASE_DIR/tunnel-ready")" == "$(cat "$MATVEEV_BASE_DIR/run/sing-box.pid")" ]]; then
+  printf 'utun99: flags=8051\n\tinet 198.18.0.1 netmask 0xfffffffe\n'
+fi

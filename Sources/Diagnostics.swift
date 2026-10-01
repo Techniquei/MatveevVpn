@@ -12,8 +12,7 @@ struct NodeProbeResult: Equatable, Sendable {
     var displayText: String {
         switch outcome {
         case .reachable:
-            let latency = latencyMilliseconds.map { "\($0) ms" } ?? "Reachable"
-            return latency + (method == .icmp ? " · ping" : " · TCP")
+            return latencyMilliseconds.map { "\($0) ms" } ?? "Reachable"
         case .unreachable: return "Unreachable"
         case .timedOut: return "Timed out"
         case .noDirectInterface: return "No direct interface"
@@ -26,8 +25,9 @@ enum NodeProbe {
     // Bind every probe to the physical interface so an active TUN cannot
     // report its local TCP acceptance time as the remote node's latency.
     static func measure(_ node: VPNNode, timeout: TimeInterval = 5) async -> NodeProbeResult {
+        let deadline = Date().addingTimeInterval(timeout)
         if Task.isCancelled { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
-        guard let interface = await physicalInterface() else {
+        guard let interface = await physicalInterface(until: deadline) else {
             return NodeProbeResult(outcome: .noDirectInterface, latencyMilliseconds: nil, method: nil)
         }
 
@@ -35,7 +35,8 @@ enum NodeProbe {
         let ping = await Command.run("/sbin/ping", [
             "-n", "-q", "-b", interface, "-c", "3", "-i", "0.2",
             "-W", "700", "-t", String(pingTimeout), node.host
-        ])
+        ], timeout: deadline.timeIntervalSinceNow)
+        if Date() >= deadline { return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil) }
         if let average = averagePingMilliseconds(ping.output) {
             return NodeProbeResult(outcome: .reachable, latencyMilliseconds: average, method: .icmp)
         }
@@ -44,7 +45,7 @@ enum NodeProbe {
         let started = Date()
         let tcp = await Command.run("/usr/bin/nc", [
             "-4", "-b", interface, "-G", "3", "-w", "3", "-z", node.host, String(node.port)
-        ])
+        ], timeout: deadline.timeIntervalSinceNow)
         guard !Task.isCancelled else { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
         if tcp.status == 0 {
             let elapsed = max(1, Int(Date().timeIntervalSince(started) * 1_000))
@@ -53,8 +54,8 @@ enum NodeProbe {
         return NodeProbeResult(outcome: ping.status == 0 ? .unreachable : .timedOut, latencyMilliseconds: nil, method: nil)
     }
 
-    private static func physicalInterface() async -> String? {
-        let result = await Command.run("/usr/sbin/scutil", ["--nwi"])
+    private static func physicalInterface(until deadline: Date) async -> String? {
+        let result = await Command.run("/usr/sbin/scutil", ["--nwi"], timeout: deadline.timeIntervalSinceNow)
         guard result.status == 0 else { return nil }
         return physicalInterface(in: result.output)
     }

@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.2"
+    static let releaseVersion = "1.4.0-beta.3"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -41,6 +41,7 @@ final class VPNController: ObservableObject {
     private var loadFailed = false
     private var previouslyRunning: Bool?
     private var connectionCheck: Task<Void, Never>?
+    private var nodeProbe: Task<Void, Never>?
     private var healthCheck: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
     private var adBlockRefresh: Task<Void, Never>?
@@ -91,13 +92,22 @@ final class VPNController: ObservableObject {
         isInstalled = service.installed
         isRunning = service.running
         let wasRunning = previouslyRunning
+        // launchd may not have published its first status yet when the UI opens.
+        if wasRunning == nil && !isRunning && state.desiredOn {
+            nextRecoveryAttempt = Date().addingTimeInterval(SystemService.operationTimeout)
+            message = "Connecting…"
+        }
         let recoverySuppressed = Date() < recoverySuppressedUntil
-        if wasRunning == true && !isRunning && state.desiredOn && !recoverySuppressed {
+        if wasRunning == true && !isRunning && state.desiredOn && !recoverySuppressed && !service.isConnecting {
             AppLogger.shared.write("VPN runtime stopped unexpectedly")
             message = autoFailoverEnabled ? "Connection interrupted. Starting safe recovery…" : "VPN connection interrupted."
             if notificationsEnabled {
                 notify("VPN connection interrupted", autoFailoverEnabled ? "Trying to restore the connection safely." : "Open matveevVpn to check the service.")
             }
+        }
+        if wasRunning == false && isRunning {
+            lastHealthCheck = .distantPast
+            if failureReport.isEmpty { message = "" }
         }
         previouslyRunning = isRunning
         needsUpgrade = isInstalled && service.currentVersion != SystemService.version
@@ -106,7 +116,11 @@ final class VPNController: ObservableObject {
             message = isInstalled && state.selectedNodeID != nil ? "" : "Add a subscription to get started."
         }
         if !recoverySuppressed && !isRunning && state.desiredOn && isInstalled && !needsUpgrade {
-            beginAutomaticRecovery(reason: "the VPN runtime stopped")
+            if service.isConnecting {
+                message = service.runtimeStatus == "waiting for network" ? "Waiting for network…" : "Connecting…"
+            } else {
+                beginAutomaticRecovery(reason: "the VPN runtime stopped")
+            }
         } else if isRunning && !needsUpgrade {
             scheduleHealthCheckIfNeeded()
             scheduleAdBlockRefreshIfNeeded()
@@ -126,15 +140,18 @@ final class VPNController: ObservableObject {
         automaticRoutingLastUpdate = service.automaticRoutingLastUpdate
     }
 
-    private func perform(_ operationName: String = "Apply changes", allowRecovery: Bool = false, _ operation: @escaping () async throws -> Void) {
+    private func perform(_ operationName: String = "Apply changes", allowRecovery: Bool = false, _ operation: @escaping (Date) async throws -> Void) {
         guard !isBusy, !loadFailed || allowRecovery else { return }
+        let deadline = Date().addingTimeInterval(SystemService.operationTimeout)
         isBusy = true
+        nextRecoveryAttempt = .distantPast
+        recoveryFailureNotified = false
         failureReport = ""
         message = "Applying changes…"
         AppLogger.shared.write("operation started: \(operationName)")
         Task {
             do {
-                try await operation()
+                try await operation(deadline)
                 message = ""
                 AppLogger.shared.write("operation completed: \(operationName)")
             }
@@ -144,16 +161,16 @@ final class VPNController: ObservableObject {
                 AppLogger.shared.write("automatic recovery suppressed for 30 seconds after failed operation: \(operationName)")
                 message = error.localizedDescription; rulesMessage = message
                 failureReport = error.localizedDescription
-                let context = await connectionContext()
-                AppLogger.shared.write(makeLogReport(operation: operationName, error: error) + "\n" + context)
+                let report = makeLogReport(operation: operationName, error: error)
+                Task { AppLogger.shared.write(report + "\n" + (await connectionContext())) }
             }
             isBusy = false
             refresh()
         }
     }
 
-    private func commit(_ next: SavedState) async throws {
-        state = try await coordinator.apply(next, previous: state)
+    private func commit(_ next: SavedState, until deadline: Date) async throws {
+        state = try await coordinator.apply(next, previous: state, until: deadline)
         checkConnection()
     }
 
@@ -163,14 +180,15 @@ final class VPNController: ObservableObject {
         let snapshot = state
         Task {
             do {
+                let deadline = Date().addingTimeInterval(SystemService.operationTimeout)
                 let stage = try temporaryDirectory()
                 defer { try? FileManager.default.removeItem(at: stage) }
-                let config = try await self.service.generate(snapshot, at: stage)
-                guard !self.service.configurationMatches(config), !self.isBusy else { return }
+                let config = try await self.service.generate(snapshot, at: stage, until: deadline)
+                guard !self.service.configurationMatches(config), !self.isBusy, !self.service.isConnecting else { return }
                 self.isBusy = true
                 self.message = "Updating the installed configuration…"
                 defer { self.isBusy = false; self.refresh() }
-                try await self.service.deploy(config)
+                try await self.service.deploy(config, until: deadline)
                 self.message = "Configuration updated."
                 self.checkConnection()
             } catch {
@@ -182,26 +200,26 @@ final class VPNController: ObservableObject {
     }
 
     func run(_ action: String) {
-        perform(action == "off" ? "Disconnect VPN" : "Connect VPN") {
+        perform(action == "off" ? "Disconnect VPN" : "Connect VPN") { deadline in
             let wasRunning = self.service.running
             var next = self.state
             next.desiredOn = action != "off"
             if action != "off" && self.needsUpgrade {
-                try await self.commit(next)
+                try await self.commit(next, until: deadline)
                 return
             }
             if action != "off" {
                 try self.store.save(next)
                 self.state = next
             }
-            do { try await self.service.send(action) }
+            do { try await self.service.send(action, until: deadline) }
             catch {
-                if action == "off" { try? await self.service.send(wasRunning ? "on" : "off") }
+                if action == "off" { try? await self.service.send(wasRunning ? "on" : "off", until: deadline) }
                 throw error
             }
             if action == "off" {
                 do { try self.store.save(next) }
-                catch { try? await self.service.send(wasRunning ? "on" : "off"); throw error }
+                catch { try? await self.service.send(wasRunning ? "on" : "off", until: deadline); throw error }
             }
             self.state = next
             if action == "off" {
@@ -214,7 +232,7 @@ final class VPNController: ObservableObject {
     }
     func changeMode(_ mode: RoutingMode) {
         var next = state; next.rules.mode = mode
-        perform { try await self.commit(next) }
+        perform { deadline in try await self.commit(next, until: deadline) }
     }
     func applyRoutingRules(automaticRoutingEnabled: Bool, automaticServices: Set<String>, adBlockingEnabled: Bool, domains: [String], applications: [String], paths: [String]) {
         var next = state
@@ -228,16 +246,16 @@ final class VPNController: ObservableObject {
         next.rules.automaticRoutingEnabled = automaticRoutingEnabled
         next.rules.automaticServices = AutomaticRoutingCatalog.services.filter(automaticServices.contains)
         next.rules.adBlockingEnabled = adBlockingEnabled
-        perform { try await self.commit(next); self.rulesMessage = "Rules applied." }
+        perform { deadline in try await self.commit(next, until: deadline); self.rulesMessage = "Rules applied." }
     }
     func selectNode(_ id: String) {
         guard state.selectedNodeID != id || !state.desiredOn || !isRunning else { return }
         var next = state
         next.selectedNodeID = id
         next.desiredOn = true
-        perform("Connect to server") {
-            try await self.commit(next)
-            await self.probeNode(id)
+        perform("Connect to server") { deadline in
+            try await self.commit(next, until: deadline)
+            self.probeCandidateNode(id)
         }
     }
     private func prepareConnection() {
@@ -254,9 +272,9 @@ final class VPNController: ObservableObject {
         var next = state
         next.selectedNodeID = nil
         next.desiredOn = false
-        perform("Install system component") {
+        perform("Install system component") { deadline in
             self.message = "Waiting for administrator approval and installing the system component…"
-            self.state = try await self.coordinator.apply(next, previous: self.state)
+            self.state = try await self.coordinator.apply(next, previous: self.state, until: deadline)
         }
     }
 
@@ -268,7 +286,7 @@ final class VPNController: ObservableObject {
     func fetchSubscription() {
         let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let useHappCompatibility = happCompatibilityEnabled
-        perform("Load subscription") {
+        perform("Load subscription") { _ in
             try await self.loadCandidateSubscription(input, useHappCompatibility: useHappCompatibility)
         }
     }
@@ -329,7 +347,7 @@ final class VPNController: ObservableObject {
     func applySubscription() {
         let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let useHappCompatibility = happCompatibilityEnabled
-        perform(isInstalled ? "Apply subscription" : "Install and connect") {
+        perform(isInstalled ? "Apply subscription" : "Install and connect") { deadline in
             if input != self.loadedURL || self.candidateSubscription.isEmpty {
                 try await self.loadCandidateSubscription(input, useHappCompatibility: useHappCompatibility)
             }
@@ -343,7 +361,7 @@ final class VPNController: ObservableObject {
             next.lastRefresh = Date()
             if !self.isInstalled || self.state.selectedNodeID == nil { next.desiredOn = true }
             self.message = self.isInstalled ? "Applying subscription…" : "Installing the system component…"
-            try await self.commit(next)
+            try await self.commit(next, until: deadline)
             self.showConnection = false
             self.probeCandidateNode(selectedID)
         }
@@ -401,6 +419,7 @@ final class VPNController: ObservableObject {
                       self.service.running, !self.isBusy else { return }
 
                 self.isBusy = true
+                let deadline = Date().addingTimeInterval(SystemService.operationTimeout)
                 self.message = "Updating advertising rules…"
                 defer {
                     self.isBusy = false
@@ -410,9 +429,9 @@ final class VPNController: ObservableObject {
                 let snapshot = self.state
                 let stage = try temporaryDirectory()
                 defer { try? FileManager.default.removeItem(at: stage) }
-                let config = try await self.service.generate(snapshot, at: stage)
+                let config = try await self.service.generate(snapshot, at: stage, until: deadline)
                 if !self.service.configurationMatches(config) {
-                    try await self.service.deploy(config)
+                    try await self.service.deploy(config, until: deadline)
                     self.checkConnection()
                 }
                 self.adBlockRulesNeedApply = false
@@ -448,6 +467,7 @@ final class VPNController: ObservableObject {
     private func startNodeTest(_ nodes: [VPNNode]) {
         guard !testingNodes else { return }
         guard !nodes.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(SystemService.operationTimeout)
         testingNodes = true
         AppLogger.shared.write("node latency check started; count=\(nodes.count)")
         Task {
@@ -455,11 +475,11 @@ final class VPNController: ObservableObject {
             await withTaskGroup(of: (String, NodeProbeResult).self) { group in
                 var iterator = nodes.makeIterator()
                 for _ in 0..<4 {
-                    if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node)) } }
+                    if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
                 }
                 for await (id, result) in group {
                     self.probeResults[id] = result
-                    if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node)) } }
+                    if Date() < deadline, let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
                 }
             }
             let reachable = nodes.filter { self.probeResults[$0.id]?.isReachable == true }.count
@@ -478,8 +498,9 @@ final class VPNController: ObservableObject {
     }
 
     func probeCandidateNode(_ id: String?) {
+        nodeProbe?.cancel()
         guard let id else { return }
-        Task { await probeNode(id) }
+        nodeProbe = Task { await probeNode(id) }
     }
 
     private func scheduleHealthCheckIfNeeded() {
@@ -490,12 +511,19 @@ final class VPNController: ObservableObject {
             let healthy = await Self.tunnelDNSReachable()
             guard !Task.isCancelled else { return }
             self.healthCheck = nil
-            guard self.state.desiredOn, self.service.running else { return }
+            guard !self.isBusy, self.state.desiredOn, self.service.running else { return }
             if healthy {
                 if self.consecutiveHealthFailures > 0 {
                     AppLogger.shared.write("tunnel health restored after \(self.consecutiveHealthFailures) failed checks")
                 }
                 self.consecutiveHealthFailures = 0
+                if self.nextRecoveryAttempt != .distantPast {
+                    self.nextRecoveryAttempt = .distantPast
+                    self.recoveryFailureNotified = false
+                    self.failureReport = ""
+                    self.message = "Connection restored on the current node."
+                    AppLogger.shared.write("tunnel health confirmed recovery by the controller")
+                }
             } else {
                 self.consecutiveHealthFailures += 1
                 AppLogger.shared.write("tunnel health check failed; consecutive=\(self.consecutiveHealthFailures)")
@@ -509,17 +537,18 @@ final class VPNController: ObservableObject {
     private func beginAutomaticRecovery(reason: String) {
         guard autoFailoverEnabled, recoveryTask == nil, !isBusy, state.desiredOn,
               Date() >= recoverySuppressedUntil, Date() >= nextRecoveryAttempt,
-              isInstalled, !needsUpgrade,
+              isInstalled, !needsUpgrade, !service.isConnecting,
               state.selectedNodeID != nil else { return }
         healthCheck?.cancel()
         healthCheck = nil
         recoveryTask = Task {
+            let deadline = Date().addingTimeInterval(SystemService.operationTimeout)
             self.isBusy = true
             self.isRecovering = true
             self.message = "Connection problem detected. Trying to recover…"
             AppLogger.shared.write("automatic recovery started: \(reason)")
             do {
-                try await self.recoverConnection()
+                try await self.recoverConnection(until: deadline)
                 try Task.checkCancellation()
                 self.failureReport = ""
                 self.nextRecoveryAttempt = .distantPast
@@ -528,7 +557,7 @@ final class VPNController: ObservableObject {
                 AppLogger.shared.write("automatic recovery cancelled by the user")
             } catch {
                 if !Task.isCancelled && self.state.desiredOn {
-                    await self.scheduleRetryAfterRecoveryFailure(error)
+                    self.scheduleRetryAfterRecoveryFailure(error)
                 }
             }
             self.consecutiveHealthFailures = 0
@@ -585,16 +614,19 @@ final class VPNController: ObservableObject {
         }
     }
 
-    private func recoverConnection() async throws {
+    private func recoverConnection(until deadline: Date) async throws {
         for attempt in 1...Self.currentNodeRestartAttempts {
             try Task.checkCancellation()
+            try SystemService.checkDeadline(deadline)
+            if service.isConnecting { return }
             AppLogger.shared.write("automatic recovery: restart current node attempt \(attempt)/\(Self.currentNodeRestartAttempts)")
-            do { try await service.send("restart") }
+            do { try await service.send("restart", until: deadline) }
             catch {
                 AppLogger.shared.write("automatic restart \(attempt) was rejected: \(error.localizedDescription)\nDetails:\n\(rawErrorDetails(error))")
+                try Task.checkCancellation()
+                continue
             }
-            try await Task.sleep(nanoseconds: 2_000_000_000)
-            let tunnelHealthy = await Self.tunnelDNSReachable()
+            let tunnelHealthy = await Self.tunnelDNSReachable(until: deadline)
             if service.running && tunnelHealthy {
                 message = "Connection restored on the current node."
                 AppLogger.shared.write("automatic recovery succeeded on the current node")
@@ -615,8 +647,12 @@ final class VPNController: ObservableObject {
             guard checked < Self.maximumNodeSwitchesPerWindow else { break }
             checked += 1
             try Task.checkCancellation()
+            try SystemService.checkDeadline(deadline)
+            if service.isConnecting { return }
 
-            let probe = await NodeProbe.measure(candidate, timeout: 3)
+            let probe = await NodeProbe.measure(candidate, timeout: min(3, deadline.timeIntervalSinceNow))
+            try Task.checkCancellation()
+            try SystemService.checkDeadline(deadline)
             probeResults[candidate.id] = probe
             AppLogger.shared.write("failover candidate \(candidate.id.prefix(8)) probe: \(probe.displayText)")
             guard probe.isReachable else { continue }
@@ -629,9 +665,8 @@ final class VPNController: ObservableObject {
             next.desiredOn = true
             AppLogger.shared.write("automatic failover switching to node \(candidate.id.prefix(8))")
             do {
-                state = try await coordinator.apply(next, previous: state)
-                try await Task.sleep(nanoseconds: 2_000_000_000)
-                let tunnelHealthy = await Self.tunnelDNSReachable()
+                state = try await coordinator.apply(next, previous: state, until: deadline)
+                let tunnelHealthy = await Self.tunnelDNSReachable(until: deadline)
                 if service.running && tunnelHealthy {
                     message = "Automatically switched to \(candidate.name)."
                     AppLogger.shared.write("automatic failover succeeded on node \(candidate.id.prefix(8))")
@@ -643,6 +678,7 @@ final class VPNController: ObservableObject {
             }
         }
 
+        if service.isConnecting { return }
         throw VPNError.message("Automatic recovery failed after two restarts and \(checked) alternate-node attempts.")
     }
 
@@ -660,14 +696,14 @@ final class VPNController: ObservableObject {
         return true
     }
 
-    private func scheduleRetryAfterRecoveryFailure(_ error: Error) async {
+    private func scheduleRetryAfterRecoveryFailure(_ error: Error) {
         nextRecoveryAttempt = Date().addingTimeInterval(Self.recoveryRetryInterval)
         let seconds = Int(Self.recoveryRetryInterval)
         let recoveryError = VPNError.message("VPN is still unavailable. Automatic recovery will retry in \(seconds) seconds. \(error.localizedDescription)")
         message = recoveryError.localizedDescription
         failureReport = recoveryError.localizedDescription
-        let context = await connectionContext()
-        AppLogger.shared.write(makeLogReport(operation: "Automatic connection recovery", error: recoveryError) + "\n" + context)
+        let report = makeLogReport(operation: "Automatic connection recovery", error: recoveryError)
+        Task { AppLogger.shared.write(report + "\n" + (await connectionContext())) }
         if notificationsEnabled && !recoveryFailureNotified {
             recoveryFailureNotified = true
             notify("VPN connection unavailable", "Automatic recovery will keep retrying every \(seconds) seconds.")
@@ -707,13 +743,13 @@ final class VPNController: ObservableObject {
         }
         return servers.isEmpty ? "unavailable" : servers.joined(separator: ", ")
     }
-    private nonisolated static func tunnelDNS() async -> String {
-        let result = await Command.run("/usr/bin/dig", ["+time=3", "+tries=1", "+short", "@198.18.0.2", "api4.ipify.org", "A"])
+    private nonisolated static func tunnelDNS(until deadline: Date = Date().addingTimeInterval(3)) async -> String {
+        let result = await Command.run("/usr/bin/dig", ["+time=3", "+tries=1", "+short", "@198.18.0.2", "api4.ipify.org", "A"], timeout: deadline.timeIntervalSinceNow)
         let addresses = result.output.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         return result.status == 0 && !addresses.isEmpty ? "reachable" : "unavailable"
     }
-    private nonisolated static func tunnelDNSReachable() async -> Bool {
-        await tunnelDNS() == "reachable"
+    private nonisolated static func tunnelDNSReachable(until deadline: Date = Date().addingTimeInterval(3)) async -> Bool {
+        await tunnelDNS(until: deadline) == "reachable"
     }
     func exportLog() {
         let panel = NSSavePanel()
@@ -723,7 +759,7 @@ final class VPNController: ObservableObject {
             var contents = AppLogger.shared.contents()
             if let runtime = service.recentRuntimeErrorDetails() {
                 if !contents.hasSuffix("\n") { contents += "\n" }
-                contents += "\nLatest captured privileged VPN runtime failure\n================================================\n\(runtime)\n"
+                contents += "\nPrivileged VPN runtime diagnostics\n================================================\n\(runtime)\n"
             }
             let data = Data(contents.utf8)
             try data.write(to: destination, options: .atomic)
@@ -812,9 +848,9 @@ final class VPNController: ObservableObject {
     }
 
     func repair() {
-        perform {
+        perform { deadline in
             let stage = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: stage) }
-            let config = try await self.service.generate(self.state, at: stage)
+            let config = try await self.service.generate(self.state, at: stage, until: deadline)
             try await self.service.install(config, desiredOn: self.state.desiredOn)
             self.checkConnection()
         }
@@ -831,12 +867,12 @@ final class VPNController: ObservableObject {
         do {
             let rules = try JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: url))
             var next = state; next.rules = rules
-            perform { try await self.commit(next) }
+            perform { deadline in try await self.commit(next, until: deadline) }
         } catch { message = "The file is not a valid routing configuration." }
     }
     func resetSettings() {
-        perform(allowRecovery: true) {
-            if self.service.installed { try await self.service.send("reset") }
+        perform(allowRecovery: true) { deadline in
+            if self.service.installed { try await self.service.send("reset", until: deadline) }
             let next = try self.store.freshState(); try self.store.save(next); self.state = next
             self.loadFailed = false
             try self.store.finishTransaction()
@@ -849,7 +885,7 @@ final class VPNController: ObservableObject {
         }
     }
     func runUninstall() {
-        perform {
+        perform { _ in
             let script = self.service.payload.appendingPathComponent("uninstall-service.sh")
             let result = await Command.run("/bin/bash", [script.path, "--yes"])
             guard result.status == 0 else { throw VPNError.message("Uninstall was cancelled or failed.") }

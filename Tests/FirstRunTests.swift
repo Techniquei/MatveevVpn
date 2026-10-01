@@ -192,6 +192,137 @@ import Foundation
         selection.loadAutomaticRoutingUpdate()
         precondition(selection.automaticRoutingLastUpdate == nil, "A missing date must not retain stale presentation state")
 
+        Command.directInterfaceAvailable = true
+        Command.holdNextPing = true
+        selection.probeResults.removeValue(forKey: nodes[1].id)
+        selection.selectNode(nodes[1].id)
+        for _ in 0..<300 {
+            if Command.pendingPing != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        precondition(Command.pendingPing != nil, "The selected node's latency probe must have started")
+        precondition(!selection.isBusy && selection.isRunning && selection.message.isEmpty,
+                     "A pending latency probe must not keep a successful connection busy")
+        let committedWhileProbing = try selectionStore.load()
+        precondition(selection.state.selectedNodeID == nodes[1].id && committedWhileProbing.selectedNodeID == nodes[1].id,
+                     "The node must be committed before its latency probe completes")
+        selection.selectNode(nodes[0].id)
+        try await wait(selection)
+        precondition(selection.state.selectedNodeID == nodes[0].id,
+                     "Another node switch must be accepted while the previous latency probe is pending")
+        Command.pendingPing?.resume(returning: CommandResult(status: 0, output: "round-trip min/avg/max/stddev = 10.0/99.0/100.0/1.0 ms"))
+        Command.pendingPing = nil
+        for _ in 0..<300 {
+            if Command.heldPingCompleted && selection.probeResults[nodes[0].id]?.latencyMilliseconds == 20 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        precondition(Command.heldPingCompleted && selection.probeResults[nodes[0].id]?.latencyMilliseconds == 20)
+        precondition(selection.probeResults[nodes[1].id] == nil,
+                     "A superseded probe must not publish its result after a newer selection")
+        Command.directInterfaceAvailable = false
+
+        SystemService.reset()
+        SystemService.installedValue = true
+        SystemService.runtimeStatusValue = "starting"
+        let recoveryStore = makeStore("late-network-recovery")
+        var recoveryState = old
+        recoveryState.desiredOn = true
+        recoveryState.subscription = first
+        recoveryState.selectedNodeID = nodes[0].id
+        try recoveryStore.save(recoveryState)
+        let recovery = model(recoveryStore)
+        recovery.autoFailoverEnabled = true
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(!recovery.isBusy && SystemService.actions.isEmpty, "Startup must not compete with the controller")
+        SystemService.runtimeStatusValue = "waiting for network"
+        recovery.refresh()
+        precondition(recovery.message == "Waiting for network…" && !recovery.isBusy)
+        SystemService.runningValue = true
+        SystemService.runtimeStatusValue = nil
+        Command.tunnelDNSAvailable = true
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(recovery.isRunning && recovery.failureReport.isEmpty && SystemService.actions.isEmpty)
+
+        SystemService.runningValue = false
+        SystemService.runtimeStatusValue = "waiting to retry"
+        SystemService.rejectRestart = true
+        Command.tunnelDNSRequests = 0
+        Command.holdNextContext = true
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 10_000_000)
+        try await wait(recovery)
+        precondition(!recovery.failureReport.isEmpty && recovery.state.desiredOn)
+        precondition(SystemService.actions == ["restart", "restart"] && Command.tunnelDNSRequests == 0,
+                     "Rejected startups must not wait or probe a stopped tunnel")
+        precondition(Command.pendingContext != nil && !recovery.isBusy,
+                     "Collecting failure context must not keep the UI blocked")
+        Command.pendingContext?.resume(returning: CommandResult(status: 1, output: ""))
+        Command.pendingContext = nil
+        SystemService.runningValue = true
+        SystemService.runtimeStatusValue = nil
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(recovery.failureReport.isEmpty && recovery.message == "Connection restored on the current node.",
+                     "Confirmed controller recovery must clear the old automatic-recovery error")
+        recovery.failureReport = "Unrelated settings error"
+        SystemService.runningValue = false
+        SystemService.runtimeStatusValue = "starting"
+        recovery.refresh()
+        SystemService.runningValue = true
+        SystemService.runtimeStatusValue = nil
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(recovery.failureReport == "Unrelated settings error")
+        SystemService.runningValue = false
+        SystemService.runtimeStatusValue = "waiting to retry"
+        SystemService.waitForNetworkOnRestart = true
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 10_000_000)
+        try await wait(recovery)
+        precondition(SystemService.actions.count == 3 && !recovery.isBusy && recovery.message == "Waiting for network…")
+        recovery.run("off")
+        try await wait(recovery)
+        let turnedOff = try recoveryStore.load()
+        precondition(!turnedOff.desiredOn && !recovery.isRunning)
+        recovery.state.desiredOn = true
+        SystemService.runningValue = true
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        SystemService.runningValue = false
+        SystemService.runtimeStatusValue = "waiting to retry"
+        SystemService.waitForNetworkOnRestart = false
+        SystemService.restartDelay = 8
+        SystemService.restartDeadlines = []
+        let recoveryStarted = Date()
+        recovery.refresh()
+        try await Task.sleep(nanoseconds: 10_000_000)
+        while recovery.isBusy && Date().timeIntervalSince(recoveryStarted) < 16 {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        precondition(!recovery.isBusy && Date().timeIntervalSince(recoveryStarted) < 15.4,
+                     "Automatic recovery must unlock within one fifteen-second budget")
+        precondition(SystemService.restartDeadlines.count == 2 && SystemService.restartDeadlines[0] == SystemService.restartDeadlines[1],
+                     "A second restart must not reset the recovery deadline")
+        recovery.autoFailoverEnabled = false
+
+        SystemService.reset()
+        SystemService.operationTimeout = 0.1
+        Command.directInterfaceAvailable = true
+        Command.pingDelay = 0.2
+        let batchStore = makeStore("bounded-probe-batch")
+        var batchState = old
+        batchState.desiredOn = false
+        batchState.subscription = (0..<7).map { first.replacingOccurrences(of: "first.example.invalid", with: "node-\($0).example.invalid") }.joined(separator: "\n")
+        try batchStore.save(batchState)
+        let batch = model(batchStore)
+        let batchStarted = Date()
+        while batch.testingNodes && Date().timeIntervalSince(batchStarted) < 0.5 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        precondition(!batch.testingNodes && batch.probeResults.count == 4,
+                     "A latency batch must stop queueing nodes after its shared deadline")
+        Command.pingDelay = 0
         SystemService.reset()
         SystemService.installedValue = true
         SystemService.runningValue = true
@@ -209,10 +340,10 @@ import Foundation
         upgrade.repair()
         try await wait(upgrade)
         let afterUpgrade = try upgradeStore.load()
-        precondition(!upgrade.needsUpgrade && SystemService.currentVersionValue == "13" && SystemService.installs == 1)
+        precondition(!upgrade.needsUpgrade && SystemService.currentVersionValue == SystemService.version && SystemService.installs == 1)
         precondition(afterUpgrade.subscription == beforeUpgrade.subscription && afterUpgrade.selectedNodeID == beforeUpgrade.selectedNodeID && afterUpgrade.desiredOn,
                      "Updating the logger must retain the subscription, selected node and desired connection")
-        SystemService.currentVersionValue = "12"
+        SystemService.currentVersionValue = "13"
         upgrade.refresh()
         upgrade.run("restart")
         try await wait(upgrade)

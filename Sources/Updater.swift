@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 #if canImport(Sparkle)
 import Sparkle
 #endif
@@ -9,13 +10,16 @@ final class AppUpdater: NSObject, ObservableObject {
     static let shared = AppUpdater()
     @Published private(set) var betaUpdatesEnabled: Bool
     private let defaults: UserDefaults
+    private let terminateApplication: @MainActor () -> Void
     var updateChannels: Set<String> { betaUpdatesEnabled ? ["beta"] : [] }
     #if canImport(Sparkle)
     private var controller: SPUStandardUpdaterController?
     #endif
     var available: Bool { Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String != nil }
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard,
+         terminateApplication: @escaping @MainActor () -> Void = { NSApplication.shared.terminate(nil) }) {
         self.defaults = defaults
+        self.terminateApplication = terminateApplication
         betaUpdatesEnabled = defaults.bool(forKey: "betaUpdates")
         super.init()
         #if canImport(Sparkle)
@@ -55,6 +59,11 @@ extension AppUpdater: SPUUpdaterDelegate {
 
     func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
         AppLogger.shared.write("Sparkle is relaunching the updated application")
+        // Sparkle 2.9.6 sends its install-and-relaunch instruction after this
+        // callback returns. Quit on the next main-queue turn so that instruction
+        // reaches the installer before the old process exits. This also avoids
+        // depending on the installer's external quit event being delivered.
+        DispatchQueue.main.async { self.terminateApplication() }
     }
 }
 #endif

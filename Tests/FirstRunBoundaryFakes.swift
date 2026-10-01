@@ -5,14 +5,49 @@ import Foundation
 struct CommandResult { let status: Int32; let output: String }
 enum Command {
     static var tunnelDNSRequests = 0
-    static func run(_ executable: String, _ arguments: [String]) async -> CommandResult {
-        if executable == "/usr/bin/dig" { tunnelDNSRequests += 1 }
+    static var directInterfaceAvailable = false
+    static var holdNextPing = false
+    static var pendingPing: CheckedContinuation<CommandResult, Never>?
+    static var heldPingCompleted = false
+    static var pingDelay: TimeInterval = 0
+    static var tunnelDNSAvailable = false
+    static var holdNextContext = false
+    static var pendingContext: CheckedContinuation<CommandResult, Never>?
+    static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval? = nil) async -> CommandResult {
+        if holdNextContext && executable == "/usr/sbin/networksetup" && arguments == ["-listallhardwareports"] {
+            holdNextContext = false
+            return await withCheckedContinuation { pendingContext = $0 }
+        }
+        if executable == "/usr/bin/dig" {
+            tunnelDNSRequests += 1
+            if tunnelDNSAvailable { return CommandResult(status: 0, output: "192.0.2.1\n") }
+        }
+        if directInterfaceAvailable && executable == "/usr/sbin/scutil" && arguments == ["--nwi"] {
+            return CommandResult(status: 0, output: "en0 : flags : 0x5 (IPv4)")
+        }
+        if directInterfaceAvailable && executable == "/sbin/ping" {
+            if pingDelay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(max(0, min(pingDelay, timeout ?? pingDelay)) * 1_000_000_000))
+                if (timeout ?? pingDelay) <= pingDelay { return CommandResult(status: 1, output: "") }
+            }
+            if holdNextPing {
+                holdNextPing = false
+                let result = await withCheckedContinuation { pendingPing = $0 }
+                heldPingCompleted = true
+                return result
+            }
+            return CommandResult(status: 0, output: "round-trip min/avg/max/stddev = 10.0/20.0/30.0/1.0 ms")
+        }
         return CommandResult(status: 1, output: "")
     }
 }
 
 struct SystemService {
-    static let version = "13"
+    static let version = "14"
+    static var operationTimeout: TimeInterval = 15
+    static func checkDeadline(_ deadline: Date) throws {
+        guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
+    }
     static var installedValue = false
     static var runningValue = false
     static var cancelInstall = false
@@ -21,13 +56,19 @@ struct SystemService {
     static var actions: [String] = []
     static var routingUpdateValue: Date?
     static var currentVersionValue = version
+    static var runtimeStatusValue: String?
+    static var rejectRestart = false
+    static var waitForNetworkOnRestart = false
+    static var restartDelay: TimeInterval = 0
+    static var restartDeadlines: [Date] = []
     var installed: Bool { Self.installedValue }
     var running: Bool { Self.runningValue }
     var currentVersion: String { Self.currentVersionValue }
-    var runtimeStatus: String { running ? "running" : "stopped" }
+    var runtimeStatus: String { Self.runtimeStatusValue ?? (running ? "running" : "stopped") }
+    var isConnecting: Bool { ["starting", "waiting for network"].contains(runtimeStatus) }
     var automaticRoutingLastUpdate: Date? { Self.routingUpdateValue }
     var payload: URL { FileManager.default.temporaryDirectory }
-    func generate(_ state: SavedState, at stage: URL) async throws -> URL {
+    func generate(_ state: SavedState, at stage: URL, until deadline: Date = Date().addingTimeInterval(15)) async throws -> URL {
         let nodes = try Subscription.nodes(state.subscription)
         let unconfigured = state.subscription.isEmpty && state.selectedNodeID == nil && !state.desiredOn
         guard unconfigured || nodes.contains(where: { $0.id == state.selectedNodeID }) else {
@@ -44,10 +85,22 @@ struct SystemService {
         Self.currentVersionValue = Self.version
         Self.runningValue = desiredOn
     }
-    func deploy(_ config: URL) async throws { Self.deployments += 1 }
-    func send(_ action: String) async throws {
+    func deploy(_ config: URL, until deadline: Date = Date().addingTimeInterval(15)) async throws { Self.deployments += 1 }
+    func send(_ action: String, until deadline: Date = Date().addingTimeInterval(15)) async throws {
+        try Self.checkDeadline(deadline)
         Self.actions.append(action)
+        if action == "restart" {
+            Self.restartDeadlines.append(deadline)
+            try await Task.sleep(nanoseconds: UInt64(max(0, min(Self.restartDelay, deadline.timeIntervalSinceNow)) * 1_000_000_000))
+            try Self.checkDeadline(deadline)
+        }
+        if action == "restart" && Self.rejectRestart {
+            Self.runningValue = false
+            Self.runtimeStatusValue = Self.waitForNetworkOnRestart ? "waiting for network" : "waiting to retry"
+            throw VPNError.message("The controller rejected the change.")
+        }
         Self.runningValue = action != "off"
+        Self.runtimeStatusValue = nil
     }
     func configurationMatches(_ config: URL) -> Bool { true }
     func recentRuntimeErrors() -> String { "" }
@@ -58,7 +111,11 @@ struct SystemService {
         installs = 0; deployments = 0; actions = []
         routingUpdateValue = nil
         currentVersionValue = version
+        runtimeStatusValue = nil; rejectRestart = false; waitForNetworkOnRestart = false
+        restartDelay = 0; restartDeadlines = []
+        operationTimeout = 15
         Command.tunnelDNSRequests = 0
+        Command.tunnelDNSAvailable = false
         SubscriptionFetcher.requests = 0
         SubscriptionFetcher.failure = false
     }

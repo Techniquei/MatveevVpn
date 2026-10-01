@@ -12,12 +12,15 @@ DNS_CALL_LOG="$RUNTIME/dns-calls"
 /bin/cp "$TEST_DIR/fake-sing-box" "$RUNTIME/bin/sing-box"
 /bin/cp "$TEST_DIR/fake-xray" "$RUNTIME/bin/xray"
 /bin/cp "$TEST_DIR/fake-networksetup" "$RUNTIME/bin/networksetup"
+/bin/cp "$TEST_DIR/fake-dig" "$RUNTIME/bin/dig"
+/bin/cp "$TEST_DIR/fake-ifconfig" "$RUNTIME/bin/ifconfig"
 /bin/cp "$TEST_DIR/../Resources/payload/dns-manager.sh" "$RUNTIME/bin/dns-manager.sh"
 /bin/cp "$TEST_DIR/config.json" "$RUNTIME/config.json"
-/bin/chmod 755 "$RUNTIME/bin/sing-box" "$RUNTIME/bin/xray" "$RUNTIME/bin/networksetup" "$RUNTIME/bin/dns-manager.sh"
+/bin/chmod 755 "$RUNTIME/bin/sing-box" "$RUNTIME/bin/xray" "$RUNTIME/bin/networksetup" "$RUNTIME/bin/dig" "$RUNTIME/bin/ifconfig" "$RUNTIME/bin/dns-manager.sh"
 /usr/bin/printf 'on\n' > "$RUNTIME/run/desired-state"
 /usr/bin/printf '9.9.9.9\n' > "$CURRENT_DNS"
 : > "$DNS_CALL_LOG"
+/usr/bin/printf '4\n' > "$RUNTIME/tunnel-delay"
 /bin/dd if=/dev/zero of="$RUNTIME/vpn.log" bs=3100000 count=1 2>/dev/null
 /bin/dd if=/dev/zero of="$RUNTIME/vpn.error.log" bs=3100000 count=1 2>/dev/null
 
@@ -26,6 +29,8 @@ MATVEEV_LOG_FILE="$RUNTIME/vpn.log" \
 MATVEEV_ERROR_FILE="$RUNTIME/vpn.error.log" \
 MATVEEV_START_RETRY_SECONDS=1 \
 MATVEEV_NETWORKSETUP="$RUNTIME/bin/networksetup" \
+MATVEEV_DIG="$RUNTIME/bin/dig" \
+MATVEEV_IFCONFIG="$RUNTIME/bin/ifconfig" \
 MATVEEV_DEFAULT_INTERFACE="test0" \
 MATVEEV_FAKE_DNS="$CURRENT_DNS" \
 MATVEEV_FAKE_LOG="$DNS_CALL_LOG" \
@@ -43,7 +48,7 @@ wait_for_file_value() {
   local file="$1"
   local expected="$2"
   local attempt=0
-  while [[ "$attempt" -lt 100 ]]; do
+  while [[ "$attempt" -lt 200 ]]; do
     if [[ -f "$file" && "$(/usr/bin/head -n 1 "$file")" == "$expected" ]]; then
       return 0
     fi
@@ -78,17 +83,60 @@ send_action_expect() {
   local action="$1"
   local expected="$2"
   local token="test-$action-$RANDOM"
-  /usr/bin/printf '%s %s\n' "$action" "$token" > "$CONTROL/.command-test"
+  local expiry="$(/usr/bin/ruby -e 'puts ((Time.now.to_f + ARGV[0].to_f) * 1000).to_i' -- "${3:-15}")"
+  /usr/bin/printf '%s %s %s\n' "$action" "$token" "$expiry" > "$CONTROL/.command-test"
   /bin/mv -f "$CONTROL/.command-test" "$CONTROL/command"
   wait_for_file_value "$CONTROL/response-$token" "$expected"
 }
 
+# Wi-Fi parameters stay the same while Internet connectivity arrives later.
+wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
+/usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
+lines = File.read(ARGV[0]).lines
+launch = lines.grep(/runtime launch: TUN ready;/).last[/duration_ms=(\d+)/, 1].to_i
+dns = lines.grep(/startup DNS: waiting for network;/).last[/duration_ms=(\d+)/, 1].to_i
+abort 'TUN and DNS still have separate startup budgets' unless launch + dns < 11500
+RUBY
+/bin/rm "$RUNTIME/tunnel-delay"
+BOOT_ENGINE_PID="$(cat "$RUNTIME/run/sing-box.pid")"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+[[ "$(cat "$RUNTIME/run/desired-state")" == on ]]
+/usr/bin/touch "$RUNTIME/network-ready"
 wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$BOOT_ENGINE_PID" ]]
 [[ ! -f "$CONTROL/routing-updated-at" ]]
 /usr/bin/grep -q 'tunnel DNS is ready' "$RUNTIME/vpn.log"
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+# With working direct DNS, an unavailable VPN node must still fail normally.
+send_action off
+/usr/bin/touch "$RUNTIME/node-unavailable"
+send_action_expect on error
+wait_for_file_value "$CONTROL/runtime-status" "waiting to retry"
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+/bin/rm "$RUNTIME/node-unavailable"
+send_action on
+# A ready engine must reach DNS without the former fixed one-second pause.
+/usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
+timing = File.read(ARGV[0]).lines.grep(/runtime launch: TUN ready; duration_ms=/).last
+abort 'Ready runtime still waits a full second' unless timing && timing[/duration_ms=(\d+)/, 1].to_i < 1000
+RUBY
+/usr/bin/grep -Eq 'tunnel DNS is ready.*duration_ms=[0-9]+' "$RUNTIME/vpn.error.log"
+send_action off
+/usr/bin/grep -Eq 'runtime stop: processes and DNS restored; duration_ms=[0-9]+' "$RUNTIME/vpn.error.log"
+/usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
+timing = File.read(ARGV[0]).lines.grep(/runtime stop: processes and DNS restored; duration_ms=/).last
+abort 'Exited engine still waits a full second' unless timing && timing[/duration_ms=(\d+)/, 1].to_i < 1000
+RUBY
+# A slower TUN must be observed before publishing running.
+/usr/bin/printf '0.4\n' > "$RUNTIME/tunnel-delay"
+send_action on
+/usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
+timing = File.read(ARGV[0]).lines.grep(/runtime launch: TUN ready; duration_ms=/).last
+abort 'Runtime accepted before TUN readiness' unless timing && timing[/duration_ms=(\d+)/, 1].to_i >= 400
+RUBY
+/bin/rm "$RUNTIME/tunnel-delay"
 # Unexpected runtime exits publish a user-readable snapshot before retrying.
 /bin/kill -KILL "$(/usr/bin/head -n 1 "$RUNTIME/run/sing-box.pid")"
 wait_for_file_text "$CONTROL/last-error.log" 'sing-box exited unexpectedly'
@@ -143,6 +191,44 @@ send_action reload
 wait_for_file_value "$CONTROL/runtime-status" "running"
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 [[ -f "$RUNTIME/xray.json" && -f "$RUNTIME/run/xray.pid" ]]
+# Engines ignoring TERM share one grace period, rather than two sequential waits.
+send_action off
+/usr/bin/touch "$RUNTIME/ignore-term"
+send_action on
+send_action off
+/usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
+timing = File.read(ARGV[0]).lines.grep(/runtime stop: processes and DNS restored;/).last
+abort 'Engine shutdown still waits sequentially' unless timing[/duration_ms=(\d+)/, 1].to_i < 6500
+RUBY
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+[[ ! -f "$RUNTIME/run/sing-box.pid" && ! -f "$RUNTIME/run/xray.pid" ]]
+/bin/rm "$RUNTIME/ignore-term"
+send_action on
+# Expired commands must not change desired state or touch the current runtime.
+ENGINE_BEFORE_EXPIRY="$(cat "$RUNTIME/run/sing-box.pid")"
+send_action_expect off error -1
+[[ "$(cat "$RUNTIME/run/desired-state")" == on ]]
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
+# A stuck privileged validation must be killed before the same deadline.
+/usr/bin/printf '{"delay_check":true}\n' > "$CONTROL/pending-config.json"
+CHECK_STARTED="$(/usr/bin/ruby -e 'puts Process.clock_gettime(Process::CLOCK_MONOTONIC)')"
+send_action_expect reload error 2
+/usr/bin/ruby - "$CHECK_STARTED" <<'RUBY'
+abort 'Privileged configuration check outlived the operation' unless Process.clock_gettime(Process::CLOCK_MONOTONIC) - ARGV[0].to_f < 2
+RUBY
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
+# A short remaining budget still restores configuration before rejecting reload.
+/usr/bin/printf '{"delay_run":true}\n' > "$CONTROL/pending-config.json"
+RELOAD_STARTED="$(/usr/bin/ruby -e 'puts Process.clock_gettime(Process::CLOCK_MONOTONIC)')"
+send_action_expect reload error 4
+/usr/bin/ruby - "$RELOAD_STARTED" <<'RUBY'
+abort 'Rollback received a fresh operation budget' unless Process.clock_gettime(Process::CLOCK_MONOTONIC) - ARGV[0].to_f < 4
+RUBY
+if /usr/bin/grep -q delay_run "$RUNTIME/config.json"; then
+  echo 'Deadline rejection did not restore the prior configuration' >&2
+  exit 1
+fi
+wait_for_file_value "$CONTROL/runtime-status" "running"
 /usr/bin/printf '{"fail_run":true}\n' > "$CONTROL/pending-config.json"
 send_action_expect reload error
 wait_for_file_value "$CONTROL/runtime-status" "running"
@@ -154,6 +240,19 @@ if /usr/bin/grep -q 'fail_run' "$RUNTIME/config.json"; then
 fi
 
 echo "controller protocol: ok"
+send_action off
+/bin/rm "$RUNTIME/network-ready"
+send_action_expect on error
+wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+send_action off
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+/usr/bin/touch "$RUNTIME/network-ready"
+/bin/sleep 5.5
+wait_for_file_value "$CONTROL/runtime-status" "stopped"
+[[ ! -f "$RUNTIME/run/sing-box.pid" ]]
+send_action on
+wait_for_file_value "$CONTROL/runtime-status" "running"
 send_action off
 /bin/cp "$TEST_DIR/config.json" "$CONTROL/pending-config.json"
 send_action reload

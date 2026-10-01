@@ -9,8 +9,8 @@ import Foundation
         precondition(NodeProbe.averagePingMilliseconds(output) == 42)
         let ping = NodeProbeResult(outcome: .reachable, latencyMilliseconds: 42, method: .icmp)
         let tcp = NodeProbeResult(outcome: .reachable, latencyMilliseconds: 51, method: .tcp)
-        precondition(ping.displayText == "42 ms · ping")
-        precondition(tcp.displayText == "51 ms · TCP")
+        precondition(ping.displayText == "42 ms")
+        precondition(tcp.displayText == "51 ms")
         let network = """
             REACH : flags 0x00000002 (Reachable)
             utun4 : flags 0x5 (IPv4,DNS)
@@ -28,6 +28,6 @@ import Foundation
             try privateWrite(Data(invalid.utf8), to: updateFile)
             precondition(SystemService.routingUpdateDate(at: updateFile) == nil)
         }
-        print("diagnostics: ping labels and routing refresh dates passed")
+        print("diagnostics: latency display and routing refresh dates passed")
     }
 }

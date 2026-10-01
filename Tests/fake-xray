@@ -8,6 +8,7 @@ fi
 if [[ "${2:-}" == -c ]]; then
   /usr/bin/grep -q 'fail_xray' "${3:-}" 2>/dev/null && exit 1
   trap 'exit 0' TERM INT
-  while true; do /bin/sleep 1; done
+  if [[ -f "$MATVEEV_BASE_DIR/ignore-term" ]]; then trap '' TERM; fi
+  while true; do /bin/sleep 0.05; done
 fi
 exit 2

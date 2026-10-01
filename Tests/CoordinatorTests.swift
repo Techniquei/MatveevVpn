@@ -11,15 +11,18 @@ final class FakeTransport: ConfigurationTransport {
     var requireStoppedInstall = false
     var installDesiredStates: [Bool] = []
     var actions: [String] = []
+    var deadlines: [Date] = []
     var blockSettingsFile: URL?
     let hashFile: URL
     init(hashFile: URL) { self.hashFile = hashFile }
-    func generate(_ state: SavedState, at stage: URL) async throws -> URL {
+    func generate(_ state: SavedState, at stage: URL, until deadline: Date = Date().addingTimeInterval(15)) async throws -> URL {
+        deadlines.append(deadline)
         let url = stage.appendingPathComponent("config")
         try Data(state.subscription.utf8).write(to: url)
         return url
     }
-    func deploy(_ config: URL) async throws {
+    func deploy(_ config: URL, until deadline: Date = Date().addingTimeInterval(15)) async throws {
+        deadlines.append(deadline)
         if reject { throw VPNError.message("Rejected") }
         let data = try Data(contentsOf: config)
         if data.isEmpty && running { throw VPNError.message("The unconfigured component cannot run a tunnel") }
@@ -38,7 +41,8 @@ final class FakeTransport: ConfigurationTransport {
         installed = true
         running = desiredOn
     }
-    func send(_ action: String) async throws {
+    func send(_ action: String, until deadline: Date = Date().addingTimeInterval(15)) async throws {
+        deadlines.append(deadline)
         actions.append(action)
         if rejectStart && action == "on" { throw VPNError.message("Could not start") }
         running = action != "off"
@@ -61,7 +65,16 @@ final class FakeTransport: ConfigurationTransport {
         let unchanged = try store.load()
         precondition(unchanged.subscription == "old" && transport.active == "old")
         transport.reject = false
-        _ = try await coordinator.apply(next, previous: old)
+        transport.deadlines = []
+        let deadline = Date().addingTimeInterval(15)
+        _ = try await coordinator.apply(next, previous: old, until: deadline)
+        precondition(transport.deadlines.count == 3 && transport.deadlines.allSatisfy { $0 == deadline })
+        let calls = transport.deadlines.count
+        do {
+            _ = try await coordinator.apply(old, previous: next, until: Date().addingTimeInterval(-1))
+            fatalError("An expired transaction was applied")
+        } catch { precondition(error.localizedDescription.contains("15-second limit")) }
+        precondition(transport.deadlines.count == calls && transport.active == "new")
         let applied = try store.load()
         precondition(applied.subscription == "new" && transport.running && transport.active == "new")
         precondition(!FileManager.default.fileExists(atPath: store.pendingFile.path))

@@ -1,0 +1,6 @@
+#!/bin/bash
+
+if [[ ! -f "$MATVEEV_BASE_DIR/network-ready" ]]; then sleep 1; exit 1; fi
+if [[ ! -f "$MATVEEV_BASE_DIR/tunnel-ready" ]]; then exit 1; fi
+if [[ "$*" == *'api4.ipify.org'* && -f "$MATVEEV_BASE_DIR/node-unavailable" ]]; then exit 1; fi
+printf '192.0.2.1\n'

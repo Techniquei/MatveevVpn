@@ -178,14 +178,24 @@ runtime_running() {
 }
 
 tunnel_interface() {
-  /sbin/ifconfig 2>/dev/null | /usr/bin/awk '
+  "${MATVEEV_IFCONFIG:-/sbin/ifconfig}" 2>/dev/null | /usr/bin/awk '
     /^[A-Za-z0-9]+:/ { interface=$1; sub(":", "", interface) }
     /inet 198\.18\.0\.1 / { print interface; exit }
   '
 }
 
 log_event() {
-  bounded_log_line "$LOG_FILE" "$(/bin/date '+%Y-%m-%d %H:%M:%S') controller: $1"
+  local message="$(/bin/date '+%Y-%m-%d %H:%M:%S') controller: $1"
+  if [[ -n "${2:-}" ]]; then
+    message="$message; duration_ms=$(( $(monotonic_ms) - $2 ))"
+    # Include lifecycle timings in the existing exported runtime diagnostics.
+    bounded_log_line "$ERROR_FILE" "$message"
+  fi
+  bounded_log_line "$LOG_FILE" "$message"
+}
+
+monotonic_ms() {
+  /usr/bin/ruby -e 'puts Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond)'
 }
 
 install_config() {
@@ -220,11 +230,24 @@ configure_system_dns() {
 }
 
 tunnel_dns_ready() {
-  if [[ -n "${MATVEEV_BASE_DIR:-}" ]]; then
-    return 0
-  fi
-  /usr/bin/dig +time=1 +tries=1 +short @198.18.0.2 api4.ipify.org A 2>/dev/null |
+  "${MATVEEV_DIG:-/usr/bin/dig}" +time=1 +tries=1 +short @198.18.0.2 "${1:-api4.ipify.org}" A 2>/dev/null |
     /usr/bin/awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/ { found=1 } END { exit !found }'
+}
+
+check_engine_config() {
+  local deadline="$1" checker
+  shift
+  "$@" > >(bounded_logger "$ERROR_FILE") 2>&1 &
+  checker=$!
+  while /bin/kill -0 "$checker" 2>/dev/null; do
+    if [[ "$(monotonic_ms)" -ge "$deadline" ]]; then
+      /bin/kill -KILL "$checker" 2>/dev/null || true
+      wait "$checker" 2>/dev/null || true
+      return 1
+    fi
+    /bin/sleep 0.05
+  done
+  wait "$checker"
 }
 
 start_child() {
@@ -235,40 +258,41 @@ start_child() {
   if child_running || xray_running; then
     stop_child
   fi
+  local started="$(monotonic_ms)"
+  local deadline="${1:-$((started + 10000))}"
+  if [[ "${operation_deadline:-$deadline}" -lt "$deadline" ]]; then deadline="$operation_deadline"; fi
+  if [[ "$started" -ge "$deadline" ]]; then write_status "error"; return 1; fi
+  write_status "starting"
   if [[ ! -x "$SING_BOX" || ! -f "$CONFIG_FILE" ]]; then
     write_status "error"
     return 1
   fi
-  if ! "$SING_BOX" check -c "$CONFIG_FILE" > >(bounded_logger "$ERROR_FILE") 2>&1; then
+  if ! check_engine_config "$deadline" "$SING_BOX" check -c "$CONFIG_FILE"; then
     write_status "error"
     return 1
   fi
 
   if [[ -f "$XRAY_CONFIG_FILE" ]]; then
-    if [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$XRAY_CONFIG_FILE" > >(bounded_logger "$ERROR_FILE") 2>&1; then
+    if [[ ! -x "$XRAY" ]] || ! check_engine_config "$deadline" "$XRAY" run -test -c "$XRAY_CONFIG_FILE"; then
       write_status "error"
       return 1
     fi
     "$XRAY" run -c "$XRAY_CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
     XRAY_PID=$!
     /usr/bin/printf '%s\n' "$XRAY_PID" > "$XRAY_PID_FILE"
-    /bin/sleep 0.2
-    if ! xray_running; then
-      XRAY_PID=""
-      /bin/rm -f "$XRAY_PID_FILE"
-      write_status "error"
-      return 1
-    fi
   fi
 
   "$SING_BOX" run -c "$CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
   CHILD_PID=$!
   /usr/bin/printf '%s\n' "$CHILD_PID" > "$PID_FILE"
-  /bin/sleep 1
   local ready_attempt
-  for ready_attempt in {1..25}; do
-    child_running || break
+  # Poll immediately; TUN and successful DNS, rather than elapsed time, prove readiness.
+  for ready_attempt in {1..30}; do
+    [[ "$(monotonic_ms)" -lt "$deadline" ]] || break
+    runtime_running || break
     if tunnel_ready; then
+      log_event "runtime launch: TUN ready" "$started"
+      local dns_started="$(monotonic_ms)"
       if ! configure_system_dns; then
         log_event "could not apply the DNS policy"
         stop_child
@@ -277,21 +301,31 @@ start_child() {
       fi
       local dns_attempt
       for dns_attempt in {1..8}; do
-        child_running || break
-        if tunnel_dns_ready; then
-          log_event "tunnel DNS is ready after $dns_attempt check(s)"
+        runtime_running || break
+        # Reserve the bounded DNS query's second within the same startup budget.
+        [[ $(( $(monotonic_ms) + 1000 )) -le "$deadline" ]] || break
+        if tunnel_dns_ready && [[ "$(monotonic_ms)" -le "$deadline" ]]; then
+          log_event "tunnel DNS is ready after $dns_attempt check(s)" "$dns_started"
           write_status "running"
           return 0
         fi
         /bin/sleep 0.25
       done
-      log_event "tunnel DNS did not become ready before the startup deadline"
+      # Keep the engine alive while the physical connection settles. This
+      # diagnostic domain is routed directly by the generated configuration.
+      if runtime_running && [[ $(( $(monotonic_ms) + 1000 )) -le "${operation_deadline:-$((deadline + 2000))}" ]] && ! tunnel_dns_ready api64.ipify.org; then
+        log_event "startup DNS: waiting for network" "$dns_started"
+        write_status "waiting for network"
+        return 1
+      fi
+      log_event "VPN DNS did not become ready before the startup deadline" "$dns_started"
       stop_child
       write_status "error"
       return 1
     fi
     /bin/sleep 0.2
   done
+  log_event "runtime launch did not become ready" "$started"
   stop_child
   write_status "error"
   return 1
@@ -318,43 +352,36 @@ cleanup_tunnel_state() {
 }
 
 stop_child() {
+  local started="$(monotonic_ms)"
+  local deadline=$((started + 5000))
+  if [[ "${operation_deadline:-$deadline}" -lt "$deadline" ]]; then deadline="$operation_deadline"; fi
   local owned_interface
   owned_interface="$(tunnel_interface)"
   if [[ -x "$DNS_MANAGER" ]]; then
     "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || log_event "could not restore system DNS"
   fi
-  if child_running; then
-    /bin/kill -TERM "$CHILD_PID" 2>/dev/null || true
-    local attempt
-    for attempt in 1 2 3 4 5; do
-      child_running || break
-      /bin/sleep 1
-    done
-    if child_running; then
-      /bin/kill -KILL "$CHILD_PID" 2>/dev/null || true
-    fi
-    wait "$CHILD_PID" 2>/dev/null || true
-  fi
+  # Both engines get the same five-second grace concurrently.
+  if child_running; then /bin/kill -TERM "$CHILD_PID" 2>/dev/null || true; fi
+  if xray_running; then /bin/kill -TERM "$XRAY_PID" 2>/dev/null || true; fi
+  local attempt
+  for attempt in {1..50}; do
+    child_running || xray_running || break
+    [[ "$(monotonic_ms)" -lt "$deadline" ]] || break
+    /bin/sleep 0.1
+  done
+  if child_running; then /bin/kill -KILL "$CHILD_PID" 2>/dev/null || true; fi
+  if xray_running; then /bin/kill -KILL "$XRAY_PID" 2>/dev/null || true; fi
+  if [[ -n "$CHILD_PID" ]]; then wait "$CHILD_PID" 2>/dev/null || true; fi
+  if [[ -n "$XRAY_PID" ]]; then wait "$XRAY_PID" 2>/dev/null || true; fi
   CHILD_PID=""
   /bin/rm -f "$PID_FILE"
-  if xray_running; then
-    /bin/kill -TERM "$XRAY_PID" 2>/dev/null || true
-    local xray_attempt
-    for xray_attempt in 1 2 3 4 5; do
-      xray_running || break
-      /bin/sleep 1
-    done
-    if xray_running; then
-      /bin/kill -KILL "$XRAY_PID" 2>/dev/null || true
-    fi
-    wait "$XRAY_PID" 2>/dev/null || true
-  fi
   XRAY_PID=""
   /bin/rm -f "$XRAY_PID_FILE"
   if [[ -z "${MATVEEV_BASE_DIR:-}" && -n "$owned_interface" ]]; then
     cleanup_tunnel_state "$owned_interface"
   fi
   write_status "stopped"
+  log_event "runtime stop: processes and DNS restored" "$started"
 }
 
 set_desired() {
@@ -371,13 +398,14 @@ desired_state() {
 }
 
 reload_config() {
+  local deadline="${operation_deadline:-$(( $(monotonic_ms) + 10000 ))}"
   if [[ ! -f "$PENDING_CONFIG" || -L "$PENDING_CONFIG" || -L "$PENDING_XRAY_CONFIG" ]]; then
     return 1
   fi
-  if ! "$SING_BOX" check -c "$PENDING_CONFIG" > >(bounded_logger "$ERROR_FILE") 2>&1; then
+  if ! check_engine_config "$deadline" "$SING_BOX" check -c "$PENDING_CONFIG"; then
     return 1
   fi
-  if [[ -f "$PENDING_XRAY_CONFIG" ]] && { [[ ! -x "$XRAY" ]] || ! "$XRAY" run -test -c "$PENDING_XRAY_CONFIG" > >(bounded_logger "$ERROR_FILE") 2>&1; }; then
+  if [[ -f "$PENDING_XRAY_CONFIG" ]] && { [[ ! -x "$XRAY" ]] || ! check_engine_config "$deadline" "$XRAY" run -test -c "$PENDING_XRAY_CONFIG"; }; then
     return 1
   fi
   /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
@@ -398,7 +426,10 @@ reload_config() {
   publish_config_hash || return 1
   if [[ "$(desired_state)" == "on" ]]; then
     stop_child
-    if start_child; then
+    # Reserve half the remaining command budget for rollback of a rejected runtime.
+    local now="$(monotonic_ms)"
+    local attempt_deadline=$((now + (${operation_deadline:-$((now + 20000))} - now) / 2))
+    if start_child "$attempt_deadline"; then
       /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
       return 0
     fi
@@ -456,10 +487,7 @@ default_route_signature() {
 }
 
 tunnel_ready() {
-  if [[ -n "${MATVEEV_BASE_DIR:-}" ]]; then
-    return 0
-  fi
-  /sbin/ifconfig 2>/dev/null | /usr/bin/grep -q 'inet 198\.18\.0\.1 '
+  [[ -n "$(tunnel_interface)" ]]
 }
 
 recover_child() {
@@ -480,8 +508,12 @@ start_with_retry() {
     NEXT_START_ATTEMPT=0
     return 0
   fi
-  START_FAILURES=$((START_FAILURES + 1))
   now="$(/bin/date +%s)"
+  if [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" == "waiting for network" ]]; then
+    NEXT_START_ATTEMPT=$((now + 5))
+    return 1
+  fi
+  START_FAILURES=$((START_FAILURES + 1))
   NEXT_START_ATTEMPT=$((now + START_RETRY_SECONDS))
   write_status "waiting to retry"
   log_event "VPN start failed (attempt $START_FAILURES); retrying in $START_RETRY_SECONDS seconds"
@@ -518,6 +550,20 @@ run_watchdog() {
     LAST_NETWORK_SIGNATURE="$signature"
     LAST_NETWORK_CHECK="$now"
 
+    if runtime_running && [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" == "waiting for network" ]]; then
+      if tunnel_dns_ready; then
+        START_FAILURES=0
+        NEXT_START_ATTEMPT=0
+        log_event "tunnel DNS is ready after network recovery"
+        write_status "running"
+      elif tunnel_dns_ready api64.ipify.org; then
+        # The network recovered but this node did not. Normal retry/failover
+        # can now act without mistaking an offline network for a failed node.
+        stop_child
+        NEXT_START_ATTEMPT=$((now + START_RETRY_SECONDS))
+        write_status "waiting to retry"
+      fi
+    fi
     if tunnel_ready; then
       TUN_MISSES=0
     else
@@ -543,17 +589,24 @@ run_watchdog() {
     LAST_NETWORK_CHECK="$now"
     TUN_MISSES=0
   fi
-  LAST_TICK="$now"
+  LAST_TICK="$(/bin/date +%s)"
 }
 
 process_command() {
   local action=""
   local token=""
-  read -r action token < "$COMMAND_FILE" || true
+  local expiry=""
+  read -r action token expiry < "$COMMAND_FILE" || true
   /bin/rm -f "$COMMAND_FILE"
   if [[ ! "$token" =~ ^[A-Za-z0-9._-]+$ ]]; then
     return 0
   fi
+  if [[ ! "$expiry" =~ ^[0-9]{13}$ ]]; then write_response "$token" "error"; return 0; fi
+  # Convert the client's absolute expiry to our monotonic clock; reserve a second
+  # for publishing the acknowledgement and the app's private settings commit.
+  local remaining="$(/usr/bin/ruby -e 'puts [[ARGV[0].to_i - (Time.now.to_f * 1000).to_i - 1000, 0].max, 14000].min' "$expiry")"
+  local operation_deadline=$(( $(monotonic_ms) + remaining ))
+  if [[ "$remaining" -eq 0 ]]; then write_response "$token" "error"; return 0; fi
 
   case "$action" in
     on)
@@ -606,10 +659,12 @@ LAST_NETWORK_SIGNATURE="$(network_signature)"
 LAST_DEFAULT_ROUTE_SIGNATURE="$(default_route_signature)"
 log_event "network state: physical=$LAST_NETWORK_SIGNATURE default=$LAST_DEFAULT_ROUTE_SIGNATURE routing=$(routing_mode)"
 LAST_NETWORK_CHECK="$(/bin/date +%s)"
+LAST_TICK="$LAST_NETWORK_CHECK"
 
 while true; do
   if [[ -f "$COMMAND_FILE" ]]; then
     process_command
+    LAST_TICK="$(/bin/date +%s)"
   fi
   if [[ "$(desired_state)" == "on" && -n "$CHILD_PID" ]] && ! child_running; then
     record_unexpected_exit "sing-box" "$CHILD_PID"
@@ -626,7 +681,7 @@ while true; do
   fi
   NOW="$(/bin/date +%s)"
   if [[ $((NOW - LAST_STATUS_PUBLISH)) -ge 2 ]]; then
-    if child_running; then write_status "running"; fi
+    if child_running && [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" != "waiting for network" ]]; then write_status "running"; fi
     LAST_STATUS_PUBLISH="$NOW"
   fi
   /bin/sleep 0.5

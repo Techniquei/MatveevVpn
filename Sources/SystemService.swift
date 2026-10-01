@@ -4,8 +4,9 @@ import CryptoKit
 struct CommandResult { let status: Int32; let output: String }
 
 enum Command {
-    static func run(_ executable: String, _ arguments: [String]) async -> CommandResult {
-        await withCheckedContinuation { continuation in
+    static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval? = nil) async -> CommandResult {
+        if let timeout, timeout <= 0 { return CommandResult(status: 124, output: "Operation timed out.") }
+        return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process(), pipe = Pipe()
                 process.executableURL = URL(fileURLWithPath: executable)
@@ -14,6 +15,11 @@ enum Command {
                 process.standardError = pipe
                 do {
                     try process.run()
+                    let expiry = DispatchWorkItem {
+                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    }
+                    if let timeout { DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: expiry) }
+                    defer { expiry.cancel() }
                     let data = pipe.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
                     continuation.resume(returning: CommandResult(status: process.terminationStatus, output: String(data: data, encoding: .utf8) ?? ""))
@@ -26,18 +32,23 @@ enum Command {
 }
 
 struct SystemService {
-    // INFO preset telemetry requires a streaming writer; earlier components can
-    // block the engine on its output pipe even though their actions are the same.
-    static let version = "13"
+    // Version 14 carries the operation deadline so rollback finishes before UI timeout.
+    static let version = "14"
+    static let operationTimeout: TimeInterval = 15
+    static func checkDeadline(_ deadline: Date) throws {
+        guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
+    }
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
+    var baseDirectory = Self.base
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
-    var control: URL { Self.base.appendingPathComponent("control") }
-    var installed: Bool { FileManager.default.fileExists(atPath: Self.base.appendingPathComponent("bin/controller.sh").path) }
+    var control: URL { baseDirectory.appendingPathComponent("control") }
+    var installed: Bool { FileManager.default.fileExists(atPath: baseDirectory.appendingPathComponent("bin/controller.sh").path) }
     var currentVersion: String { (try? String(contentsOf: control.appendingPathComponent("version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "1" }
     var runtimeStatus: String {
         (try? String(contentsOf: control.appendingPathComponent("runtime-status"), encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unavailable"
     }
+    var isConnecting: Bool { ["starting", "waiting for network"].contains(runtimeStatus) }
     var automaticRoutingLastUpdate: Date? {
         Self.routingUpdateDate(at: control.appendingPathComponent("routing-updated-at"))
     }
@@ -55,12 +66,14 @@ struct SystemService {
         return modified.map { Date().timeIntervalSince($0) < 10 } ?? false
     }
 
-    func send(_ action: String) async throws {
+    func send(_ action: String, until deadline: Date = Date().addingTimeInterval(Self.operationTimeout)) async throws {
         guard ["on", "off", "restart", "reload", "reset"].contains(action) else { throw VPNError.message("Invalid controller command.") }
+        try Self.checkDeadline(deadline)
         let token = UUID().uuidString
         let response = control.appendingPathComponent("response-\(token)")
-        try privateWrite(Data("\(action) \(token)\n".utf8), to: control.appendingPathComponent("command"))
-        for _ in 0..<150 {
+        let expiry = Int64(deadline.timeIntervalSince1970 * 1000)
+        try privateWrite(Data("\(action) \(token) \(expiry)\n".utf8), to: control.appendingPathComponent("command"))
+        while Date() < deadline {
             if let value = try? String(contentsOf: response, encoding: .utf8) {
                 try? FileManager.default.removeItem(at: response)
                 guard value.hasPrefix("ok") else {
@@ -70,10 +83,12 @@ struct SystemService {
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        throw VPNError.diagnostic("The controller did not respond within 15 seconds.", recentRuntimeErrors())
+        throw VPNError.diagnostic("The operation exceeded its 15-second limit.", recentRuntimeErrors())
     }
 
-    func generate(_ state: SavedState, at stage: URL) async throws -> URL {
+    func generate(_ state: SavedState, at stage: URL, until deadline: Date = Date().addingTimeInterval(Self.operationTimeout)) async throws -> URL {
+        try Self.checkDeadline(deadline)
+        let started = ProcessInfo.processInfo.systemUptime
         try state.rules.validate()
         let index: Int
         if state.subscription.isEmpty && state.selectedNodeID == nil && !state.desiredOn {
@@ -95,19 +110,26 @@ struct SystemService {
                 bundledFile: payload.appendingPathComponent("rules/hagezi-pro-mini.txt")
             )
         }
-        let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(index), rules.path])
+        let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(index), rules.path], timeout: deadline.timeIntervalSinceNow)
+        try Self.checkDeadline(deadline)
+        AppLogger.shared.write("configuration generation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))")
         guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.", generated.output) }
-        let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path])
+        let validationStarted = ProcessInfo.processInfo.systemUptime
+        defer { AppLogger.shared.write("configuration validation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - validationStarted) * 1000))") }
+        let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path], timeout: deadline.timeIntervalSinceNow)
+        try Self.checkDeadline(deadline)
         guard checked.status == 0 else { throw VPNError.diagnostic("The configuration did not pass validation. Check the node and routing expressions.", checked.output) }
         let xrayConfig = URL(fileURLWithPath: config.path + ".xray.json")
         if FileManager.default.fileExists(atPath: xrayConfig.path) {
-            let xrayChecked = await Command.run(payload.appendingPathComponent("xray").path, ["run", "-test", "-c", xrayConfig.path])
+            let xrayChecked = await Command.run(payload.appendingPathComponent("xray").path, ["run", "-test", "-c", xrayConfig.path], timeout: deadline.timeIntervalSinceNow)
+            try Self.checkDeadline(deadline)
             guard xrayChecked.status == 0 else { throw VPNError.diagnostic("The Xray transport configuration did not pass validation. Check the selected node.", xrayChecked.output) }
         }
         return config
     }
 
-    func deploy(_ config: URL) async throws {
+    func deploy(_ config: URL, until deadline: Date = Date().addingTimeInterval(Self.operationTimeout)) async throws {
+        try Self.checkDeadline(deadline)
         let pendingXray = control.appendingPathComponent("pending-xray.json")
         try? FileManager.default.removeItem(at: pendingXray)
         let xrayConfig = URL(fileURLWithPath: config.path + ".xray.json")
@@ -115,7 +137,7 @@ struct SystemService {
             try privateWrite(Data(contentsOf: xrayConfig), to: pendingXray)
         }
         try privateWrite(Data(contentsOf: config), to: control.appendingPathComponent("pending-config.json"))
-        try await send("reload")
+        try await send("reload", until: deadline)
     }
 
     func configurationMatches(_ config: URL) -> Bool {
@@ -152,13 +174,14 @@ struct SystemService {
     }
 
     func recentRuntimeErrorDetails() -> String? {
-        let files = [control.appendingPathComponent("last-error.log"), Self.base.appendingPathComponent("run/vpn.error.log")]
-        for file in files {
+        let files = [control.appendingPathComponent("last-error.log"), baseDirectory.appendingPathComponent("run/vpn.error.log")]
+        let details = files.compactMap { file -> String? in
             if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
-                return text.split(separator: "\n").suffix(80).joined(separator: "\n")
+                return file.lastPathComponent + ":\n" + text.split(separator: "\n").suffix(80).joined(separator: "\n")
             }
+            return nil
         }
-        return nil
+        return details.isEmpty ? nil : details.joined(separator: "\n\n")
     }
 
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }

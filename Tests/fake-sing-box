@@ -1,19 +1,25 @@
 #!/bin/bash
 
 case "${1:-}" in
-  check) exit 0 ;;
+  check)
+    if /usr/bin/grep -q 'delay_check' "${3:-}"; then /bin/sleep 4; fi
+    exit 0 ;;
   run)
     if [[ "${2:-}" == "-c" ]] && /usr/bin/grep -q 'fail_run' "${3:-}" 2>/dev/null; then
       exit 1
     fi
-    trap 'exit 0' TERM INT
+    trap 'rm -f "$MATVEEV_BASE_DIR/tunnel-ready"; exit 0' TERM INT
+    if [[ -f "$MATVEEV_BASE_DIR/ignore-term" ]]; then trap '' TERM; fi
+    if [[ -f "$MATVEEV_BASE_DIR/tunnel-delay" ]]; then /bin/sleep "$(cat "$MATVEEV_BASE_DIR/tunnel-delay")"; fi
+    if /usr/bin/grep -q 'delay_run' "${3:-}"; then /bin/sleep 4; fi
+    printf '%s\n' "$$" > "$MATVEEV_BASE_DIR/tunnel-ready"
     if [[ -f "${MATVEEV_BASE_DIR:-}/log-burst" ]]; then
       /bin/cat "$MATVEEV_BASE_DIR/log-burst"
     fi
     if [[ -f "${MATVEEV_BASE_DIR:-}/preset-update-log" ]]; then
       /bin/cat "$MATVEEV_BASE_DIR/preset-update-log"
     fi
-    while true; do /bin/sleep 1; done
+    while true; do /bin/sleep 0.05; done
     ;;
   *) exit 2 ;;
 esac
