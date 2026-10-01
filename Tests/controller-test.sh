@@ -43,6 +43,7 @@ cleanup() {
   /bin/rm -rf "$RUNTIME"
 }
 trap cleanup EXIT
+trap 'echo "Controller test failed at line $LINENO: $BASH_COMMAND" >&2; /usr/bin/tail -n 30 "$RUNTIME/vpn.log" "$RUNTIME/vpn.error.log" >&2' ERR
 
 wait_for_file_value() {
   local file="$1"
