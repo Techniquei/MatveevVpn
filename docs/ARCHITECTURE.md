@@ -138,7 +138,8 @@ deadline shared by configuration generation/validation, controller actions, prob
 rollback. Each command carries its absolute expiry, so queueing does not reset the
 budget. The controller converts the remaining time to a monotonic deadline and leaves
 one second for acknowledgement and settings commit. Reload reserves half its remaining
-time for rollback; cleanup kills engines that outlive the remaining grace. A restored
+time for rollback; failed startup cleanup shares that attempt's deadline, and cleanup
+kills engines that outlive the remaining grace. A restored
 configuration can remain stopped for the watchdog to retry when its readiness budget
 is exhausted. Validation/probe subprocesses are terminated at their remaining deadline.
 Failure-context collection runs after UI unlocking. The macOS administrator dialog and

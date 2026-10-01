@@ -295,7 +295,7 @@ start_child() {
       local dns_started="$(monotonic_ms)"
       if ! configure_system_dns; then
         log_event "could not apply the DNS policy"
-        stop_child
+        stop_child "$deadline"
         write_status "error"
         return 1
       fi
@@ -319,14 +319,14 @@ start_child() {
         return 1
       fi
       log_event "VPN DNS did not become ready before the startup deadline" "$dns_started"
-      stop_child
+      stop_child "$deadline"
       write_status "error"
       return 1
     fi
     /bin/sleep 0.2
   done
   log_event "runtime launch did not become ready" "$started"
-  stop_child
+  stop_child "$deadline"
   write_status "error"
   return 1
 }
@@ -354,6 +354,8 @@ cleanup_tunnel_state() {
 stop_child() {
   local started="$(monotonic_ms)"
   local deadline=$((started + 5000))
+  # Failed startup cleanup must not consume the caller's rollback reserve.
+  if [[ "${1:-$deadline}" -lt "$deadline" ]]; then deadline="$1"; fi
   if [[ "${operation_deadline:-$deadline}" -lt "$deadline" ]]; then deadline="$operation_deadline"; fi
   local owned_interface
   owned_interface="$(tunnel_interface)"
