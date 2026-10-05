@@ -345,10 +345,21 @@ private struct NodeListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("Servers").font(.headline)
                 Text("\(controller.availableNodes.count)").font(.caption).foregroundStyle(.secondary)
-                Spacer()
+                if !controller.isInitialSetup {
+                    Button("Change") {
+                        controller.openSetup()
+                        openWindow(id: "connection")
+                    }
+                    .buttonStyle(HoverButtonStyle())
+                    .controlSize(.small)
+                    .help("Change subscription")
+                    .accessibilityLabel("Change subscription")
+                    .disabled(controller.isBusy)
+                }
+                Spacer(minLength: 0)
                 if controller.testingNodes {
                     ProgressView().controlSize(.small)
                 } else {

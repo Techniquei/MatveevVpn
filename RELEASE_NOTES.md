@@ -17,6 +17,8 @@ Stable-only users remain on 1.3.5.
   is connected, using the same direct path they use with the VPN off.
 - Server latency is measured for every server. The selected server's bypass no
   longer makes the other servers look timed out.
+- Change the subscription from **Change** next to Servers. It is no longer in
+  Settings.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

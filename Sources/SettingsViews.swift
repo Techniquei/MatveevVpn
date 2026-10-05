@@ -285,15 +285,9 @@ struct SettingsView: View {
                     .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Subscription and rules").font(.headline)
-                        HStack {
-                            Button("Change subscription…") {
-                                controller.openSetup()
-                                openWindow(id: "connection")
-                            }
-                            Button("Check for updates…") { updater.check() }
-                                .disabled(!updater.available)
-                        }
+                        Text("Updates and rules").font(.headline)
+                        Button("Check for updates…") { updater.check() }
+                            .disabled(!updater.available)
                         Toggle("Receive beta updates", isOn: Binding(
                             get: { updater.betaUpdatesEnabled },
                             set: { updater.setBetaUpdates($0) }
