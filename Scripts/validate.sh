@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_BUILD="$(/usr/bin/mktemp -d /private/tmp/matveev-validation.XXXXXX)"
 trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 
+/bin/bash "$ROOT_DIR/Scripts/test-xray-runtime.sh"
+
 /bin/bash -n "$ROOT_DIR/Resources/payload/uninstall-service.sh"
 /bin/bash -n "$ROOT_DIR/Resources/payload/controller.sh"
 /bin/bash -n "$ROOT_DIR/Resources/payload/dns-manager.sh"

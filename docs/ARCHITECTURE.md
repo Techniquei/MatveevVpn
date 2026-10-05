@@ -1,5 +1,32 @@
 # Architecture
 
+## Xray migration prototype
+
+The production app below still uses the existing controller. The next beta is
+being developed on `codex/xray-beta`; its native service is not installed yet.
+`Runtime/` contains an internal Go child process linking libXray v26.9.30 and
+Xray-core v26.9.30 directly. This avoids embedding a Go runtime in the Swift UI
+or introducing an XCFramework boundary for a core that runs in another process.
+The Go toolchain and modules are pinned; downloaded tools and binaries stay in
+`.build/`. The child accepts bounded newline-delimited JSON on stdin with fixed
+start/validate/stop/status actions. It does not accept config paths or credentials
+in arguments. Engine errors are returned as fixed codes and engine logs are
+disabled in this prototype. `running` describes the core, not tunnel health.
+The future supervisor remains responsible for admission, deadlines, health,
+system network changes and recovery; this worker is not a public privileged API.
+
+Validation and candidate probes must use a separate idle worker because libXray
+construction changes process-wide state. EOF, signals and oversized input stop
+the worker and close listeners. Shutdown has a five-second process exit limit;
+a native call that hangs cannot keep the child alive indefinitely. The prototype
+is exercised with real loopback traffic, without changing host routes or DNS.
+The manual-only `--tun-smoke` command creates and releases a temporary utun,
+accepts no configuration and adds no default routes or system DNS. It is removed
+once the native service acceptance harness covers that lifecycle. See
+`docs/XRAY-RUNTIME-CHECK.md` for the pending manual check.
+
+## Current application
+
 The app has one shared main-actor presentation model and one main window.
 Subscription, settings and routing editors use separate, movable native windows.
 Each editor has one window instance. Closing and reopening subscription setup
