@@ -31,22 +31,25 @@ enum NodeProbe {
         guard let interface = await physicalInterface(until: deadline) else {
             return NodeProbeResult(outcome: .noDirectInterface, latencyMilliseconds: nil, method: nil)
         }
+        guard Date() < deadline else { return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil) }
 
         // While connected, system DNS returns a FakeDNS address for the server
         // name. Ping and TCP to that address time out even though the tunnel works.
-        let target = await numericTarget(node.host, timeout: min(1.5, max(0.4, deadline.timeIntervalSinceNow - 2.5)))
+        // A short batch has no time for that lookup and must still finish at its deadline.
+        let target = await probeTarget(node.host, until: deadline)
         if Task.isCancelled { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
-        if deadline.timeIntervalSinceNow > 0.8 {
-            let pingTimeout = min(2, max(1, Int(deadline.timeIntervalSinceNow.rounded(.down))))
-            let ping = await Command.run("/sbin/ping", [
-                "-n", "-q", "-b", interface, "-c", "2", "-i", "0.2",
-                "-W", "700", "-t", String(pingTimeout), target
-            ], timeout: deadline.timeIntervalSinceNow)
-            if let average = averagePingMilliseconds(ping.output) {
-                return NodeProbeResult(outcome: .reachable, latencyMilliseconds: average, method: .icmp)
-            }
-            if Task.isCancelled { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
+        guard Date() < deadline else { return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil) }
+
+        let pingTimeout = min(2, max(1, Int(deadline.timeIntervalSinceNow.rounded(.down))))
+        let ping = await Command.run("/sbin/ping", [
+            "-n", "-q", "-b", interface, "-c", "2", "-i", "0.2",
+            "-W", "700", "-t", String(pingTimeout), target
+        ], timeout: deadline.timeIntervalSinceNow)
+        if let average = averagePingMilliseconds(ping.output) {
+            return NodeProbeResult(outcome: .reachable, latencyMilliseconds: average, method: .icmp)
         }
+        if Task.isCancelled { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
+        guard Date() < deadline else { return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil) }
 
         let started = Date()
         let tcp = await Command.run("/usr/bin/nc", [
@@ -77,6 +80,13 @@ enum NodeProbe {
         return candidates.first(where: { $0.hasPrefix("en") }) ?? candidates.first
     }
 
+    private static func probeTarget(_ host: String, until deadline: Date) async -> String {
+        if ipv4Literal(host) { return host }
+        let budget = deadline.timeIntervalSinceNow - 0.8
+        guard budget >= 0.4 else { return host }
+        return await numericTarget(host, timeout: min(1.5, budget))
+    }
+
     static func numericTarget(_ host: String, timeout: TimeInterval) async -> String {
         if ipv4Literal(host) { return host }
         return await withCheckedContinuation { continuation in
@@ -98,7 +108,7 @@ enum NodeProbe {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
         process.arguments = [
-            "-sS", "--http1.1", "--max-time", String(format: "%.1f", max(0.5, timeout)),
+            "-sS", "--http1.1", "--max-time", String(format: "%.1f", max(0.1, timeout)),
             "--resolve", "cloudflare-dns.com:443:1.1.1.1",
             "-H", "content-type: application/dns-message",
             "-H", "accept: application/dns-message",

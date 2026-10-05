@@ -7,7 +7,7 @@ Stable-only users remain on 1.3.5.
   and routing. Subscriptions and direct links accept VLESS, VMess AEAD,
   Trojan, Shadowsocks, SOCKS and Hysteria2. Legacy VMess QR links, Clash
   configs and raw Xray JSON are not imported as nodes.
-- Requires system component version 23. After updating the app, click **Update**
+- Requires system component version 24. After updating the app, click **Update**
   on the main screen (or **Settings → Repair service…**) and approve the
   administrator prompt. This installs the Xray service and retains the
   subscription, selected server, routing rules and desired connection state.
