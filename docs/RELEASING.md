@@ -34,10 +34,11 @@ end-to-end UI installation and relaunch work on every supported macOS version.
 
 ## Stable and beta releases
 
-Stable tags use `vX.Y.Z`; beta tags use `vX.Y.Z-beta.N`. VERSION must match the
-full tag suffix, and BUILD_NUMBER must increase across both channels. For example,
-1.3.5 uses 1305 and 1.4.0-beta.1 uses 1400; the eventual stable 1.4.0 must use a
-number greater than all of its beta builds.
+Stable tags use `vX.Y.Z`; beta tags use `vX.Y.Z-beta.N` or `vX.Y.Z-beta.xray`.
+VERSION must match the full tag suffix, and BUILD_NUMBER must increase across
+both channels. For example, 1.3.5 uses 1305 and 1.4.0-beta.1 uses 1400; the
+eventual stable 1.4.0 must use a number greater than all of its beta builds.
+`1.4.0-beta.xray` uses 1413.
 
 The workflow preserves the latest stable appcast before generating the new item.
 `sign-release.sh DIR VERSION beta` passes Sparkle's `--channel beta`. A beta is

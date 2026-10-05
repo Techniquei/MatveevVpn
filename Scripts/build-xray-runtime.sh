@@ -30,6 +30,9 @@ export GOCACHE="$ROOT_DIR/.build/go-cache"
 export CGO_ENABLED=0
 mkdir -p "$ROOT_DIR/.build/xray-runtime"
 cd "$ROOT_DIR/Runtime"
-"$GO_BINARY" build -mod=readonly -trimpath -o "$ROOT_DIR/.build/xray-runtime/matveev-xray-runtime" .
+"$GO_BINARY" build -mod=readonly -trimpath -o "$ROOT_DIR/.build/xray-runtime/matveev-xray-worker" .
+"$GO_BINARY" build -mod=readonly -trimpath -o "$ROOT_DIR/.build/xray-runtime/matveev-xray-service" ./cmd/service
+# The worker name expected by the existing runtime tests.
+ln -sfn matveev-xray-worker "$ROOT_DIR/.build/xray-runtime/matveev-xray-runtime"
 "$GO_BINARY" mod verify
 echo "runtime: .build/xray-runtime/matveev-xray-runtime"

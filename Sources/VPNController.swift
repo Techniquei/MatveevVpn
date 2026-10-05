@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.3"
+    static let releaseVersion = "1.4.0-beta.xray"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -90,6 +90,23 @@ final class VPNController: ObservableObject {
     func refresh() {
         guard !isBusy else { return }
         isInstalled = service.installed
+        if let live = service.liveStatus() {
+            isRunning = live.state == "connected"
+            isRecovering = live.state == "recovering"
+            needsUpgrade = isInstalled && service.currentVersion != SystemService.version
+            availableNodes = (try? Subscription.nodes(state.subscription)) ?? []
+            if message == "Checking status…" {
+                message = isInstalled && state.selectedNodeID != nil ? "" : "Add a subscription to get started."
+            }
+            if !isBusy {
+                if let line = service.statusLine() { message = line }
+                else if let node = availableNodes.first(where: { $0.id == live.nodeID }), isRunning {
+                    message = "Connected through \(node.name)."
+                }
+            }
+            previouslyRunning = isRunning
+            return
+        }
         isRunning = service.running
         let wasRunning = previouslyRunning
         // launchd may not have published its first status yet when the UI opens.
@@ -204,13 +221,10 @@ final class VPNController: ObservableObject {
             let wasRunning = self.service.running
             var next = self.state
             next.desiredOn = action != "off"
-            if action != "off" && self.needsUpgrade {
+            if action != "off" {
+                // Connect must admit the selected server before asking the service to start.
                 try await self.commit(next, until: deadline)
                 return
-            }
-            if action != "off" {
-                try self.store.save(next)
-                self.state = next
             }
             do { try await self.service.send(action, until: deadline) }
             catch {
@@ -294,11 +308,11 @@ final class VPNController: ObservableObject {
     private func loadCandidateSubscription(_ input: String, useHappCompatibility: Bool) async throws {
         message = "Loading subscription…"
         let data: Data
-        if input.hasPrefix("vless://") {
+        if Subscription.isDirectLink(input) {
             data = Data(input.utf8)
         } else {
             guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
-                throw VPNError.message("Enter an HTTPS subscription URL or a VLESS link.")
+                throw VPNError.message("Enter an HTTPS subscription URL or a server link.")
             }
             let deviceID = useHappCompatibility ? Self.happDeviceID(for: url) : nil
             data = try await SubscriptionFetcher.fetch(
@@ -472,14 +486,20 @@ final class VPNController: ObservableObject {
         AppLogger.shared.write("node latency check started; count=\(nodes.count)")
         Task {
             for node in nodes { self.probeResults.removeValue(forKey: node.id) }
-            await withTaskGroup(of: (String, NodeProbeResult).self) { group in
-                var iterator = nodes.makeIterator()
-                for _ in 0..<4 {
-                    if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
+            if let measured = await self.service.measureNodes(nodes.map(\.id), until: deadline) {
+                for node in nodes {
+                    self.probeResults[node.id] = measured[node.id] ?? NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil)
                 }
-                for await (id, result) in group {
-                    self.probeResults[id] = result
-                    if Date() < deadline, let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
+            } else {
+                await withTaskGroup(of: (String, NodeProbeResult).self) { group in
+                    var iterator = nodes.makeIterator()
+                    for _ in 0..<4 {
+                        if let node = iterator.next() { group.addTask { (node.id, await self.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
+                    }
+                    for await (id, result) in group {
+                        self.probeResults[id] = result
+                        if Date() < deadline, let node = iterator.next() { group.addTask { (node.id, await self.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
+                    }
                 }
             }
             let reachable = nodes.filter { self.probeResults[$0.id]?.isReachable == true }.count
@@ -491,10 +511,23 @@ final class VPNController: ObservableObject {
         guard let node = (availableNodes + candidateNodes).first(where: { $0.id == id }) else {
             return
         }
-        let result = await NodeProbe.measure(node)
+        let result = await measure(node, timeout: 5)
         guard !Task.isCancelled else { return }
         probeResults[id] = result
         AppLogger.shared.write("node probe \(id.prefix(8)): \(result.displayText)")
+    }
+
+    // The privileged service adds a temporary host route, so a node that is
+    // not the active server can be measured while split-default routes are up.
+    // The local ping stays for an older service that cannot do that.
+    private func measure(_ node: VPNNode, timeout: TimeInterval) async -> NodeProbeResult {
+        let deadline = Date().addingTimeInterval(timeout)
+        if let measured = await service.measureNodes([node.id], until: deadline), let result = measured[node.id] {
+            return result
+        }
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil) }
+        return await NodeProbe.measure(node, timeout: remaining)
     }
 
     func probeCandidateNode(_ id: String?) {
@@ -650,7 +683,7 @@ final class VPNController: ObservableObject {
             try SystemService.checkDeadline(deadline)
             if service.isConnecting { return }
 
-            let probe = await NodeProbe.measure(candidate, timeout: min(3, deadline.timeIntervalSinceNow))
+            let probe = await measure(candidate, timeout: min(3, deadline.timeIntervalSinceNow))
             try Task.checkCancellation()
             try SystemService.checkDeadline(deadline)
             probeResults[candidate.id] = probe

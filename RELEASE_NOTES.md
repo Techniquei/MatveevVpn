@@ -1,33 +1,22 @@
-# matveevVpn 1.4.0-beta.3
+# matveevVpn 1.4.0-beta.xray
 
-This opt-in beta improves connection startup, node switching and recovery.
+This opt-in beta replaces the system tunnel with an Xray service.
 Stable-only users remain on 1.3.5.
 
-- Connection and configuration operations, including each automatic recovery
-  cycle, share a 15-second deadline across validation, startup and rollback.
-  Expired commands cannot start a delayed operation. Administrator authorization
-  and system component installation remain separate macOS operations.
-- When Internet is unavailable during computer startup, the controller keeps
-  the tunnel ready and checks again when connectivity returns, even if the
-  network address has not changed. The app avoids competing recovery attempts
-  and clears an automatic recovery error after the connection becomes healthy.
-- Startup checks actual tunnel readiness instead of waiting a fixed second.
-  Both engines stop together, with exit checks every 100 ms. Node latency runs
-  in the background after switching; batch measurements also have a bounded
-  deadline.
-- Adds stage durations to existing bounded diagnostic logs for configuration
-  validation, startup, DNS readiness and shutdown.
-- Fixes termination timing during Sparkle's update-and-relaunch sequence and
-  simplifies latency labels.
-- Requires system component version 14. After updating the app, click **Update**
+- The privileged component is now the Xray service. It owns the tunnel, DNS
+  and routing. Subscriptions and direct links accept VLESS, VMess AEAD,
+  Trojan, Shadowsocks, SOCKS and Hysteria2. Legacy VMess QR links, Clash
+  configs and raw Xray JSON are not imported as nodes.
+- Requires system component version 23. After updating the app, click **Update**
   on the main screen (or **Settings → Repair service…**) and approve the
-  administrator prompt. This installs the fixed controller and retains the
+  administrator prompt. This installs the Xray service and retains the
   subscription, selected server, routing rules and desired connection state.
-- Defers automatic health checks and startup configuration reconciliation until
-  the incompatible system component has been updated.
-
-Updating the component briefly interrupts the connection. An app update or
-computer restart alone does not replace the privileged controller.
+- Updating the component briefly interrupts the connection. An app update or
+  computer restart alone does not replace the privileged service.
+- Sites that are not selected for VPN routing stay reachable while the tunnel
+  is connected, using the same direct path they use with the VPN off.
+- Server latency is measured for every server. The selected server's bypass no
+  longer makes the other servers look timed out.
 
 Requires Apple Silicon and macOS 13 or later. The current build is ad-hoc signed
 and is not notarized by Apple.

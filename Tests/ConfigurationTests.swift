@@ -23,9 +23,23 @@ import Foundation
             .replacingOccurrences(of: "=", with: "")
         let decodedURLSafe = try Subscription.decode(Data(urlSafe.utf8))
         precondition(decodedURLSafe == text)
-        let mixed = "\u{feff}vmess://unsupported\n" + text + "trojan://unsupported\n"
+        let trojan = "trojan://secret@trojan.example:443#Trojan"
+        let vmess = "vmess://33333333-3333-3333-3333-333333333333@vmess.example:8443?encryption=auto#VMess"
+        let shadowsocks = "ss://YWVzLTEyOC1nY206cGFzc3dvcmQ@ss.example:8388#Shadowsocks"
+        let hysteria = "hy2://auth@hop.example:443,8443#Hop"
+        let mixed = "\u{feff}vmess://unsupported\n" + text + "trojan://unsupported\n" + trojan + "\n" + vmess + "\n" + shadowsocks + "\n" + hysteria + "\nclash://nope\n"
         let decodedMixed = try Subscription.decode(Data(mixed.utf8))
-        precondition(decodedMixed == text)
+        precondition(decodedMixed == text + trojan + "\n" + vmess + "\n" + shadowsocks + "\n" + hysteria + "\n")
+        let imported = try Subscription.nodes(decodedMixed)
+        precondition(imported.contains { $0.name == "Trojan" && $0.host == "trojan.example" && $0.port == 443 })
+        precondition(imported.contains { $0.name == "VMess" && $0.host == "vmess.example" && $0.port == 8443 })
+        precondition(imported.contains { $0.name == "Shadowsocks" && $0.host == "ss.example" && $0.port == 8388 })
+        precondition(imported.contains { $0.name == "Hop" && $0.host == "hop.example" && $0.port == 443 })
+        let otherHop = try Subscription.nodes("hy2://other-auth@hop.example:443,8443#Hop")
+        precondition(otherHop[0].id != imported.last?.id, "Different Hysteria credentials must remain different servers")
+        let encodedTrojan = Data(Data(trojan.utf8).base64EncodedString().utf8)
+        let decodedTrojan = try Subscription.decode(encodedTrojan)
+        precondition(decodedTrojan == trojan + "\n")
         let decodedDirect = try Subscription.decode(Data(a.utf8))
         precondition(decodedDirect == a + "\n")
         let happJSON = """

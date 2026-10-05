@@ -1,11 +1,36 @@
 import SwiftUI
 import AppKit
 
+private extension SpeedMonitor {
+    static func assertTunnelSelection() {
+        let interfaces = [(name: "en0", address: "192.168.31.38"), (name: "utun4", address: "198.18.0.1"), (name: "utun900", address: "169.254.250.2")]
+        precondition(tunnelName(among: interfaces) == "utun900",
+                     "Speed must follow the Xray utun local address, not the previous sing-box address")
+        precondition(tunnelName(among: [(name: "utun4", address: "198.18.0.1")]) == nil)
+        let now = Date()
+        let first = pace(previous: nil, name: "utun900", received: 1_000, sent: 100, time: now)
+        precondition(first.download == 0 && first.upload == 0)
+        let live = pace(previous: first.next, name: "utun900", received: 5_000, sent: 1_100, time: now.addingTimeInterval(1))
+        precondition(live.download == 4_000 && live.upload == 1_000)
+        let restarted = pace(previous: live.next, name: "utun901", received: 50, sent: 10, time: now.addingTimeInterval(2))
+        precondition(restarted.download == 0 && restarted.upload == 0,
+                     "A replaced tunnel must start a new baseline instead of keeping the previous counters")
+        let afterRestart = pace(previous: restarted.next, name: "utun901", received: 2_050, sent: 1_010, time: now.addingTimeInterval(3))
+        precondition(afterRestart.download == 2_000 && afterRestart.upload == 1_000)
+        let recycled = pace(previous: afterRestart.next, name: "utun901", received: 10, sent: 1, time: now.addingTimeInterval(4))
+        precondition(recycled.download == 0 && recycled.upload == 0)
+        let afterRecycle = pace(previous: recycled.next, name: "utun901", received: 410, sent: 201, time: now.addingTimeInterval(5))
+        precondition(afterRecycle.download == 400 && afterRecycle.upload == 200,
+                     "Counters that restart on the same utun must become the new baseline, not stay at zero")
+    }
+}
+
 // validate.sh appends this test to the UI source to exercise its private views.
 @main struct MainLayoutTests {
     @MainActor static func main() throws {
         _ = NSApplication.shared
         NSApplication.shared.setActivationPolicy(.prohibited)
+        SpeedMonitor.assertTunnelSelection()
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let store = StateStore(directory: root, legacyDirectory: root.appendingPathComponent("none"), runtimeHashFile: root.appendingPathComponent("no-runtime"))

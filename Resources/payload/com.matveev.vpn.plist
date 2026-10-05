@@ -6,7 +6,7 @@
   <string>com.matveev.vpn</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Library/Application Support/matveevVpn/bin/controller.sh</string>
+    <string>/Library/Application Support/matveevVpn/bin/matveev-xray-service</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

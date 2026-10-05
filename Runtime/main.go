@@ -13,17 +13,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/xtls/libxray/xray"
+	"github.com/xtls/xray-core/core"
 )
 
 const protocolVersion = 1
 const maximumRequestBytes = 1 << 20
 
 type request struct {
-	Version int             `json:"version"`
-	ID      string          `json:"id"`
-	Action  string          `json:"action"`
-	Config  json.RawMessage `json:"config,omitempty"`
+	Version          int             `json:"version"`
+	ID               string          `json:"id"`
+	Action           string          `json:"action"`
+	Config           json.RawMessage `json:"config,omitempty"`
+	FakeDNSDirectory string          `json:"fakeDNSDirectory,omitempty"`
 }
 
 type response struct {
@@ -36,7 +37,7 @@ type response struct {
 }
 
 func handle(input []byte) response {
-	result := response{Version: protocolVersion, Core: xray.XrayVersion(), Running: xray.GetXrayState()}
+	result := response{Version: protocolVersion, Core: core.Version(), Running: runtimeCore.running()}
 	var command request
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.DisallowUnknownFields()
@@ -51,7 +52,8 @@ func handle(input []byte) response {
 		return result
 	}
 	result.ID = command.ID
-	if command.Action != "start" && command.Action != "validate" && len(command.Config) != 0 {
+	if command.Action != "start" && command.Action != "validate" &&
+		(len(command.Config) != 0 || command.FakeDNSDirectory != "") {
 		result.Error = "unexpected_config"
 		return result
 	}
@@ -60,7 +62,7 @@ func handle(input []byte) response {
 	case "start", "validate":
 		// Validation constructors change process-global state. An active worker
 		// must never validate a different config beside its managed instance.
-		if xray.GetXrayState() {
+		if runtimeCore.running() {
 			result.Error = "already_running"
 			break
 		}
@@ -73,13 +75,9 @@ func handle(input []byte) response {
 		// The prototype keeps them disabled; diagnostics belong to its parent.
 		config["log"] = json.RawMessage(`{"loglevel":"none"}`)
 		encoded, _ := json.Marshal(config)
-		if command.Action == "validate" {
-			err = xray.TestXray(string(encoded))
-		} else {
-			err = xray.RunXray(string(encoded))
-		}
+		err = runtimeCore.construct(encoded, command.FakeDNSDirectory, command.Action == "start")
 	case "stop":
-		err = xray.StopXray()
+		err = runtimeCore.stop()
 	case "status":
 	default:
 		result.Error = "unknown_action"
@@ -88,7 +86,7 @@ func handle(input []byte) response {
 		// Upstream errors can contain server names or configuration values.
 		result.Error = "engine_rejected"
 	}
-	result.Running = xray.GetXrayState()
+	result.Running = runtimeCore.running()
 	result.Success = result.Error == ""
 	return result
 }
@@ -138,7 +136,7 @@ func main() {
 		exitCode = 1
 	}
 	stopped := make(chan struct{})
-	go func() { _ = xray.StopXray(); close(stopped) }()
+	go func() { _ = runtimeCore.stop(); close(stopped) }()
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):

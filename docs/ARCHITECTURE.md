@@ -1,32 +1,24 @@
 # Architecture
 
-## Xray migration prototype
+## Xray service
 
-The production app below still uses the existing controller. The next beta is
-being developed on `codex/xray-beta`; its native service is not installed yet.
-`Runtime/` contains an internal Go child process linking libXray v26.9.30 and
-Xray-core v26.9.30 directly. This avoids embedding a Go runtime in the Swift UI
-or introducing an XCFramework boundary for a core that runs in another process.
-The Go toolchain and modules are pinned; downloaded tools and binaries stay in
-`.build/`. The child accepts bounded newline-delimited JSON on stdin with fixed
-start/validate/stop/status actions. It does not accept config paths or credentials
-in arguments. Engine errors are returned as fixed codes and engine logs are
-disabled in this prototype. `running` describes the core, not tunnel health.
-The future supervisor remains responsible for admission, deadlines, health,
-system network changes and recovery; this worker is not a public privileged API.
+The privileged component is `matveev-xray-service`, installed through launchd.
+It owns accepted configuration, DNS, routes, health and recovery. A child
+worker links libXray and Xray-core and owns the TUN instance. The Swift app
+stays the UI and the local socket client; it does not embed a Go runtime.
+The Go toolchain and modules are pinned. Downloaded tools and binaries stay
+in `.build/`.
 
-Validation and candidate probes must use a separate idle worker because libXray
-construction changes process-wide state. EOF, signals and oversized input stop
-the worker and close listeners. Shutdown has a five-second process exit limit;
-a native call that hangs cannot keep the child alive indefinitely. The prototype
-is exercised with real loopback traffic, without changing host routes or DNS.
-The manual-only `--tun-smoke` command creates and releases a temporary utun,
-accepts no configuration and adds no default routes or system DNS. It is removed
-once the native service acceptance harness covers that lifecycle. See
-`docs/XRAY-RUNTIME-CHECK.md` for the pending manual check.
-The future Go supervisor, snapshot/IPC semantics and persistent FakeDNS design
-are specified in `docs/XRAY-DECISIONS.md`; they are not implemented by this
-prototype. `docs/GROK-HANDOFF.md` records the checkpoint and implementation order.
+Admitted nodes are single share links: VLESS, VMess AEAD, Trojan, Shadowsocks,
+SOCKS and Hysteria2. Legacy VMess JSON, Clash documents and raw Xray JSON are
+not nodes. The socket accepts fixed actions only. Callers cannot supply Xray
+JSON, filesystem paths or shell commands. Credentials do not appear in process
+arguments or ordinary errors. Engine logs are disabled.
+
+An older installation that still has `controller.sh` is replaced by the
+installer. That installer stops the previous daemon and restores the network
+before the Xray service starts. Validation uses a separate idle worker because
+libXray construction changes process-wide state.
 
 ## Current application
 
@@ -39,7 +31,9 @@ The main window displays servers directly in a scrollable list. Its current serv
 stays pinned above the scrolling alternatives; both derive from the saved node ID.
 Clicking a server commits its ID and desired-on state together through the coordinator.
 The menu bar uses the same state as the window. The window measures tunnel traffic
-with a shared speed monitor.
+with a shared speed monitor, reading byte counters from the utun whose local
+address is 169.254.250.2, the host side of the gateway 169.254.250.1/30.
+A replaced or counter-reset tunnel starts a new baseline.
 All app windows share the same dark palette and compact header. Server rows use
 the main content margin directly, without an additional inset panel.
 
@@ -50,9 +44,9 @@ the main content margin directly, without an additional inset panel.
 | ConfigurationCoordinator | Validate, deploy, commit and recovery boundary |
 | Configuration / StateStore | Versioned private state, stable node identity, migration |
 | SubscriptionFetcher | Bounded HTTPS transfer without persistent HTTP cache |
-| SystemService | Fixed controller protocol, config generation and privileged install |
-| build-config.rb | Derive sing-box configuration and the optional REALITY sidecar |
-| controller.sh | Privileged tunnel lifetime, reload rollback, sleep/network recovery |
+| SystemService | Fixed local socket client and privileged install |
+| matveev-xray-service | Accepted state, DNS, routes, health and recovery |
+| matveev-xray-worker | Xray TUN instance |
 | Diagnostics / Updater | Node latency, reachability, rule explanation and Sparkle integration |
 
 ## State and transactions
@@ -125,9 +119,7 @@ process rule keeps the Xray uplink outside the tunnel. The primary configuration
 contains a hash marker for the private Xray sidecar, preserving transaction identity.
 
 Application bundle routing uses an escaped, anchored executable-path expression.
-It does not infer parent-process ancestry. Diagnostics may populate an executable
-path from a running application and explain configured rules, but do not claim
-to observe the actual rule used by an existing socket.
+It does not infer parent-process ancestry.
 
 The runtime status file is a heartbeat in controller v2. A stale heartbeat is not
 reported as connected. External IP checks are separate, bounded requests. They
@@ -137,12 +129,17 @@ Node latency is measured automatically when the app starts and again when a
 node is selected. The selection probe runs in the background after the configuration
 transaction finishes, so it does not delay unlocking user operations. A new individual
 probe cancels the previous one; cancelled probes do not publish their results.
-The four concurrent workers in a latency batch share a fifteen-second deadline;
-no further nodes are queued after it expires, and each probe uses the remaining budget.
-Probes are bound to the physical network interface so the TUN
-cannot report a local connect time for an alternate node. Three ICMP packets
-provide the average RTT; nodes that block ICMP use one direct, interface-bound
-TCP handshake as a fallback. The UI displays latency without the probe method. While the VPN is expected to be on, a bounded tunnel-DNS probe
+When the installed service matches the app, that service resolves the node and
+measures one physical TCP handshake. The tunnel's unscoped 0/1 and 128/1 routes
+are more specific than the physical default. Sockets bound to the physical
+interface use matching ifscope routes via the physical gateway; those routes
+are installed with the tunnel and removed with it. The service also adds
+a temporary host route via the physical gateway for a latency probe, measures, and
+removes the route. The active server's existing bypass is reused and is not removed.
+A batch shares the fifteen-second operation deadline. If the service is unavailable
+or older, the app keeps the local probe: four workers, ICMP on the physical
+interface, then one interface-bound TCP handshake. The UI displays latency without
+the probe method. While the VPN is expected to be on, a bounded tunnel-DNS probe
 runs every 15 seconds. Three consecutive failures start recovery: two restarts
 of the current node, then up to three alternate nodes ordered by known TCP
 latency. A persistent circuit breaker permits at most three actual node switches
@@ -212,7 +209,13 @@ One user owns the system controller command directory. This is not a multi-user
 VPN service. The privileged controller accepts only fixed actions and treats
 configuration as user-owned input validated by sing-box. Ordinary drag-to-Trash
 cannot remove a privileged launch daemon; the in-app Uninstall action performs
-that cleanup and then moves the application to Trash.
+that cleanup and then moves the application to Trash. Installation records the
+app bundle. Quitting matveevVpn leaves that bundle in place, so the tunnel keeps
+running. If the bundle is removed, the service restores DNS and routes and does
+not start the tunnel again until that same bundle exists. A brief absence while
+Sparkle replaces the bundle in place does not count as removal. Moving the app
+to another folder is removal until the service is installed again from the new
+location.
 
 Sparkle replaces only the app. A changed system protocol prompts for a separate
 component update. Developer ID/notarization and live network acceptance require

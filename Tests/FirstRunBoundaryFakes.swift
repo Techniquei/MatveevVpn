@@ -61,6 +61,7 @@ struct SystemService {
     static var waitForNetworkOnRestart = false
     static var restartDelay: TimeInterval = 0
     static var restartDeadlines: [Date] = []
+    static var nodeProbes: [String: NodeProbeResult]?
     var installed: Bool { Self.installedValue }
     var running: Bool { Self.runningValue }
     var currentVersion: String { Self.currentVersionValue }
@@ -103,8 +104,18 @@ struct SystemService {
         Self.runtimeStatusValue = nil
     }
     func configurationMatches(_ config: URL) -> Bool { true }
+    func liveStatus() -> (state: String, nodeID: String, error: String)? { nil }
+    func statusLine() -> String? { nil }
     func recentRuntimeErrors() -> String { "" }
     func recentRuntimeErrorDetails() -> String? { nil }
+    func measureNodes(_ ids: [String], until deadline: Date) async -> [String: NodeProbeResult]? {
+        guard let prepared = Self.nodeProbes else { return nil }
+        var results: [String: NodeProbeResult] = [:]
+        for id in ids {
+            if let result = prepared[id] { results[id] = result }
+        }
+        return results
+    }
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     static func reset() {
         installedValue = false; runningValue = false; cancelInstall = false
@@ -112,7 +123,7 @@ struct SystemService {
         routingUpdateValue = nil
         currentVersionValue = version
         runtimeStatusValue = nil; rejectRestart = false; waitForNetworkOnRestart = false
-        restartDelay = 0; restartDeadlines = []
+        restartDelay = 0; restartDeadlines = []; nodeProbes = nil
         operationTimeout = 15
         Command.tunnelDNSRequests = 0
         Command.tunnelDNSAvailable = false

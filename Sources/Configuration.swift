@@ -86,9 +86,17 @@ struct VPNNode: Identifiable, Hashable {
     let host: String
     let port: Int
     let index: Int
+    let uri: String
 }
 
 enum Subscription {
+    static let shareSchemes = ["vless", "vmess", "trojan", "ss", "socks", "hysteria2", "hy2"]
+
+    static func isDirectLink(_ input: String) -> Bool {
+        let lower = input.lowercased()
+        return shareSchemes.contains { lower.hasPrefix($0 + "://") }
+    }
+
     static func decode(_ data: Data, allowHappJSON: Bool = false) throws -> String {
         guard data.count <= 4_194_304, let raw = String(data: data, encoding: .utf8) else {
             throw VPNError.message("The subscription is too large or is not text.")
@@ -102,19 +110,32 @@ enum Subscription {
         let compact = cleaned.components(separatedBy: .whitespacesAndNewlines).joined()
         let padded = compact + String(repeating: "=", count: (4 - compact.count % 4) % 4)
         let base64 = padded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        let decoded = cleaned.contains("vless://") ? cleaned : String(data: Data(base64Encoded: base64) ?? Data(), encoding: .utf8) ?? ""
+        let decoded = containsShareLink(cleaned) ? cleaned : String(data: Data(base64Encoded: base64) ?? Data(), encoding: .utf8) ?? ""
         let lines = decoded.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}"))) }
-            .filter { $0.hasPrefix("vless://") }
+            .filter { shouldImport($0) }
         guard !lines.isEmpty else {
             throw VPNError.diagnostic(
-                "The subscription must contain VLESS links.",
-                "Received bytes: \(data.count)\nText encoding: UTF-8\nDirect VLESS content: \(cleaned.contains("vless://") ? "yes" : "no")\nBase64 decoding: \(Data(base64Encoded: base64) == nil ? "failed" : "succeeded")"
+                "The subscription must contain a supported server link.",
+                "Received bytes: \(data.count)\nText encoding: UTF-8\nSupported share link: \(containsShareLink(decoded) ? "yes" : "no")\nBase64 decoding: \(Data(base64Encoded: base64) == nil ? "failed" : "succeeded")"
             )
         }
         let result = lines.joined(separator: "\n") + "\n"
         _ = try nodes(result)
         return result
+    }
+
+    private static func containsShareLink(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return shareSchemes.contains { lower.contains($0 + "://") }
+    }
+
+    // VLESS lines stay in the imported text even when malformed, so nodes() can
+    // reject that subscription. Other unrecognized or incomplete lines are skipped.
+    private static func shouldImport(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        if lower.hasPrefix("vless://") { return true }
+        return (try? parseNode(line, line: 1)) != nil
     }
 
     private static func happVLESSLinks(_ text: String) -> [String]? {
@@ -227,19 +248,91 @@ enum Subscription {
 
     static func nodes(_ text: String) throws -> [VPNNode] {
         var seen = Set<String>()
-        return try text.split(whereSeparator: \.isNewline).enumerated().map { offset, line in
-            guard var parts = URLComponents(string: String(line)), parts.scheme == "vless",
-                  let host = parts.host, !host.isEmpty, let port = parts.port, (1...65535).contains(port),
-                  let user = parts.user, UUID(uuidString: user) != nil else {
-                throw VPNError.diagnostic("Invalid VLESS node on line \(offset + 1).", "The node is missing a valid UUID, hostname or port. Credentials and addresses were omitted from this report.")
-            }
-            let name = parts.fragment.flatMap { $0.isEmpty ? nil : $0 } ?? "\(host):\(port)"
-            parts.fragment = nil
-            parts.host = host.lowercased()
-            parts.queryItems = parts.queryItems?.sorted { ($0.name, $0.value ?? "") < ($1.name, $1.value ?? "") }
-            let id = SHA256.hash(data: Data((parts.string ?? "").utf8)).map { String(format: "%02x", $0) }.joined()
-            return VPNNode(id: id, name: name, host: host, port: port, index: offset + 1)
-        }.filter { seen.insert($0.id).inserted }
+        return try text.split(whereSeparator: \.isNewline).enumerated().compactMap { offset, line in
+            let node = try parseNode(String(line), line: offset + 1)
+            return seen.insert(node.id).inserted ? node : nil
+        }
+    }
+
+    private static func parseNode(_ line: String, line lineNumber: Int) throws -> VPNNode {
+        if let node = standardNode(line, line: lineNumber) { return node }
+        if let node = hysteriaHopNode(line, line: lineNumber) { return node }
+        throw VPNError.diagnostic("Invalid server link on line \(lineNumber).", "The link is missing a valid hostname or port. Credentials and addresses were omitted from this report.")
+    }
+
+    private static func standardNode(_ line: String, line lineNumber: Int) -> VPNNode? {
+        guard var parts = URLComponents(string: line),
+              let scheme = parts.scheme?.lowercased(), shareSchemes.contains(scheme),
+              let host = parts.host, !host.isEmpty, !host.contains("/"),
+              let port = parts.port, (1...65535).contains(port),
+              parts.path.isEmpty || parts.path == "/",
+              acceptsCredentials(parts, scheme: scheme) else { return nil }
+        let name = parts.fragment.flatMap { $0.isEmpty ? nil : $0 } ?? "\(host):\(port)"
+        parts.fragment = nil
+        parts.host = host.lowercased()
+        parts.queryItems = parts.queryItems?.sorted { ($0.name, $0.value ?? "") < ($1.name, $1.value ?? "") }
+        let id = SHA256.hash(data: Data((parts.string ?? "").utf8)).map { String(format: "%02x", $0) }.joined()
+        return VPNNode(id: id, name: name, host: host, port: port, index: lineNumber, uri: line)
+    }
+
+    private static func acceptsCredentials(_ parts: URLComponents, scheme: String) -> Bool {
+        switch scheme {
+        case "vless", "vmess":
+            return parts.user.flatMap({ UUID(uuidString: $0) }) != nil
+        case "trojan", "ss":
+            return parts.user?.isEmpty == false || parts.password?.isEmpty == false
+        case "socks", "hysteria2", "hy2":
+            return true
+        default:
+            return false
+        }
+    }
+
+    // Hysteria port lists are not a single URL port. The displayed port is the
+    // first one; the stored link keeps the full hopping range.
+    private static func hysteriaHopNode(_ line: String, line lineNumber: Int) -> VPNNode? {
+        guard let separator = line.range(of: "://") else { return nil }
+        let scheme = line[..<separator.lowerBound].lowercased()
+        guard scheme == "hysteria2" || scheme == "hy2" else { return nil }
+        var body = String(line[separator.upperBound...])
+        var fragment: String?
+        if let hash = body.lastIndex(of: "#") {
+            fragment = String(body[body.index(after: hash)...]).removingPercentEncoding
+            body = String(body[..<hash])
+        }
+        let queryIndex = body.firstIndex(of: "?")
+        let authority = queryIndex.map { String(body[..<$0]) } ?? body
+        let userinfo: String
+        let hostport: String
+        if let at = authority.lastIndex(of: "@") {
+            userinfo = String(authority[..<at])
+            hostport = String(authority[authority.index(after: at)...])
+        } else {
+            userinfo = ""
+            hostport = authority
+        }
+        let host: String
+        let portText: String
+        if hostport.hasPrefix("[") {
+            guard let end = hostport.firstIndex(of: "]") else { return nil }
+            host = String(hostport[hostport.index(after: hostport.startIndex)..<end])
+            let tail = hostport[hostport.index(after: end)...]
+            guard tail.hasPrefix(":") else { return nil }
+            portText = String(tail.dropFirst())
+        } else if let colon = hostport.lastIndex(of: ":") {
+            host = String(hostport[..<colon])
+            portText = String(hostport[hostport.index(after: colon)...])
+        } else {
+            return nil
+        }
+        guard portText.contains(",") || portText.contains("-"),
+              let first = portText.split(whereSeparator: { $0 == "," || $0 == "-" }).first,
+              let port = Int(first), (1...65535).contains(port),
+              !host.isEmpty, !host.contains("/") else { return nil }
+        let name = fragment.flatMap { $0.isEmpty ? nil : $0 } ?? "\(host):\(port)"
+        let identity = "\(scheme)|\(userinfo)|\(host.lowercased())|\(portText)|\(queryIndex.map { String(body[$0...]) } ?? "")"
+        let id = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return VPNNode(id: id, name: name, host: host, port: port, index: lineNumber, uri: line)
     }
 }
 

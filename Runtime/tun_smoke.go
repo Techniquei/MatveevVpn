@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/xtls/libxray/xray"
+	"github.com/xtls/xray-core/core"
 )
 
 // This fixed, manual-only probe exists until the native service has its own
@@ -36,7 +36,7 @@ func runTunSmoke(output io.Writer) error {
 		Created   bool   `json:"created"`
 		Released  bool   `json:"released"`
 		Error     string `json:"error,omitempty"`
-	}{Check: "tun", Core: xray.XrayVersion()}
+	}{Check: "tun", Core: core.Version()}
 	defer func() { _ = json.NewEncoder(output).Encode(result) }()
 	if os.Geteuid() != 0 {
 		result.Error = "administrator_required"
@@ -53,13 +53,13 @@ func runTunSmoke(output io.Writer) error {
 		result.Error = "no_free_interface"
 		return errors.New(result.Error)
 	}
-	if err := xray.RunXray(string(tunSmokeConfig(result.Interface))); err != nil {
+	if err := runtimeCore.construct(tunSmokeConfig(result.Interface), "", true); err != nil {
 		result.Error = "tun_start_failed"
 		return errors.New(result.Error)
 	}
 	_, err := net.InterfaceByName(result.Interface)
 	result.Created = err == nil
-	if err := xray.StopXray(); err != nil {
+	if err := runtimeCore.stop(); err != nil {
 		result.Error = "tun_stop_failed"
 		return errors.New(result.Error)
 	}

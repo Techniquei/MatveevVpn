@@ -7,7 +7,14 @@ final class SpeedMonitor: ObservableObject {
     @Published var downloadSpeed: Double = 0
     @Published var uploadSpeed: Double = 0
 
-    private var previous: (received: UInt64, sent: UInt64, time: Date)?
+    private struct TunnelPace {
+        var name: String
+        var received: UInt64
+        var sent: UInt64
+        var time: Date
+    }
+
+    private var previous: TunnelPace?
     private var timer: Timer?
 
     init() {
@@ -25,17 +32,20 @@ final class SpeedMonitor: ObservableObject {
             updateSpeeds(download: 0, upload: 0)
             return
         }
+        let paced = Self.pace(previous: previous, name: totals.name, received: totals.received, sent: totals.sent, time: now)
+        previous = paced.next
+        updateSpeeds(download: paced.download, upload: paced.upload)
+    }
 
-        guard let old = previous else {
-            previous = (totals.received, totals.sent, now)
-            updateSpeeds(download: 0, upload: 0)
-            return
+    // A restarted utun is a new interface or starts its counters over. That sample
+    // is only a baseline, so the next interval shows the new tunnel's rate.
+    private nonisolated static func pace(previous: TunnelPace?, name: String, received: UInt64, sent: UInt64, time: Date) -> (download: Double, upload: Double, next: TunnelPace) {
+        let next = TunnelPace(name: name, received: received, sent: sent, time: time)
+        guard let old = previous, old.name == name, received >= old.received, sent >= old.sent else {
+            return (0, 0, next)
         }
-        let elapsed = max(now.timeIntervalSince(old.time), 0.1)
-        let receivedDelta = totals.received >= old.received ? totals.received - old.received : 0
-        let sentDelta = totals.sent >= old.sent ? totals.sent - old.sent : 0
-        previous = (totals.received, totals.sent, now)
-        updateSpeeds(download: Double(receivedDelta) / elapsed, upload: Double(sentDelta) / elapsed)
+        let elapsed = max(time.timeIntervalSince(old.time), 0.1)
+        return (Double(received - old.received) / elapsed, Double(sent - old.sent) / elapsed, next)
     }
 
     private func updateSpeeds(download: Double, upload: Double) {
@@ -43,12 +53,20 @@ final class SpeedMonitor: ObservableObject {
         uploadSpeed = upload
     }
 
-    private nonisolated static func tunnelTotals() -> (received: UInt64, sent: UInt64)? {
+    // Local address of the Xray utun. policy.Build sets gateway 169.254.250.1/30;
+    // macOS assigns this host the other address in that point-to-point pair.
+    private nonisolated static let tunnelAddress = "169.254.250.2"
+
+    private nonisolated static func tunnelName(among interfaces: [(name: String, address: String)]) -> String? {
+        interfaces.first { $0.address == tunnelAddress }?.name
+    }
+
+    private nonisolated static func tunnelTotals() -> (name: String, received: UInt64, sent: UInt64)? {
         var firstAddress: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&firstAddress) == 0, let firstAddress else { return nil }
         defer { freeifaddrs(firstAddress) }
 
-        var tunnelName: String?
+        var interfaces: [(name: String, address: String)] = []
         var cursor: UnsafeMutablePointer<ifaddrs>? = firstAddress
         while let current = cursor {
             let interface = current.pointee
@@ -56,23 +74,21 @@ final class SpeedMonitor: ObservableObject {
                address.pointee.sa_family == UInt8(AF_INET) {
                 var ipv4 = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr
                 var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                if inet_ntop(AF_INET, &ipv4, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil,
-                   String(cString: buffer) == "198.18.0.1" {
-                    tunnelName = String(cString: interface.ifa_name)
-                    break
+                if inet_ntop(AF_INET, &ipv4, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil {
+                    interfaces.append((String(cString: interface.ifa_name), String(cString: buffer)))
                 }
             }
             cursor = interface.ifa_next
         }
 
-        guard let tunnelName else { return nil }
+        guard let tunnelName = tunnelName(among: interfaces) else { return nil }
         cursor = firstAddress
         while let current = cursor {
             let interface = current.pointee
             if String(cString: interface.ifa_name) == tunnelName,
                let dataPointer = interface.ifa_data {
                 let data = dataPointer.assumingMemoryBound(to: if_data.self).pointee
-                return (UInt64(data.ifi_ibytes), UInt64(data.ifi_obytes))
+                return (tunnelName, UInt64(data.ifi_ibytes), UInt64(data.ifi_obytes))
             }
             cursor = interface.ifa_next
         }
@@ -171,8 +187,6 @@ private struct RoutingRulesView: View {
     @State private var automaticServices = Set<String>()
     @State private var adBlockingEnabled = false
     @State private var domainsText = ""
-    @State private var applicationsText = ""
-    @State private var pathsText = ""
     @State private var confirmClear = false
     private let presetColumns = [GridItem(.adaptive(minimum: 145), spacing: 10)]
 
@@ -233,24 +247,13 @@ private struct RoutingRulesView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Custom rules").font(.headline)
-                        Text("One entry per line. Use these for sites and applications that are not covered by a preset.")
+                        Text("One entry per line. Use these for sites that are not covered by a preset.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
                     HStack(alignment: .top, spacing: 14) {
                         editor(title: "Domains", hint: "example.com or *.example.com", text: $domainsText, height: 145)
-                        editor(title: "Application process names", hint: "Example App", text: $applicationsText, height: 145)
-                    }
-                    editor(title: "Application paths (regular expressions)", hint: "Use Add Application to include its helpers", text: $pathsText, height: 120)
-                    Button("Add Application…") {
-                        let panel = NSOpenPanel()
-                        panel.allowedContentTypes = [.applicationBundle]
-                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-                        if panel.runModal() == .OK, let url = panel.url {
-                            let pattern = "^.*/" + NSRegularExpression.escapedPattern(for: url.lastPathComponent) + "/Contents/.*"
-                            pathsText += (pathsText.isEmpty ? "" : "\n") + pattern
-                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -272,8 +275,8 @@ private struct RoutingRulesView: View {
                         automaticServices: automaticServices,
                         adBlockingEnabled: adBlockingEnabled,
                         domains: lines(domainsText),
-                        applications: lines(applicationsText),
-                        paths: lines(pathsText)
+                        applications: [],
+                        paths: []
                     )
                 }
                 .buttonStyle(HoverButtonStyle(prominent: true))
@@ -288,7 +291,7 @@ private struct RoutingRulesView: View {
         .preferredColorScheme(.dark)
         .buttonStyle(HoverButtonStyle())
         .confirmationDialog("Clear custom routing rules?", isPresented: $confirmClear) {
-            Button("Clear Custom Rules", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
+            Button("Clear Custom Rules", role: .destructive) { domainsText = "" }
         } message: { Text("Changes take effect after Save and Apply.") }
         .onAppear {
             controller.rulesMessage = ""
@@ -331,8 +334,6 @@ private struct RoutingRulesView: View {
         automaticServices = Set(rules.automaticServices)
         adBlockingEnabled = rules.adBlockingEnabled
         domainsText = rules.domains.joined(separator: "\n")
-        applicationsText = rules.applications.joined(separator: "\n")
-        pathsText = rules.processPathRegexes.joined(separator: "\n")
     }
 }
 

@@ -11,13 +11,10 @@ SERVICE_LABEL='com.matveev.vpn'
 SERVICE_PLIST='/Library/LaunchDaemons/com.matveev.vpn.plist'
 . "$PAYLOAD/service-lifecycle.sh"
 
-"$PAYLOAD/sing-box" check -c "$CONFIG" >/dev/null 2>&1
-if [[ -f "$CONFIG.xray.json" ]]; then
-  "$PAYLOAD/xray" run -test -c "$CONFIG.xray.json" >/dev/null 2>&1
-fi
+[[ -x "$PAYLOAD/matveev-xray-service" && -x "$PAYLOAD/matveev-xray-worker" ]] || exit 2
 BACKUP="$(/usr/bin/mktemp -d /private/tmp/matveev-service-backup.XXXXXX)"
 HAD_PREVIOUS=false
-if [[ -f "$BASE/config.json" && -x "$BASE/bin/controller.sh" ]]; then
+if [[ -x "$BASE/bin/matveev-xray-service" || ( -f "$BASE/config.json" && -x "$BASE/bin/controller.sh" ) ]]; then
   HAD_PREVIOUS=true
   /usr/bin/ditto "$BASE/bin" "$BACKUP/bin"
   /bin/cp "$BASE/config.json" "$BACKUP/config.json"
@@ -25,6 +22,7 @@ if [[ -f "$BASE/config.json" && -x "$BASE/bin/controller.sh" ]]; then
   /bin/cp /Library/LaunchDaemons/com.matveev.vpn.plist "$BACKUP/service.plist"
   /bin/cp "$BASE/run/desired-state" "$BACKUP/desired-state" 2>/dev/null || /usr/bin/printf 'off\n' > "$BACKUP/desired-state"
   if [[ -f "$BASE/control/version" ]]; then /bin/cp "$BASE/control/version" "$BACKUP/version"; fi
+  if [[ -f "$BASE/app-bundle" ]]; then /bin/cp "$BASE/app-bundle" "$BACKUP/app-bundle"; fi
 fi
 COMPLETED=false
 cleanup() {
@@ -43,6 +41,11 @@ cleanup() {
       /usr/bin/install -m 644 "$BACKUP/version" "$BASE/control/version"
     else
       /bin/rm -f "$BASE/control/version"
+    fi
+    if [[ -f "$BACKUP/app-bundle" ]]; then
+      /usr/bin/install -m 644 "$BACKUP/app-bundle" "$BASE/app-bundle"
+    else
+      /bin/rm -f "$BASE/app-bundle"
     fi
     /usr/bin/shasum -a 256 "$BASE/config.json" | /usr/bin/awk '{print $1}' > "$BASE/control/config-sha256"
     /bin/chmod 644 "$BASE/control/config-sha256"
@@ -72,31 +75,48 @@ cleanup() {
   /bin/rm -rf "$BACKUP"
 }
 trap cleanup EXIT
+# Stop the previous daemon first. Its SIGTERM handler restores DNS and routes it owns.
 bootout_service
 /usr/bin/install -d -o root -g wheel -m 755 "$BASE/bin"
-/usr/bin/install -d -o root -g wheel -m 700 "$BASE/run"
+/usr/bin/install -d -o root -g wheel -m 700 "$BASE/run" "$BASE/rules"
 /usr/bin/install -d -o "$OWNER_UID" -g "$OWNER_GID" -m 700 "$BASE/control"
-/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/sing-box" "$BASE/bin/sing-box"
-/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/xray" "$BASE/bin/xray"
-/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/controller.sh" "$BASE/bin/controller.sh"
-/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/dns-manager.sh" "$BASE/bin/dns-manager.sh"
-/usr/bin/install -o root -g wheel -m 600 "$CONFIG" "$BASE/config.json"
-if [[ -f "$CONFIG.xray.json" ]]; then
-  /usr/bin/install -o root -g wheel -m 600 "$CONFIG.xray.json" "$BASE/xray.json"
-else
-  /bin/rm -f "$BASE/xray.json"
+/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/matveev-xray-service" "$BASE/bin/matveev-xray-service"
+/usr/bin/install -o root -g wheel -m 755 "$PAYLOAD/matveev-xray-worker" "$BASE/bin/matveev-xray-worker"
+if [[ -f "$PAYLOAD/rules/hagezi-pro-mini.txt" ]]; then
+  /usr/bin/install -o root -g wheel -m 644 "$PAYLOAD/rules/hagezi-pro-mini.txt" "$BASE/rules/hagezi-pro-mini.txt"
 fi
+/usr/bin/printf '%s %s\n' "$OWNER_UID" "$OWNER_GID" > "$BASE/owner-uid"
+/bin/chmod 644 "$BASE/owner-uid"
 /usr/bin/install -o root -g wheel -m 644 "$PAYLOAD/com.matveev.vpn.plist" "$SERVICE_PLIST"
-/usr/bin/printf '%s\n' "$DESIRED" > "$BASE/run/desired-state"
-/bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
-/usr/bin/printf '14\n' > "$BASE/control/version"
+/usr/bin/printf '24\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
+# The launchd service outlives the app. Remember the bundle that installed it
+# so the tunnel stops when that bundle is removed. Quitting the app leaves it in place.
+APP_BUNDLE="$(/usr/bin/python3 -c 'import os,sys; print(os.path.realpath(os.path.join(sys.argv[1], os.pardir, os.pardir, os.pardir)))' "$PAYLOAD")"
+[[ "$APP_BUNDLE" == *.app && -f "$APP_BUNDLE/Contents/Info.plist" && -x "$APP_BUNDLE/Contents/MacOS/matveevVpn" ]] || exit 2
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_BUNDLE/Contents/Info.plist")" == "com.matveev.vpn" ]] || exit 2
+/usr/bin/printf '%s\n' "$APP_BUNDLE" > "$BASE/app-bundle"
+/bin/chmod 644 "$BASE/app-bundle"
 /bin/launchctl enable system/com.matveev.vpn
 bootstrap_service
 for _ in {1..150}; do
-  ACTUAL="$(/usr/bin/head -n 1 "$BASE/control/runtime-status" 2>/dev/null || true)"
-  if [[ "$DESIRED" == on && "$ACTUAL" == running || "$DESIRED" == off && "$ACTUAL" == stopped ]]; then
+  if [[ -S "$BASE/ipc/service.sock" ]] && /usr/bin/python3 - "$BASE/ipc/service.sock" <<'PY'
+import json, socket, sys
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(2)
+sock.connect(sys.argv[1])
+sock.sendall(json.dumps({"version": 1, "requestID": "install-status", "action": "GetStatus", "expectedRevision": 0}).encode() + b"\n")
+data = b""
+while b"\n" not in data:
+    chunk = sock.recv(4096)
+    if not chunk:
+        break
+    data += chunk
+message = json.loads(data.split(b"\n", 1)[0])
+raise SystemExit(0 if message.get("success") else 1)
+PY
+  then
     COMPLETED=true
     exit 0
   fi

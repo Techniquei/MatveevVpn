@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.4.0-beta.3"
-BUILD_NUMBER="1402"
+VERSION="1.4.0-beta.xray"
+BUILD_NUMBER="1413"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
@@ -64,19 +64,31 @@ if [[ -n "${SPARKLE_PUBLIC_KEY:-}" ]]; then
   /usr/bin/plutil -insert SUEnableAutomaticChecks -bool true "$INFO_PLIST"
 fi
 
-XRAY_ARCHIVE="$WORK_DIR/xray.zip"
-XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/Xray-macos-arm64-v8a.zip"
-echo "Downloading Xray $XRAY_VERSION for modern REALITY and XHTTP..."
-/usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$XRAY_URL" -o "$XRAY_ARCHIVE"
-XRAY_ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$XRAY_ARCHIVE" | /usr/bin/awk '{print $1}')"
-if [[ "$XRAY_ACTUAL_SHA" != "$XRAY_ARCHIVE_SHA256" ]]; then
-  echo "Xray checksum mismatch" >&2
-  exit 1
+if [[ -n "${MATVEEV_XRAY_BINARY:-}" ]]; then
+  LOCAL_XRAY_VERSION="$("$MATVEEV_XRAY_BINARY" version | /usr/bin/awk 'NR==1 { print $2; exit }')"
+  if [[ "$LOCAL_XRAY_VERSION" != "$XRAY_VERSION" ]]; then
+    echo "Local Xray version mismatch: expected $XRAY_VERSION, got ${LOCAL_XRAY_VERSION:-unknown}" >&2
+    exit 1
+  fi
+  [[ -n "${MATVEEV_XRAY_LICENSE:-}" && -f "$MATVEEV_XRAY_LICENSE" ]] || { echo "MATVEEV_XRAY_LICENSE is required with MATVEEV_XRAY_BINARY" >&2; exit 1; }
+  echo "Using local Xray binary..."
+  /usr/bin/install -m 755 "$MATVEEV_XRAY_BINARY" "$APP/Contents/Resources/.payload/xray"
+  /usr/bin/install -m 644 "$MATVEEV_XRAY_LICENSE" "$APP/Contents/Resources/Xray-LICENSE"
+else
+  XRAY_ARCHIVE="$WORK_DIR/xray.zip"
+  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/Xray-macos-arm64-v8a.zip"
+  echo "Downloading Xray $XRAY_VERSION for modern REALITY and XHTTP..."
+  /usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$XRAY_URL" -o "$XRAY_ARCHIVE"
+  XRAY_ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$XRAY_ARCHIVE" | /usr/bin/awk '{print $1}')"
+  if [[ "$XRAY_ACTUAL_SHA" != "$XRAY_ARCHIVE_SHA256" ]]; then
+    echo "Xray checksum mismatch" >&2
+    exit 1
+  fi
+  /bin/mkdir -p "$WORK_DIR/xray"
+  /usr/bin/ditto -x -k "$XRAY_ARCHIVE" "$WORK_DIR/xray"
+  /usr/bin/install -m 755 "$WORK_DIR/xray/xray" "$APP/Contents/Resources/.payload/xray"
+  /usr/bin/install -m 644 "$WORK_DIR/xray/LICENSE" "$APP/Contents/Resources/Xray-LICENSE"
 fi
-/bin/mkdir -p "$WORK_DIR/xray"
-/usr/bin/ditto -x -k "$XRAY_ARCHIVE" "$WORK_DIR/xray"
-/usr/bin/install -m 755 "$WORK_DIR/xray/xray" "$APP/Contents/Resources/.payload/xray"
-/usr/bin/install -m 644 "$WORK_DIR/xray/LICENSE" "$APP/Contents/Resources/Xray-LICENSE"
 
 /usr/bin/install -m 644 "$ROOT_DIR/Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/uninstall-service.sh" "$APP/Contents/Resources/.payload/uninstall-service.sh"
@@ -87,11 +99,18 @@ fi
 
 HAGEZI_RULES="$WORK_DIR/hagezi-pro-mini.txt"
 HAGEZI_LICENSE="$WORK_DIR/Hagezi-LICENSE"
-echo "Downloading pinned HaGeZi Multi PRO mini rules..."
-/usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
-  "https://raw.githubusercontent.com/hagezi/dns-blocklists/$HAGEZI_COMMIT/wildcard/pro.mini-onlydomains.txt" -o "$HAGEZI_RULES"
-/usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
-  "https://raw.githubusercontent.com/hagezi/dns-blocklists/$HAGEZI_COMMIT/LICENSE" -o "$HAGEZI_LICENSE"
+if [[ -n "${MATVEEV_HAGEZI_RULES:-}" ]]; then
+  [[ -n "${MATVEEV_HAGEZI_LICENSE:-}" && -f "$MATVEEV_HAGEZI_RULES" && -f "$MATVEEV_HAGEZI_LICENSE" ]] || { echo "Local HaGeZi rules and license are both required" >&2; exit 1; }
+  echo "Using local HaGeZi rules..."
+  /bin/cp "$MATVEEV_HAGEZI_RULES" "$HAGEZI_RULES"
+  /bin/cp "$MATVEEV_HAGEZI_LICENSE" "$HAGEZI_LICENSE"
+else
+  echo "Downloading pinned HaGeZi Multi PRO mini rules..."
+  /usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/$HAGEZI_COMMIT/wildcard/pro.mini-onlydomains.txt" -o "$HAGEZI_RULES"
+  /usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/$HAGEZI_COMMIT/LICENSE" -o "$HAGEZI_LICENSE"
+fi
 [[ "$(/usr/bin/shasum -a 256 "$HAGEZI_RULES" | /usr/bin/awk '{print $1}')" == "$HAGEZI_RULES_SHA256" ]] || { echo "HaGeZi rules checksum mismatch" >&2; exit 1; }
 [[ "$(/usr/bin/shasum -a 256 "$HAGEZI_LICENSE" | /usr/bin/awk '{print $1}')" == "$HAGEZI_LICENSE_SHA256" ]] || { echo "HaGeZi license checksum mismatch" >&2; exit 1; }
 /usr/bin/install -m 644 "$HAGEZI_RULES" "$APP/Contents/Resources/.payload/rules/hagezi-pro-mini.txt"
@@ -102,6 +121,9 @@ echo "Downloading pinned HaGeZi Multi PRO mini rules..."
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/dns-manager.sh" "$APP/Contents/Resources/.payload/dns-manager.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/service-lifecycle.sh" "$APP/Contents/Resources/.payload/service-lifecycle.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/tools/build-config.rb" "$APP/Contents/Resources/.payload/tools/build-config.rb"
+/bin/bash "$ROOT_DIR/Scripts/build-xray-runtime.sh"
+/usr/bin/install -m 755 "$ROOT_DIR/.build/xray-runtime/matveev-xray-service" "$APP/Contents/Resources/.payload/matveev-xray-service"
+/usr/bin/install -m 755 "$ROOT_DIR/.build/xray-runtime/matveev-xray-worker" "$APP/Contents/Resources/.payload/matveev-xray-worker"
 
 if [[ -n "${MATVEEV_SING_BOX_BINARY:-}" ]]; then
   LOCAL_SING_BOX_VERSION="$("$MATVEEV_SING_BOX_BINARY" version | /usr/bin/awk '/^sing-box version / { print $3; exit }')"
@@ -139,7 +161,7 @@ fi
 
 echo "Creating DMG..."
 mkdir -p "$DMG_MOUNT"
-/usr/bin/hdiutil create -size 160m -fs HFS+ -volname matveevVpn -ov "$RW_DMG" >/dev/null
+/usr/bin/hdiutil create -size 256m -fs HFS+ -volname matveevVpn -ov "$RW_DMG" >/dev/null
 ATTACH_OUTPUT="$(/usr/bin/hdiutil attach -readwrite -noverify -noautoopen -mountpoint "$DMG_MOUNT" "$RW_DMG")"
 DEVICE="$(printf '%s\n' "$ATTACH_OUTPUT" | /usr/bin/awk '/Apple_HFS/ {print $1; exit}')"
 /usr/bin/ditto --noextattr --noqtn "$APP" "$DMG_MOUNT/matveevVpn.app"

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xtls/libxray/xray"
 	"golang.org/x/net/proxy"
 )
 
@@ -35,10 +34,10 @@ func send(t *testing.T, action, config string) response {
 
 func cleanRuntime(t *testing.T) {
 	t.Helper()
-	if err := xray.StopXray(); err != nil {
+	if err := runtimeCore.stop(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = xray.StopXray() })
+	t.Cleanup(func() { _ = runtimeCore.stop() })
 }
 
 func TestProtocolRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {

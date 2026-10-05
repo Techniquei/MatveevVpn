@@ -169,12 +169,12 @@ struct ConnectionView: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Subscription link").font(.callout.weight(.semibold))
-                    SecureField("Paste an HTTPS or VLESS link", text: $controller.candidateURL)
+                    SecureField("Paste an HTTPS subscription or server link", text: $controller.candidateURL)
                         .textFieldStyle(.plain)
                         .padding(12)
                         .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(subscriptionFocused ? AppPalette.blue.opacity(0.8) : .white.opacity(0.08), lineWidth: 1))
-                        .accessibilityLabel("Subscription URL or VLESS link")
+                        .accessibilityLabel("Subscription URL or server link")
                         .focused($subscriptionFocused)
                         .modifier(InteractiveHover())
                     Text(controller.isInitialSetup
@@ -264,9 +264,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmReset = false
     @State private var confirmRemoval = false
-    @State private var domain = ""
-    @State private var process = ""
-    @State private var path = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             AppWindowHeader(title: "Settings", subtitle: "Preferences and diagnostics", icon: "gearshape")
@@ -335,28 +332,6 @@ struct SettingsView: View {
                         if !controller.message.isEmpty {
                             Text(controller.message).font(.caption).foregroundStyle(.secondary)
                         }
-                        DisclosureGroup("Explain a routing rule") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Menu("Use a running application") {
-                                    ForEach(NSWorkspace.shared.runningApplications.filter { $0.executableURL != nil }, id: \.processIdentifier) { application in
-                                        Button(application.localizedName ?? "Application") {
-                                            path = application.executableURL?.path ?? ""
-                                            process = application.executableURL?.lastPathComponent ?? ""
-                                        }
-                                    }
-                                }
-                                .modifier(InteractiveHover())
-                                TextField("Domain", text: $domain)
-                                    .modifier(InteractiveHover())
-                                TextField("Process name", text: $process)
-                                    .modifier(InteractiveHover())
-                                TextField("Executable path", text: $path)
-                                    .modifier(InteractiveHover())
-                                Text(RuleInspector.explain(domain: domain, process: process, path: path, rules: controller.state.rules)).font(.caption)
-                            }
-                            .textFieldStyle(.roundedBorder)
-                        }
-                        .disclosureGroupStyle(AppDisclosureStyle())
                     }
                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))

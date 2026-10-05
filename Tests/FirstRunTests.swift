@@ -91,6 +91,16 @@ import Foundation
         precondition(SubscriptionFetcher.requests == 0, "Direct VLESS links must not require an HTTP fetch")
 
         SystemService.reset()
+        let trojanStore = makeStore("trojan-link")
+        let trojan = model(trojanStore)
+        trojan.candidateURL = "trojan://secret@trojan.example.invalid:443#Trojan"
+        trojan.applySubscription()
+        try await wait(trojan)
+        precondition(SubscriptionFetcher.requests == 0, "Direct server links must not require an HTTP fetch")
+        let trojanSaved = try trojanStore.load()
+        precondition(trojanSaved.selectedNodeID != nil)
+
+        SystemService.reset()
         let retryStore = makeStore("retry")
         let retry = model(retryStore)
         retry.candidateURL = "http://subscription.example.invalid/test"
@@ -185,6 +195,17 @@ import Foundation
         precondition(selection.state.selectedNodeID == nodes[0].id, "Checking latency must not change the selected server")
         precondition(AppLogger.shared.contents().split(separator: "\n").last(where: { $0.hasPrefix("node latency check completed;") }) == "node latency check completed; reachable=0/2",
                      "A batch summary must exclude results cached for other subscriptions")
+        SystemService.nodeProbes = Dictionary(uniqueKeysWithValues: nodes.map {
+            ($0.id, NodeProbeResult(outcome: .reachable, latencyMilliseconds: 15, method: .tcp))
+        })
+        selection.testNodes()
+        for _ in 0..<300 {
+            if !selection.testingNodes { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        precondition(!selection.testingNodes && nodes.allSatisfy { selection.probeResults[$0.id]?.latencyMilliseconds == 15 },
+                     "A connected tunnel must measure every node through the service, including the one that is not selected")
+        SystemService.nodeProbes = nil
         SystemService.routingUpdateValue = Date(timeIntervalSince1970: 1700000000)
         selection.loadAutomaticRoutingUpdate()
         precondition(selection.automaticRoutingLastUpdate == SystemService.routingUpdateValue)

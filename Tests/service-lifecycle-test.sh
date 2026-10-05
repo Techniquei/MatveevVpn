@@ -29,9 +29,10 @@ echo "service lifecycle: delayed bootout and transient bootstrap failure passed"
 export MATVEEV_INSTALL_TEST_BASE="$STATE/service"
 export MATVEEV_INSTALL_TEST_PLIST="$STATE/service.plist"
 /bin/mkdir -p "$STATE/payload"
-/bin/cp "$ROOT_DIR/Tests/fake-sing-box" "$STATE/payload/sing-box"
+/bin/cp "$ROOT_DIR/Tests/fake-sing-box" "$STATE/payload/matveev-xray-service"
+/bin/cp "$ROOT_DIR/Tests/fake-sing-box" "$STATE/payload/matveev-xray-worker"
 /bin/cp "$ROOT_DIR/Resources/payload/service-lifecycle.sh" "$STATE/payload/service-lifecycle.sh"
-/bin/chmod 755 "$STATE/payload/sing-box"
+/bin/chmod 755 "$STATE/payload/matveev-xray-service" "$STATE/payload/matveev-xray-worker"
 /usr/bin/printf '{}\n' > "$STATE/config.json"
 /usr/bin/ruby - "$ROOT_DIR/Resources/payload/install-service.sh" "$STATE/installer-cleanup.sh" <<'RUBY'
 source = File.read(ARGV[0]).split("trap cleanup EXIT\n").first
