@@ -491,14 +491,16 @@ final class VPNController: ObservableObject {
                     self.probeResults[node.id] = measured[node.id] ?? NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil)
                 }
             } else {
+                // These probes stay off the main actor. Routing them back through
+                // measure() would run the whole batch serially and miss the deadline.
                 await withTaskGroup(of: (String, NodeProbeResult).self) { group in
                     var iterator = nodes.makeIterator()
                     for _ in 0..<4 {
-                        if let node = iterator.next() { group.addTask { (node.id, await self.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
+                        if let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
                     }
                     for await (id, result) in group {
                         self.probeResults[id] = result
-                        if Date() < deadline, let node = iterator.next() { group.addTask { (node.id, await self.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
+                        if Date() < deadline, let node = iterator.next() { group.addTask { (node.id, await NodeProbe.measure(node, timeout: min(5, deadline.timeIntervalSinceNow))) } }
                     }
                 }
             }
