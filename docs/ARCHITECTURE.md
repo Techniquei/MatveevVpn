@@ -24,6 +24,9 @@ The manual-only `--tun-smoke` command creates and releases a temporary utun,
 accepts no configuration and adds no default routes or system DNS. It is removed
 once the native service acceptance harness covers that lifecycle. See
 `docs/XRAY-RUNTIME-CHECK.md` for the pending manual check.
+The future Go supervisor, snapshot/IPC semantics and persistent FakeDNS design
+are specified in `docs/XRAY-DECISIONS.md`; they are not implemented by this
+prototype. `docs/GROK-HANDOFF.md` records the checkpoint and implementation order.
 
 ## Current application
 
