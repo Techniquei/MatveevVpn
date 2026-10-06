@@ -1,4 +1,6 @@
-# matveevVpn 1.4.0-beta.xray.2
+# matveevVpn 1.4.0-beta.xray.2 test build
+
+This is a manual test build. No public release or update-feed entry is published.
 
 Fixes startup when endpoint security rejects the physical DNS-over-HTTPS check
 (for example, an HTML block page returned with HTTP 499). A reachable VPN server

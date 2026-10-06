@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0-beta.xray.2
+## 1.4.0-beta.xray.2 (unreleased test build)
 
 - Allows a reachable server to start when the physical DoH check is rejected by
   endpoint security; uses captured physical DNS for server names and direct traffic.

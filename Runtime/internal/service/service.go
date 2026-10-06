@@ -524,19 +524,26 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 			resolver.Close()
 			cancel()
 			position++
+			if !directAvailable && position < len(order) && order[position].ID == node.ID {
+				position++
+			}
 			s.publish(generation, Status{RuntimeState: "starting", Phase: "server-resolution", Error: "bootstrap_failed", NodeID: node.ID})
 			continue
 		}
 		// A blocked public DoH provider does not mean the VPN server is offline.
 		// Confirm its physical path before making any TUN/DNS/route changes.
+		settings := outbound["settings"].(map[string]any)
+		port := strconv.Itoa(int(settings["port"].(float64)))
+		physicalEndpoint := net.JoinHostPort(addresses[0], port)
 		if !directAvailable {
-			settings := outbound["settings"].(map[string]any)
-			port := strconv.Itoa(int(settings["port"].(float64)))
 			s.publish(generation, Status{RuntimeState: "starting", Phase: "server-connectivity", NodeID: node.ID})
-			if resolver.ProbeTCP(op, net.JoinHostPort(addresses[0], port)) != nil {
+			if resolver.ProbeTCP(op, physicalEndpoint) != nil {
 				resolver.Close()
 				cancel()
 				position++
+				if position < len(order) && order[position].ID == node.ID {
+					position++
+				}
 				continue
 			}
 			if position >= 2 && !s.allowSwitch() {
@@ -605,7 +612,7 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 		if err == nil {
 			failurePhase = "tunnel-health"
 			s.publish(generation, Status{RuntimeState: "starting", Phase: failurePhase, NodeID: node.ID})
-			err = s.monitor(ctx, generation, a.Revision, node.ID, physical, worker, resolver)
+			err = s.monitor(ctx, generation, a.Revision, node.ID, physicalEndpoint, physical, worker, resolver)
 		}
 		if err != nil && ctx.Err() == nil {
 			s.publish(generation, Status{RuntimeState: "starting", Phase: failurePhase, Error: "runtime_attempt_failed", NodeID: node.ID})
@@ -655,7 +662,7 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 		position++
 	}
 }
-func (s *Service) monitor(ctx context.Context, generation, revision uint64, node string, physical network.Physical, worker RuntimeProcess, resolver Transport) error {
+func (s *Service) monitor(ctx context.Context, generation, revision uint64, node, physicalEndpoint string, physical network.Physical, worker RuntimeProcess, resolver Transport) error {
 	failures := 0
 	healthy := false
 	for ctx.Err() == nil {
@@ -674,7 +681,7 @@ func (s *Service) monitor(ctx context.Context, generation, revision uint64, node
 		if s.table.Err() != nil {
 			err = fakedns.ErrTable
 		}
-		if err != nil && !errors.Is(err, fakedns.ErrTable) && resolver.Probe(probe, true) != nil {
+		if err != nil && !errors.Is(err, fakedns.ErrTable) && resolver.Probe(probe, true) != nil && resolver.ProbeTCP(probe, physicalEndpoint) != nil {
 			cancel()
 			s.publish(generation, Status{ActiveRevision: revision, NodeID: node, RuntimeState: "waiting-network"})
 			return errOffline

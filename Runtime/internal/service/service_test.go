@@ -48,6 +48,7 @@ type harness struct {
 	directErr     error
 	tcpProbe      func(context.Context, string) error
 	tunnelErr     error
+	tunnelProbe   func() error
 	holdTunnel    chan struct{}
 	health        time.Duration
 	retry         time.Duration
@@ -148,9 +149,13 @@ func (h *harness) Probe(ctx context.Context, direct bool) error {
 		return err
 	}
 	err := h.tunnelErr
+	probe := h.tunnelProbe
 	hold := h.holdTunnel
 	h.order = append(h.order, "tunnel-probe")
 	h.mu.Unlock()
+	if probe != nil {
+		err = probe()
+	}
 	if hold != nil {
 		select {
 		case <-hold:
@@ -167,12 +172,7 @@ func (h *harness) ProbeTCP(ctx context.Context, address string) error {
 	if h.tcpProbe != nil {
 		return h.tcpProbe(ctx, address)
 	}
-	dialer := &net.Dialer{Timeout: time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp4", address)
-	if err != nil {
-		return err
-	}
-	return conn.Close()
+	return ErrHealth
 }
 
 func (h *harness) launch(string, string, string) (RuntimeProcess, error) {
@@ -515,6 +515,33 @@ func TestBlockedPhysicalDoHCanConnectToReachableAlternative(t *testing.T) {
 	}
 	if launches, _ := h.counts(); launches != 1 {
 		t.Fatalf("unreachable server launched a worker: %d", launches)
+	}
+}
+
+func TestBlockedPhysicalDoHDoesNotPreventTunnelFailover(t *testing.T) {
+	var probes atomic.Int32
+	h := newHarness(t, func(h *harness) {
+		h.directErr = ErrHealth
+		h.tcpProbe = func(context.Context, string) error { return nil }
+		h.tunnelProbe = func() error {
+			if probes.Add(1) == 1 {
+				return ErrHealth
+			}
+			return nil
+		}
+	})
+	if _, err := h.service.Apply(context.Background(), "apply-1", 0, serviceSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.SetDesiredOn(context.Background(), "on-1", 1, true); err != nil {
+		t.Fatal(err)
+	}
+	status := waitStatus(t, h.service, func(status Status) bool { return status.RuntimeState == "connected" })
+	if status.NodeID != "node-b" {
+		t.Fatalf("blocked DoH made a bad tunnel look offline: %+v", status)
+	}
+	if launches, _ := h.counts(); launches != 2 {
+		t.Fatalf("failover launched %d workers", launches)
 	}
 }
 
