@@ -44,6 +44,20 @@ var (
 	ErrInvalid  = errors.New("network_input_invalid")
 )
 
+type discoveryError struct{ step string }
+
+func (e *discoveryError) Error() string { return ErrDiscover.Error() }
+func (e *discoveryError) Unwrap() error { return ErrDiscover }
+
+// DiscoveryStep exposes only a fixed stage name, never system tool output.
+func DiscoveryStep(err error) string {
+	var failure *discoveryError
+	if errors.As(err, &failure) {
+		return failure.step
+	}
+	return "unknown"
+}
+
 // Runner is the one external command boundary. Tests must inject a fake.
 // Executables and argument structure are selected by this package, never IPC.
 type Runner interface {
@@ -301,7 +315,7 @@ func (a *Adapter) Discover(ctx context.Context) (Physical, error) {
 	var p Physical
 	output, err := a.run(ctx, scutil, "--nwi")
 	if err != nil {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "interface-query"}
 	}
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
@@ -314,16 +328,16 @@ func (a *Adapter) Discover(ctx context.Context) (Physical, error) {
 	if p.Interface == "" {
 		output, err = a.run(ctx, routeTool, "-n", "get", "-inet", "default")
 		if err != nil {
-			return p, ErrDiscover
+			return p, &discoveryError{step: "default-route-query"}
 		}
 		p.Interface = field(string(output), "interface")
 	}
 	if !interfaceName.MatchString(p.Interface) || strings.HasPrefix(p.Interface, "utun") || p.Interface == "lo0" {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "physical-interface"}
 	}
 	output, err = a.run(ctx, routeTool, "-n", "get", "-inet", "-ifscope", p.Interface, "default")
 	if err != nil || field(string(output), "interface") != p.Interface {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "scoped-default-route"}
 	}
 	p.GatewayIPv4 = field(string(output), "gateway")
 	if output, err = a.run(ctx, routeTool, "-n", "get", "-inet6", "-ifscope", p.Interface, "default"); err == nil && field(string(output), "interface") == p.Interface {
@@ -331,7 +345,7 @@ func (a *Adapter) Discover(ctx context.Context) (Physical, error) {
 	}
 	services, err := a.services(ctx)
 	if err != nil {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "network-services"}
 	}
 	for _, service := range services {
 		if service.Interface == p.Interface && !service.Disabled {
@@ -340,27 +354,27 @@ func (a *Adapter) Discover(ctx context.Context) (Physical, error) {
 		}
 	}
 	if p.Service == "" {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "network-service"}
 	}
 	p.DNS, err = a.configuredDNS(ctx, p.Service)
 	if err != nil {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "configured-dns"}
 	}
 	if a.journal != nil && a.journal.Physical.Interface == p.Interface && a.journal.Physical.Service == p.Service && equalDNS(p.DNS, []string{resolver}) {
 		p.DNS = append([]string(nil), a.journal.Physical.DNS...)
 	} else if len(p.DNS) == 0 {
 		output, err = a.run(ctx, scutil, "--dns")
 		if err != nil {
-			return p, ErrDiscover
+			return p, &discoveryError{step: "effective-dns-query"}
 		}
 		p.DNS = effectiveDNS(string(output), p.Interface)
 	}
 	if len(p.DNS) == 0 {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "effective-dns"}
 	}
 	table, err := a.routes(ctx)
 	if err != nil {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "route-table"}
 	}
 	for _, r := range table {
 		prefix, _ := netip.ParsePrefix(r.Prefix)
@@ -374,9 +388,9 @@ func (a *Adapter) Discover(ctx context.Context) (Physical, error) {
 			p.LANCIDRs = append(p.LANCIDRs, r.Prefix)
 		}
 	}
-	p.LANCIDRs = unique(p.LANCIDRs)
+	p.LANCIDRs = compactPrefixes(p.LANCIDRs)
 	if !validPhysical(p) {
-		return p, ErrDiscover
+		return p, &discoveryError{step: "physical-state"}
 	}
 	return p, nil
 }
@@ -1116,6 +1130,29 @@ func unique(values []string) []string {
 		}
 	}
 	return result[:end]
+}
+
+// ARP/NDP cache host routes come and go without changing the LAN. Keeping
+// entries already covered by a subnet changes Physical's identity even though
+// its routing policy is identical, which makes the supervisor restart the TUN.
+func compactPrefixes(values []string) []string {
+	values = unique(values)
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		prefix, _ := netip.ParsePrefix(value)
+		covered := false
+		for _, other := range values {
+			parent, _ := netip.ParsePrefix(other)
+			if parent.Bits() < prefix.Bits() && parent.Contains(prefix.Addr()) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func equalDNS(first, second []string) bool {

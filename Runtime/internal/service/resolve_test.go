@@ -181,6 +181,23 @@ func TestCapturedLocalResolverAndTruncatedTCPRetry(t *testing.T) {
 	if err != nil || len(reply.Answer) != 1 || reply.Answer[0].(*dns.A).A.String() != "10.0.0.20" || tcpCalls.Load() != 1 || bound.Load() != 2 {
 		t.Fatalf("local fallbackfailed: %v", err)
 	}
+	// Endpoint security may return an HTML block page with nonstandard 499.
+	blockedDoH := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "<html><title>Endpoint Security</title></html>", 499)
+	}))
+	defer blockedDoH.Close()
+	r.direct, r.dohURL = resolverClient(blockedDoH.Client().Transport), blockedDoH.URL
+	addresses, err := r.Bootstrap(context.Background(), "server.example")
+	if err != nil || len(addresses) != 1 || addresses[0] != "10.0.0.20" || bound.Load() != 4 {
+		t.Fatalf("blocked DoH did not use captured physical DNS: %v %v", addresses, err)
+	}
+	if reply, err := r.Resolve(context.Background(), dnsQuery("direct.example."), fakedns.Direct); err != nil || len(reply.Answer) != 1 || bound.Load() != 6 {
+		t.Fatal("direct traffic lost DNS after a rejected DoH request", err)
+	}
+	r.vpn = r.direct
+	if _, err := r.Resolve(context.Background(), dnsQuery("vpn.example."), fakedns.VPN); err == nil || bound.Load() != 6 {
+		t.Fatal("a VPN DNS query escaped through physical DNS", err)
+	}
 	r.servers = nil
 	if _, err := r.Resolve(context.Background(), dnsQuery("printer.local."), fakedns.Local); err == nil {
 		t.Fatal("missingcapturedDNS usedsystemfallback")

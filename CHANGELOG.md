@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0-beta.xray.2
+
+- Allows a reachable server to start when the physical DoH check is rejected by
+  endpoint security; uses captured physical DNS for server names and direct traffic.
+- Keeps VPN DNS queries on the tunnel, including when physical DoH is blocked.
+- Compacts LAN prefixes so ARP/NDP cache updates do not restart the tunnel.
+- Records Xray startup phases and bounded diagnostics that survive disconnect.
+- Enforces Unix-socket deadlines, partial writes and closed-peer handling.
+- Requires system component 26; retains beta 1 quarantine and rollback fixes.
+
 ## 1.4.0-beta.xray.1
 
 - Removes quarantine from installed component copies before bootstrap and rollback,

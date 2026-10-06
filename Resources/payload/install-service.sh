@@ -138,7 +138,7 @@ fi
 /usr/bin/install -o root -g wheel -m 644 "$BACKUP/new.plist" "$SERVICE_PLIST"
 clear_installed_quarantine
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
-/usr/bin/printf '25\n' > "$BASE/control/version"
+/usr/bin/printf '26\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /usr/bin/printf '%s\n' "$APP_BUNDLE" > "$BASE/app-bundle"
 /bin/chmod 644 "$BASE/app-bundle"

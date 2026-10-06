@@ -350,6 +350,39 @@ func TestExistingPrivateMeshRoutesRemainAndApplyIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestNeighbourCacheDoesNotChangePhysicalNetwork(t *testing.T) {
+	f := fakeFor(t)
+	a := openFake(t, f)
+	before, err := a.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// macOS adds/removes these ARP and IPv6 neighbour entries while traffic
+	// flows. They are host cache entries, not a new LAN or gateway.
+	f.routes = append(f.routes,
+		route{Prefix: "192.168.50.8/32", Gateway: "aa:bb:cc:dd:ee:ff", Interface: "en0"},
+		route{Prefix: "192.168.50.9/32", Gateway: "link#6", Interface: "en0", ViaLink: true},
+		route{Prefix: "fe80::abcd/128", Gateway: "aa:bb:cc:dd:ee:ff", Interface: "en0"},
+	)
+	after, err := a.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("neighbour cache restarted the VPN: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestDiscoveryReportsSafeFailureStage(t *testing.T) {
+	f := fakeFor(t)
+	f.dns = []string{"private-invalid-value"}
+	a := openFake(t, f)
+	_, err := a.Discover(context.Background())
+	if !errors.Is(err, ErrDiscover) || DiscoveryStep(err) != "configured-dns" || strings.Contains(err.Error(), "private-invalid-value") {
+		t.Fatalf("discovery failure lost its stage or exposed tool input: %v %s", err, DiscoveryStep(err))
+	}
+}
+
 func TestGatewayChangeReplacesOwnedIfscopeRoutes(t *testing.T) {
 	f := fakeFor(t)
 	a := openFake(t, f)

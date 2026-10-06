@@ -1,28 +1,27 @@
-# matveevVpn 1.4.0-beta.xray.1
+# matveevVpn 1.4.0-beta.xray.2
 
-This opt-in Xray beta fixes system-component installation after a downloaded app
-or Sparkle update carries macOS quarantine attributes. Stable-only users remain
-on 1.3.5.
+Fixes startup when endpoint security rejects the physical DNS-over-HTTPS check
+(for example, an HTML block page returned with HTTP 499). A reachable VPN server
+can now establish connectivity even when that public DNS provider is blocked.
+Stable-only users remain on 1.3.5.
 
-- Clears quarantine only on installed system-component copies before launchd
-  bootstrap and rollback. The downloaded app and unrelated attributes are preserved.
-- Validates and applies the initial configuration while the VPN is off. Failed
-  startup or rejected configuration restores the previous service and accepted state.
-- Repairs Xray installations without requiring a legacy configuration file.
-- Accepts large subscription requests up to the full 1 MiB IPC limit.
-- Explicitly signs the service and worker and verifies arm64 architecture. Removes
-  unused legacy engine binaries, reducing the download from about 90 MiB to 51 MiB.
+- Falls back to captured DNS on the physical interface for server names and direct
+  traffic after a rejected DoH request. VPN DNS queries never use this fallback.
+- Checks server connectivity before creating a TUN or changing DNS/routes when
+  the public DoH connectivity check fails; tries another reachable node.
+- Normalizes LAN subnets so changing ARP/NDP neighbour cache entries do not restart
+  the tunnel.
+- Exports startup phases and a bounded event history from Xray, including after
+  a failed connection is stopped. Avoids exporting stale sing-box logs for Xray.
+- Enforces IPC deadlines and handles partial writes and disconnected sockets.
+- Retains the quarantined-installation, rollback, signing and arm64 fixes from beta 1.
 
 **After updating the app, click Update on the main screen or Settings → Repair
-service… and approve the administrator prompt. System component version 25 is
+service… and approve the administrator prompt. System component version 26 is
 required.** Updating the app alone does not replace the privileged service.
 Subscription, selected server and routing settings are retained.
 
-The runtime uses Xray-core 26.9.30 for VLESS, VMess AEAD, Trojan, Shadowsocks,
-SOCKS and Hysteria2. Existing direct-egress and server-latency improvements are
-included. Legacy VMess QR links, Clash documents and raw Xray JSON are not nodes.
-
 Requires Apple Silicon and macOS 13 or later. This build is ad-hoc signed and is
-not notarized by Apple. Native installation regression tests passed in an isolated
-user launchd environment; a fresh privileged installation/TUN connection and
-end-to-end Sparkle install on a separate Mac have not been verified.
+not notarized by Apple. The published beta 1 worker passed a privileged native
+TUN create/release test. End-to-end connection on the affected Mac still needs
+verification after this update.

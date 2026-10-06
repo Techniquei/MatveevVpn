@@ -40,13 +40,16 @@ struct SystemService {
     // probe until this component is updated.
     // Version 25 fixes quarantined installs, applies the initial intent and
     // accepts subscription requests up to the advertised IPC size limit.
-    static let version = "25"
+    // Version 26 stabilizes physical network identity and exposes Xray startup
+    // phases, with a physical server fallback when the public DoH probe fails.
+    static let version = "26"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
     }
     static let base = URL(fileURLWithPath: "/Library/Application Support/matveevVpn")
     var baseDirectory = Self.base
+    var connectionTimeout: TimeInterval = 30
     var payload: URL { Bundle.main.resourceURL!.appendingPathComponent(".payload") }
     var control: URL { baseDirectory.appendingPathComponent("control") }
     var installed: Bool {
@@ -202,14 +205,14 @@ struct SystemService {
         guard on else { return }
         // A dead selected server is replaced before this returns. The caller's
         // remaining budget can expire while that attempt is still starting.
-        let connectedBy = Date().addingTimeInterval(30)
+        let connectedBy = Date().addingTimeInterval(connectionTimeout)
         while Date() < connectedBy {
             let live = try await exchange(action: "GetStatus", expected: 0, payload: nil, until: connectedBy)
             switch live.state {
             case "connected":
                 return
             case "error", "off":
-                let failure = VPNError.message(Self.describeRuntimeError(live.error))
+                let failure = VPNError.diagnostic(Self.describeRuntimeError(live.error), Self.runtimeDetails(live))
                 _ = try? await exchange(action: "SetDesiredOn", expected: live.revision, payload: try JSONSerialization.data(withJSONObject: ["desiredOn": false]), until: connectedBy)
                 throw failure
             default:
@@ -220,9 +223,8 @@ struct SystemService {
         if let live = try? await exchange(action: "GetStatus", expected: 0, payload: nil, until: stopBy) {
             if live.state == "connected" { return }
             _ = try? await exchange(action: "SetDesiredOn", expected: live.revision, payload: try JSONSerialization.data(withJSONObject: ["desiredOn": false]), until: stopBy)
-            if live.state == "error" || live.state == "off" {
-                throw VPNError.message(Self.describeRuntimeError(live.error))
-            }
+            let summary = live.error.isEmpty ? "The VPN did not finish connecting." : Self.describeRuntimeError(live.error)
+            throw VPNError.diagnostic(summary, Self.runtimeDetails(live))
         }
         throw VPNError.message("The VPN did not finish connecting.")
     }
@@ -237,6 +239,12 @@ struct SystemService {
             return "The VPN configuration was rejected."
         case "tun_unavailable":
             return "The VPN could not create a tunnel interface."
+        case "physical_network_unavailable":
+            return "The VPN could not detect the physical network."
+        case "physical_dns_probe_failed":
+            return "The physical DNS check failed. The VPN could not reach its DNS provider."
+        case "physical_and_server_unreachable":
+            return "The VPN could not reach its DNS provider or any VPN server through the physical network."
         case "startup_timeout":
             return "The VPN did not finish starting. Try connecting again."
         case "switch_limit", "recovery_exhausted":
@@ -282,6 +290,9 @@ struct SystemService {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw VPNError.message("The VPN service is not available.") }
         defer { close(fd) }
+        guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { throw VPNError.message("The VPN service is not available.") }
+        var noSignal: Int32 = 1
+        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(socketURL.path.utf8CString)
@@ -292,15 +303,31 @@ struct SystemService {
         let connected = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard connected == 0 else { throw VPNError.message("The VPN service is not available.") }
+        if connected != 0 {
+            guard errno == EINPROGRESS || errno == EAGAIN else { throw VPNError.message("The VPN service is not available.") }
+            try Self.waitForSocket(fd, events: Int16(POLLOUT), until: deadline)
+            var connectionError: Int32 = 0
+            var length = socklen_t(MemoryLayout<Int32>.size)
+            guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &connectionError, &length) == 0, connectionError == 0 else {
+                throw VPNError.message("The VPN service is not available.")
+            }
+        }
         var message = body
         message.append(10)
-        let wrote = message.withUnsafeBytes { Darwin.write(fd, $0.baseAddress!, $0.count) }
-        guard wrote == message.count else { throw VPNError.message("The VPN service is not available.") }
+        var offset = 0
+        while offset < message.count {
+            try Self.waitForSocket(fd, events: Int16(POLLOUT), until: deadline)
+            let wrote = message.withUnsafeBytes { Darwin.write(fd, $0.baseAddress!.advanced(by: offset), $0.count - offset) }
+            if wrote < 0 && [EAGAIN, EINTR].contains(errno) { continue }
+            guard wrote > 0 else { throw VPNError.message("The VPN service is not available.") }
+            offset += wrote
+        }
         var collected = Data()
         var buffer = [UInt8](repeating: 0, count: 16_384)
         while !collected.contains(10) && collected.count < 1_048_576 {
+            try Self.waitForSocket(fd, events: Int16(POLLIN), until: deadline)
             let count = Darwin.read(fd, &buffer, buffer.count)
+            if count < 0 && [EAGAIN, EINTR].contains(errno) { continue }
             if count <= 0 { break }
             collected.append(buffer, count: count)
         }
@@ -317,9 +344,30 @@ struct SystemService {
             state: status["runtimeState"] as? String ?? "",
             nodeID: status["nodeID"] as? String ?? "",
             error: status["error"] as? String ?? "",
+            phase: status["phase"] as? String ?? "",
+            diagnostics: status["diagnostics"] as? [String] ?? [],
             revision: (status["acceptedRevision"] as? NSNumber)?.uint64Value ?? 0,
             probes: reply["probes"] as? [[String: Any]] ?? []
         )
+    }
+
+    private static func waitForSocket(_ fd: Int32, events: Int16, until deadline: Date) throws {
+        while true {
+            try checkDeadline(deadline)
+            var item = pollfd(fd: fd, events: events, revents: 0)
+            let milliseconds = Int32(min(Double(Int32.max), max(1, (deadline.timeIntervalSinceNow * 1000).rounded(.up))))
+            let result = Darwin.poll(&item, 1, milliseconds)
+            if result < 0 && errno == EINTR { continue }
+            if result == 0 { try checkDeadline(deadline); continue }
+            guard result > 0, item.revents & Int16(POLLNVAL) == 0 else { throw VPNError.message("The VPN service is not available.") }
+            return
+        }
+    }
+
+    private static func runtimeDetails(_ reply: IPCReply) -> String {
+        var lines = ["Xray service: state=\(reply.state) phase=\(reply.phase.isEmpty ? "unknown" : reply.phase) error=\(reply.error.isEmpty ? "none" : reply.error)"]
+        lines.append(contentsOf: reply.diagnostics.suffix(24))
+        return lines.joined(separator: "\n")
     }
 
     func measureNodes(_ ids: [String], until deadline: Date) async -> [String: NodeProbeResult]? {
@@ -344,6 +392,12 @@ struct SystemService {
     }
 
     func recentRuntimeErrorDetails() -> String? {
+        if FileManager.default.fileExists(atPath: baseDirectory.appendingPathComponent("bin/matveev-xray-service").path) {
+            guard let reply = try? exchangeSync(action: "GetStatus", expected: 0, payload: nil, until: Date().addingTimeInterval(2)) else {
+                return "Xray service: unavailable over IPC."
+            }
+            return Self.runtimeDetails(reply)
+        }
         let files = [control.appendingPathComponent("last-error.log"), baseDirectory.appendingPathComponent("run/vpn.error.log")]
         let details = files.compactMap { file -> String? in
             if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
@@ -361,6 +415,8 @@ private struct IPCReply {
     var state = ""
     var nodeID = ""
     var error = ""
+    var phase = ""
+    var diagnostics: [String] = []
     var revision: UInt64 = 0
     var probes: [[String: Any]] = []
 }
