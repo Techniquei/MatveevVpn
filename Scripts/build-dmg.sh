@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.4.0-beta.xray.1"
-BUILD_NUMBER="1414"
+VERSION="1.4.0-beta.xray.2"
+BUILD_NUMBER="1415"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 HAGEZI_COMMIT="bc57a04f9f516be32f3d7853feedb0e1d068187e"
 HAGEZI_RULES_SHA256="8a4f9ec58dca9b558096763d3753cb9f28d498faac0942e2481cc58cc39e19da"

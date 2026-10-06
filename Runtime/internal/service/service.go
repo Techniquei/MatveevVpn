@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
@@ -71,6 +72,8 @@ type Status struct {
 	RuntimeState     string    `json:"runtimeState"`
 	LastSuccess      time.Time `json:"lastSuccess,omitempty"`
 	Error            string    `json:"error,omitempty"`
+	Phase            string    `json:"phase,omitempty"`
+	Diagnostics      []string  `json:"diagnostics,omitempty"`
 }
 type Service struct {
 	mu            sync.Mutex
@@ -95,6 +98,7 @@ type Service struct {
 	switches      []time.Time
 	ctx           context.Context
 	shutdown      context.CancelFunc
+	diagnostics   []string
 }
 
 func Open(options Options) (*Service, error) {
@@ -197,6 +201,7 @@ func (s *Service) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.status
+	status.Diagnostics = append([]string(nil), s.diagnostics...)
 	status.AcceptedRevision = s.accepted.Revision
 	status.SnapshotID = s.accepted.SnapshotID
 	status.DesiredOn = s.accepted.DesiredOn && !s.disabled
@@ -396,6 +401,19 @@ func (s *Service) publish(generation uint64, status Status) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if generation == s.generation && !s.closed {
+		if status.RuntimeState != s.status.RuntimeState || status.Phase != s.status.Phase || status.Error != s.status.Error {
+			entry := time.Now().UTC().Format(time.RFC3339) + " state=" + status.RuntimeState
+			if status.Phase != "" {
+				entry += " phase=" + status.Phase
+			}
+			if status.Error != "" {
+				entry += " error=" + status.Error
+			}
+			s.diagnostics = append(s.diagnostics, entry)
+			if len(s.diagnostics) > 24 {
+				s.diagnostics = s.diagnostics[len(s.diagnostics)-24:]
+			}
+		}
 		s.status = status
 	}
 }
@@ -446,11 +464,12 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 	}
 	position := 0
 	for ctx.Err() == nil {
+		s.publish(generation, Status{RuntimeState: "starting", Phase: "network-discovery"})
 		op, cancel := context.WithTimeout(ctx, operationBudget)
 		physical, err := s.options.Network.Discover(op)
 		if err != nil {
 			cancel()
-			s.publish(generation, Status{RuntimeState: "waiting-network"})
+			s.publish(generation, Status{RuntimeState: "waiting-network", Phase: "network-discovery/" + network.DiscoveryStep(err), Error: "physical_network_unavailable"})
 			if !s.wait(ctx) {
 				return
 			}
@@ -469,18 +488,18 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 		}); ok && s.table != nil {
 			dial.SetTunnelAddress(s.table.Allocate)
 		}
-		if resolver.Probe(op, true) != nil {
-			resolver.Close()
-			cancel()
-			s.publish(generation, Status{RuntimeState: "waiting-network"})
-			if !s.wait(ctx) {
-				return
-			}
-			continue
+		s.publish(generation, Status{RuntimeState: "starting", Phase: "physical-dns-probe"})
+		directAvailable := resolver.Probe(op, true) == nil
+		if !directAvailable {
+			s.publish(generation, Status{RuntimeState: "starting", Phase: "physical-dns-probe", Error: "physical_dns_probe_failed"})
 		}
 		if position >= len(order) {
 			position = 0
-			s.publish(generation, Status{RuntimeState: "error", Error: "recovery_exhausted"})
+			if directAvailable {
+				s.publish(generation, Status{RuntimeState: "error", Error: "recovery_exhausted"})
+			} else {
+				s.publish(generation, Status{RuntimeState: "waiting-network", Phase: "physical-dns-probe", Error: "physical_and_server_unreachable"})
+			}
 			resolver.Close()
 			cancel()
 			if !s.wait(ctx) {
@@ -489,7 +508,7 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 			continue
 		}
 		node := order[position]
-		if position >= 2 && !s.allowSwitch() {
+		if position >= 2 && directAvailable && !s.allowSwitch() {
 			resolver.Close()
 			cancel()
 			s.publish(generation, Status{RuntimeState: "error", Error: "switch_limit"})
@@ -498,13 +517,41 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 			}
 			continue
 		}
-		host, _, _ := policy.ParseNode(node)
+		host, outbound, _ := policy.ParseNode(node)
+		s.publish(generation, Status{RuntimeState: "starting", Phase: "server-resolution", NodeID: node.ID})
 		addresses, err := resolver.Bootstrap(op, host)
 		if err != nil || len(addresses) == 0 {
 			resolver.Close()
 			cancel()
 			position++
+			if !directAvailable && position < len(order) && order[position].ID == node.ID {
+				position++
+			}
+			s.publish(generation, Status{RuntimeState: "starting", Phase: "server-resolution", Error: "bootstrap_failed", NodeID: node.ID})
 			continue
+		}
+		// A blocked public DoH provider does not mean the VPN server is offline.
+		// Confirm its physical path before making any TUN/DNS/route changes.
+		settings := outbound["settings"].(map[string]any)
+		port := strconv.Itoa(int(settings["port"].(float64)))
+		physicalEndpoint := net.JoinHostPort(addresses[0], port)
+		if !directAvailable {
+			s.publish(generation, Status{RuntimeState: "starting", Phase: "server-connectivity", NodeID: node.ID})
+			if resolver.ProbeTCP(op, physicalEndpoint) != nil {
+				resolver.Close()
+				cancel()
+				position++
+				if position < len(order) && order[position].ID == node.ID {
+					position++
+				}
+				continue
+			}
+			if position >= 2 && !s.allowSwitch() {
+				resolver.Close()
+				cancel()
+				s.publish(generation, Status{RuntimeState: "error", Error: "switch_limit"})
+				return
+			}
 		}
 		tun, err := freeTUN()
 		if err != nil {
@@ -532,11 +579,17 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 			s.publish(generation, Status{RuntimeState: "error", Error: "configuration_rejected"})
 			return
 		}
+		s.publish(generation, Status{RuntimeState: "starting", Phase: "worker-start", NodeID: node.ID})
 		worker, err := s.options.Launch(s.options.Binary, assets, filepath.Join(s.options.Directory, "run"))
+		failurePhase := "worker-start"
 		if err == nil {
+			failurePhase = "engine-start"
+			s.publish(generation, Status{RuntimeState: "starting", Phase: failurePhase, NodeID: node.ID})
 			_, err = worker.Call(op, "start", config, s.table.Directory())
 		}
 		if err == nil {
+			failurePhase = "network-apply"
+			s.publish(generation, Status{RuntimeState: "starting", Phase: failurePhase, NodeID: node.ID})
 			err = s.options.Network.Apply(op, physical, tun, addresses)
 		}
 		if err == nil && ctx.Err() == nil {
@@ -557,7 +610,12 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 		}
 		cancel()
 		if err == nil {
-			err = s.monitor(ctx, generation, a.Revision, node.ID, physical, worker, resolver)
+			failurePhase = "tunnel-health"
+			s.publish(generation, Status{RuntimeState: "starting", Phase: failurePhase, NodeID: node.ID})
+			err = s.monitor(ctx, generation, a.Revision, node.ID, physicalEndpoint, physical, worker, resolver)
+		}
+		if err != nil && ctx.Err() == nil {
+			s.publish(generation, Status{RuntimeState: "starting", Phase: failurePhase, Error: "runtime_attempt_failed", NodeID: node.ID})
 		}
 		s.dnsHandler.Suspend()
 		if worker != nil {
@@ -604,7 +662,7 @@ func (s *Service) run(ctx context.Context, generation uint64, a Accepted, p *pol
 		position++
 	}
 }
-func (s *Service) monitor(ctx context.Context, generation, revision uint64, node string, physical network.Physical, worker RuntimeProcess, resolver Transport) error {
+func (s *Service) monitor(ctx context.Context, generation, revision uint64, node, physicalEndpoint string, physical network.Physical, worker RuntimeProcess, resolver Transport) error {
 	failures := 0
 	healthy := false
 	for ctx.Err() == nil {
@@ -623,7 +681,7 @@ func (s *Service) monitor(ctx context.Context, generation, revision uint64, node
 		if s.table.Err() != nil {
 			err = fakedns.ErrTable
 		}
-		if err != nil && !errors.Is(err, fakedns.ErrTable) && resolver.Probe(probe, true) != nil {
+		if err != nil && !errors.Is(err, fakedns.ErrTable) && resolver.Probe(probe, true) != nil && resolver.ProbeTCP(probe, physicalEndpoint) != nil {
 			cancel()
 			s.publish(generation, Status{ActiveRevision: revision, NodeID: node, RuntimeState: "waiting-network"})
 			return errOffline

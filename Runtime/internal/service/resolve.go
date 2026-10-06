@@ -124,7 +124,13 @@ func (r *Resolver) Resolve(ctx context.Context, query *dns.Msg, action fakedns.A
 	case fakedns.Local:
 		return r.local(ctx, query)
 	case fakedns.Direct:
-		return r.doh(ctx, query, r.direct)
+		reply, err := r.doh(ctx, query, r.direct)
+		if err == nil {
+			return reply, nil
+		}
+		// Direct traffic may use the captured physical DNS if DoH is rejected.
+		// VPN queries never take this fallback or leave through the LAN.
+		return r.local(ctx, query)
 	case fakedns.VPN:
 		return r.doh(ctx, query, r.vpn)
 	default:
@@ -243,6 +249,14 @@ func (r *Resolver) bootstrap(ctx context.Context, host string, client *http.Clie
 		return nil, ErrResolver
 	}
 	reply, err := r.doh(ctx, query, client)
+	if err != nil && client == r.direct && ctx.Err() == nil {
+		// Only the admitted server name uses this fallback. Captured DNS
+		// sockets stay bound to the physical interface and cannot recurse into
+		// the system resolver after our loopback DNS override is installed.
+		fallback, cancel := context.WithTimeout(ctx, 2*time.Second)
+		reply, err = r.local(fallback, query)
+		cancel()
+	}
 	if err != nil || reply.Rcode != dns.RcodeSuccess {
 		return nil, ErrResolver
 	}

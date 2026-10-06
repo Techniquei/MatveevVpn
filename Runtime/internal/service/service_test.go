@@ -46,7 +46,9 @@ type harness struct {
 	ifaces        []string
 	ifaceIndex    int
 	directErr     error
+	tcpProbe      func(context.Context, string) error
 	tunnelErr     error
+	tunnelProbe   func() error
 	holdTunnel    chan struct{}
 	health        time.Duration
 	retry         time.Duration
@@ -147,9 +149,13 @@ func (h *harness) Probe(ctx context.Context, direct bool) error {
 		return err
 	}
 	err := h.tunnelErr
+	probe := h.tunnelProbe
 	hold := h.holdTunnel
 	h.order = append(h.order, "tunnel-probe")
 	h.mu.Unlock()
+	if probe != nil {
+		err = probe()
+	}
 	if hold != nil {
 		select {
 		case <-hold:
@@ -163,12 +169,10 @@ func (h *harness) Probe(ctx context.Context, direct bool) error {
 func (h *harness) Close() {}
 
 func (h *harness) ProbeTCP(ctx context.Context, address string) error {
-	dialer := &net.Dialer{Timeout: time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp4", address)
-	if err != nil {
-		return err
+	if h.tcpProbe != nil {
+		return h.tcpProbe(ctx, address)
 	}
-	return conn.Close()
+	return ErrHealth
 }
 
 func (h *harness) launch(string, string, string) (RuntimeProcess, error) {
@@ -461,6 +465,7 @@ func TestReopenRestoresNetworkBeforeLaunch(t *testing.T) {
 func TestOfflineDoesNotLaunchOrSwitch(t *testing.T) {
 	h := newHarness(t, func(h *harness) {
 		h.directErr = ErrHealth
+		h.tcpProbe = func(context.Context, string) error { return ErrHealth }
 		h.retry = 15 * time.Millisecond
 	})
 	if _, err := h.service.Apply(context.Background(), "apply-1", 0, serviceSnapshot()); err != nil {
@@ -474,6 +479,69 @@ func TestOfflineDoesNotLaunchOrSwitch(t *testing.T) {
 	launches, discovers := h.counts()
 	if launches != 0 || discovers < 2 {
 		t.Fatalf("offline consumed recovery: launches %d discovers %d", launches, discovers)
+	}
+	if _, err := h.service.SetDesiredOn(context.Background(), "off-1", 2, false); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, h.service, func(status Status) bool { return status.RuntimeState == "off" })
+	status := h.service.Status()
+	if !strings.Contains(strings.Join(status.Diagnostics, "\n"), "phase=physical-dns-probe error=physical_dns_probe_failed") {
+		t.Fatalf("disconnect erased startup failure: %+v", status)
+	}
+	if len(status.Diagnostics) > 24 {
+		t.Fatal("unbounded diagnostic history")
+	}
+}
+
+func TestBlockedPhysicalDoHCanConnectToReachableAlternative(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.directErr = ErrHealth
+		h.tcpProbe = func(_ context.Context, address string) error {
+			if address == "203.0.113.20:443" {
+				return nil
+			}
+			return ErrHealth
+		}
+	})
+	if _, err := h.service.Apply(context.Background(), "apply-1", 0, serviceSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.SetDesiredOn(context.Background(), "on-1", 1, true); err != nil {
+		t.Fatal(err)
+	}
+	status := waitStatus(t, h.service, func(status Status) bool { return status.RuntimeState == "connected" })
+	if status.NodeID != "node-b" {
+		t.Fatalf("blocked DoH prevented failover: %+v", status)
+	}
+	if launches, _ := h.counts(); launches != 1 {
+		t.Fatalf("unreachable server launched a worker: %d", launches)
+	}
+}
+
+func TestBlockedPhysicalDoHDoesNotPreventTunnelFailover(t *testing.T) {
+	var probes atomic.Int32
+	h := newHarness(t, func(h *harness) {
+		h.directErr = ErrHealth
+		h.tcpProbe = func(context.Context, string) error { return nil }
+		h.tunnelProbe = func() error {
+			if probes.Add(1) == 1 {
+				return ErrHealth
+			}
+			return nil
+		}
+	})
+	if _, err := h.service.Apply(context.Background(), "apply-1", 0, serviceSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.SetDesiredOn(context.Background(), "on-1", 1, true); err != nil {
+		t.Fatal(err)
+	}
+	status := waitStatus(t, h.service, func(status Status) bool { return status.RuntimeState == "connected" })
+	if status.NodeID != "node-b" {
+		t.Fatalf("blocked DoH made a bad tunnel look offline: %+v", status)
+	}
+	if launches, _ := h.counts(); launches != 2 {
+		t.Fatalf("failover launched %d workers", launches)
 	}
 }
 
