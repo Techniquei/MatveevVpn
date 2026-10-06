@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.xray"
+    static let releaseVersion = "1.4.0-beta.xray.1"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -855,16 +855,16 @@ final class VPNController: ObservableObject {
         let transportValue = query["type"].flatMap { $0.isEmpty ? nil : $0 } ?? "raw"
         let transport = transportValue == "splithttp" ? "xhttp" : transportValue
         let security = query["security"].flatMap { $0.isEmpty ? nil : $0 } ?? "none"
-        let core = security == "reality" || transport == "xhttp" ? "Xray" : "sing-box"
+        let core = "Xray"
         return """
         Selected node: \(node.name)
         Endpoint: \(node.host):\(node.port)
-        Protocol: VLESS
+        Protocol: \(components?.scheme ?? "unknown")
         Transport: \(transport)
         Security: \(security)
         Flow: \(query["flow"] ?? "none")
         Runtime core: \(core)
-        VLESS URI: \(raw)
+        Node URI: \(raw)
         """
     }
 

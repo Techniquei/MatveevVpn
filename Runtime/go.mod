@@ -3,8 +3,12 @@ module matveevvpn/runtime
 go 1.27.1
 
 require (
+	github.com/miekg/dns v1.1.73
 	github.com/xtls/libxray v1.260930.0
+	github.com/xtls/xray-core v1.260327.1-0.20260930074004-b26a91de4f32
 	golang.org/x/net v0.59.0
+	golang.org/x/sys v0.48.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -28,7 +32,6 @@ require (
 	github.com/metacubex/hkdf v0.1.0 // indirect
 	github.com/metacubex/hpke v0.1.0 // indirect
 	github.com/metacubex/mlkem v0.1.0 // indirect
-	github.com/miekg/dns v1.1.73 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
 	github.com/pion/logging v0.2.4 // indirect
@@ -42,12 +45,10 @@ require (
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/xtls/reality v0.0.0-20260908062103-8cdf7bf9c7f0 // indirect
-	github.com/xtls/xray-core v1.260327.1-0.20260930074004-b26a91de4f32 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
@@ -55,7 +56,6 @@ require (
 	golang.zx2c4.com/wireguard/windows v1.1.1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect

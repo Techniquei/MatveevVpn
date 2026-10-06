@@ -79,8 +79,9 @@ app, allow it in System Settings → Privacy & Security. The tunnel is IPv4-only
 ./Scripts/build-dmg.sh
 ```
 
-The build downloads pinned, SHA-256-verified sing-box, Xray-core and Sparkle
-artifacts. Output is written to `dist/`.
+The build compiles the arm64 Xray service and worker from pinned Go modules
+and downloads SHA-256-verified Sparkle and HaGeZi artifacts. The legacy sing-box
+and standalone Xray CLI binaries are no longer bundled. Output is written to `dist/`.
 
 See [architecture](docs/ARCHITECTURE.md), [release instructions](docs/RELEASING.md)
 and [security policy](SECURITY.md).

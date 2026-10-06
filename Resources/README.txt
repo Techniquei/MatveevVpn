@@ -1,30 +1,32 @@
-matveevVpn 1.3.4 for macOS (Apple Silicon)
-========================================
+matveevVpn 1.4.0-beta.xray.1 for macOS (Apple Silicon)
+================================================
 
-Move matveevVpn to Applications, open it, and choose Install and set up.
-Enter an HTTPS VLESS subscription URL or a direct VLESS link, load nodes, choose one, and install.
-macOS requests administrator permission to install or repair the system service.
+Move matveevVpn to Applications and open it. macOS requests administrator
+permission to install the system service. Installation starts with the VPN off.
+Add an HTTPS subscription URL or a supported direct link and choose a server.
 Routine connection and routing changes do not need a password.
-After updating an existing installation to 1.3.4, choose Repair Service in
-Settings & Diagnostics to install the corrected system scripts.
 
-Choose Selective to route selected service presets and matching custom rules, or
-All Traffic for a full tunnel. Local destinations remain direct. Domain patterns
-example.com and *.example.com both include the base domain and all subdomains.
-Add Application includes helpers within that application's bundle. Preset rules
-are downloaded from MetaCubeX through the VPN, cached and refreshed daily.
-Optional DNS-level ad blocking uses HaGeZi Multi PRO mini, starts from a bundled
-copy and refreshes the validated list through the VPN every eight hours. It
-cannot remove ads served from the same domain as video content.
+Existing installations need system component version 25. Choose Update on the
+main screen or Settings → Repair service. This fixes downloaded/quarantined
+component files and retains user settings. Installation validates and accepts
+the configuration before connecting; a local startup failure restores the old
+component and its accepted state.
 
-Settings survive app replacement and reinstalling. Version 1.0 settings are
-migrated once from the canonical ~/VPN folder, without scanning backups.
-Settings are stored privately in:
+Choose Selective for selected service presets and custom domains, or All Traffic
+for a full tunnel. Local destinations remain direct. Domain patterns example.com
+and *.example.com include the base domain and its subdomains. Optional DNS ad
+blocking uses HaGeZi Multi PRO mini and cannot remove ads served from the same
+domain as video content.
+
+Settings survive app replacement and reinstalling and are stored privately in:
 ~/Library/Application Support/matveevVpn
 
-Change your subscription and node in Connection Settings. Uninstall in the app
-removes the system service and moves the app to Trash, preserving user settings.
+Change the subscription from Change next to Servers. In-app Uninstall removes
+the system service and moves the app to Trash, preserving user settings.
 Reset All Settings explicitly clears saved settings.
 
-Includes sing-box 1.14.0, Xray-core 26.3.27 and Sparkle 2.9.6.
-This development build is ad-hoc signed and is not notarized by Apple.
+Includes Xray-core 26.9.30, libXray share-link conversion and Sparkle 2.9.6.
+Requires Apple Silicon and macOS 13 or later. This development build is ad-hoc
+signed and is not notarized by Apple. Installing the component clears quarantine
+only on installed component copies; the downloaded application's Gatekeeper
+approval remains a separate macOS step.

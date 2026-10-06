@@ -34,11 +34,11 @@ end-to-end UI installation and relaunch work on every supported macOS version.
 
 ## Stable and beta releases
 
-Stable tags use `vX.Y.Z`; beta tags use `vX.Y.Z-beta.N` or `vX.Y.Z-beta.xray`.
+Stable tags use `vX.Y.Z`; beta tags use `vX.Y.Z-beta.N`, `vX.Y.Z-beta.xray`, or `vX.Y.Z-beta.xray.N`.
 VERSION must match the full tag suffix, and BUILD_NUMBER must increase across
 both channels. For example, 1.3.5 uses 1305 and 1.4.0-beta.1 uses 1400; the
 eventual stable 1.4.0 must use a number greater than all of its beta builds.
-`1.4.0-beta.xray` uses 1413.
+`1.4.0-beta.xray` uses 1413; `1.4.0-beta.xray.1` uses 1414.
 
 The workflow preserves the latest stable appcast before generating the new item.
 `sign-release.sh DIR VERSION beta` passes Sparkle's `--channel beta`. A beta is
@@ -62,3 +62,27 @@ This probes Sparkle against a loopback-only feed using disposable bundles with
 beta off, on, then off. It never downloads or installs an update. The beta release
 workflow runs this check before publishing the prerelease or changing the public
 appcast. Stable clients must continue to be offered only the default-channel build.
+
+## Xray component installation validation
+
+Component 25 installs verified arm64 service/worker copies and removes only
+`com.apple.quarantine` from the installed bin directory and LaunchDaemon plist,
+including rollback. Clearing attributes before building a DMG does not prevent
+a browser or updater from adding quarantine later. The source app is untouched.
+Helpers in `Resources/.payload` are explicitly signed before the app; `--deep`
+verification alone does not prove they were signed with the chosen identity.
+
+`Tests/installer-test.py` runs the full installer with fixed paths and ownership
+rewritten into a disposable unprivileged directory. It exercises real xattrs,
+install/ditto, a native user launchd domain, the service socket and worker validation.
+It covers clean install/retry, Xray repair without a legacy config, 80-node
+subscriptions, legacy migration, failed bootstrap and rejected-config rollback.
+User launchd can accept quarantined plists; the system-daemon quarantine rejection
+is modeled at the bootstrap boundary. No TUN or network settings are modified.
+
+Before publishing, additionally test a browser-downloaded DMG on a separate Mac:
+approve the ad-hoc app in macOS, install/repair the real system LaunchDaemon,
+connect, stop and verify DNS/routes restore. Repeat after a Sparkle update.
+These root/TUN and end-to-end Sparkle installation checks are not replaced by
+the disposable user-domain tests. Developer ID/notarization requires configured
+Apple credentials; clearing component quarantine does not notarize the app.

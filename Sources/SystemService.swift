@@ -38,7 +38,9 @@ struct SystemService {
     // the unscoped 0/1 and 128/1 routes. Version 23 measures node latency
     // through that path. Older services cannot, so the app keeps the local
     // probe until this component is updated.
-    static let version = "24"
+    // Version 25 fixes quarantined installs, applies the initial intent and
+    // accepts subscription requests up to the advertised IPC size limit.
+    static let version = "25"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }

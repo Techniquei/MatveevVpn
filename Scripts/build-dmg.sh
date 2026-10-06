@@ -3,13 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.4.0-beta.xray"
-BUILD_NUMBER="1413"
+VERSION="1.4.0-beta.xray.1"
+BUILD_NUMBER="1414"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
-SING_BOX_VERSION="1.14.0"
-SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
-XRAY_VERSION="26.3.27"
-XRAY_ARCHIVE_SHA256="2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf"
 HAGEZI_COMMIT="bc57a04f9f516be32f3d7853feedb0e1d068187e"
 HAGEZI_RULES_SHA256="8a4f9ec58dca9b558096763d3753cb9f28d498faac0942e2481cc58cc39e19da"
 HAGEZI_LICENSE_SHA256="3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
@@ -29,18 +25,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$DIST_DIR" "$APP/Contents/MacOS" "$APP/Contents/Resources/.payload/tools" "$APP/Contents/Resources/.payload/rules"
+mkdir -p "$DIST_DIR" "$APP/Contents/MacOS" "$APP/Contents/Resources/.payload/rules"
 
 echo "Compiling matveevVpn $VERSION..."
 /bin/bash "$ROOT_DIR/Scripts/fetch-sparkle.sh"
 mkdir -p "$APP/Contents/Frameworks"
 /usr/bin/ditto "$ROOT_DIR/.build/sparkle/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+# Compile a fixed source snapshot: filesystem metadata in Documents can change
+# while swiftc reads the working directory, even when source bytes are unchanged.
+/usr/bin/ditto --noextattr --noqtn "$ROOT_DIR/Sources" "$WORK_DIR/Sources"
 /usr/bin/xcrun --sdk macosx swiftc \
   -parse-as-library \
   -O \
   -target arm64-apple-macos13.0 \
   -F "$ROOT_DIR/.build/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-  "$ROOT_DIR"/Sources/*.swift \
+  "$WORK_DIR"/Sources/*.swift \
   -o "$APP/Contents/MacOS/matveevVpn"
 
 INFO_PLIST="$APP/Contents/Info.plist"
@@ -62,32 +61,6 @@ if [[ -n "${SPARKLE_PUBLIC_KEY:-}" ]]; then
   /usr/bin/plutil -insert SUPublicEDKey -string "$SPARKLE_PUBLIC_KEY" "$INFO_PLIST"
   /usr/bin/plutil -insert SUFeedURL -string 'https://github.com/Techniquei/MatveevVpn/releases/latest/download/appcast.xml' "$INFO_PLIST"
   /usr/bin/plutil -insert SUEnableAutomaticChecks -bool true "$INFO_PLIST"
-fi
-
-if [[ -n "${MATVEEV_XRAY_BINARY:-}" ]]; then
-  LOCAL_XRAY_VERSION="$("$MATVEEV_XRAY_BINARY" version | /usr/bin/awk 'NR==1 { print $2; exit }')"
-  if [[ "$LOCAL_XRAY_VERSION" != "$XRAY_VERSION" ]]; then
-    echo "Local Xray version mismatch: expected $XRAY_VERSION, got ${LOCAL_XRAY_VERSION:-unknown}" >&2
-    exit 1
-  fi
-  [[ -n "${MATVEEV_XRAY_LICENSE:-}" && -f "$MATVEEV_XRAY_LICENSE" ]] || { echo "MATVEEV_XRAY_LICENSE is required with MATVEEV_XRAY_BINARY" >&2; exit 1; }
-  echo "Using local Xray binary..."
-  /usr/bin/install -m 755 "$MATVEEV_XRAY_BINARY" "$APP/Contents/Resources/.payload/xray"
-  /usr/bin/install -m 644 "$MATVEEV_XRAY_LICENSE" "$APP/Contents/Resources/Xray-LICENSE"
-else
-  XRAY_ARCHIVE="$WORK_DIR/xray.zip"
-  XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/Xray-macos-arm64-v8a.zip"
-  echo "Downloading Xray $XRAY_VERSION for modern REALITY and XHTTP..."
-  /usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$XRAY_URL" -o "$XRAY_ARCHIVE"
-  XRAY_ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$XRAY_ARCHIVE" | /usr/bin/awk '{print $1}')"
-  if [[ "$XRAY_ACTUAL_SHA" != "$XRAY_ARCHIVE_SHA256" ]]; then
-    echo "Xray checksum mismatch" >&2
-    exit 1
-  fi
-  /bin/mkdir -p "$WORK_DIR/xray"
-  /usr/bin/ditto -x -k "$XRAY_ARCHIVE" "$WORK_DIR/xray"
-  /usr/bin/install -m 755 "$WORK_DIR/xray/xray" "$APP/Contents/Resources/.payload/xray"
-  /usr/bin/install -m 644 "$WORK_DIR/xray/LICENSE" "$APP/Contents/Resources/Xray-LICENSE"
 fi
 
 /usr/bin/install -m 644 "$ROOT_DIR/Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
@@ -117,45 +90,37 @@ fi
 /usr/bin/install -m 644 "$HAGEZI_LICENSE" "$APP/Contents/Resources/Hagezi-LICENSE"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/install-service.sh" "$APP/Contents/Resources/.payload/install-service.sh"
 /usr/bin/install -m 644 "$ROOT_DIR/Resources/payload/com.matveev.vpn.plist" "$APP/Contents/Resources/.payload/com.matveev.vpn.plist"
-/usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/controller.sh" "$APP/Contents/Resources/.payload/controller.sh"
-/usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/dns-manager.sh" "$APP/Contents/Resources/.payload/dns-manager.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/service-lifecycle.sh" "$APP/Contents/Resources/.payload/service-lifecycle.sh"
-/usr/bin/install -m 755 "$ROOT_DIR/Resources/payload/tools/build-config.rb" "$APP/Contents/Resources/.payload/tools/build-config.rb"
 /bin/bash "$ROOT_DIR/Scripts/build-xray-runtime.sh"
 /usr/bin/install -m 755 "$ROOT_DIR/.build/xray-runtime/matveev-xray-service" "$APP/Contents/Resources/.payload/matveev-xray-service"
 /usr/bin/install -m 755 "$ROOT_DIR/.build/xray-runtime/matveev-xray-worker" "$APP/Contents/Resources/.payload/matveev-xray-worker"
-
-if [[ -n "${MATVEEV_SING_BOX_BINARY:-}" ]]; then
-  LOCAL_SING_BOX_VERSION="$("$MATVEEV_SING_BOX_BINARY" version | /usr/bin/awk '/^sing-box version / { print $3; exit }')"
-  if [[ "$LOCAL_SING_BOX_VERSION" != "$SING_BOX_VERSION" ]]; then
-    echo "Local sing-box version mismatch: expected $SING_BOX_VERSION, got ${LOCAL_SING_BOX_VERSION:-unknown}" >&2
-    exit 1
-  fi
-  echo "Using local sing-box binary..."
-  /usr/bin/install -m 755 "$MATVEEV_SING_BOX_BINARY" "$APP/Contents/Resources/.payload/sing-box"
-else
-  ARCHIVE="$WORK_DIR/sing-box.tar.gz"
-  URL="https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-darwin-arm64.tar.gz"
-  echo "Downloading sing-box $SING_BOX_VERSION..."
-  /usr/bin/curl -fL --retry 3 --connect-timeout 15 --max-time 180 "$URL" -o "$ARCHIVE"
-  ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$ARCHIVE" | /usr/bin/awk '{print $1}')"
-  if [[ "$ACTUAL_SHA" != "$SING_BOX_ARCHIVE_SHA256" ]]; then
-    echo "sing-box checksum mismatch" >&2
-    exit 1
-  fi
-  /usr/bin/tar -xzf "$ARCHIVE" -C "$WORK_DIR"
-  /usr/bin/install -m 755 \
-    "$WORK_DIR/sing-box-$SING_BOX_VERSION-darwin-arm64/sing-box" \
-    "$APP/Contents/Resources/.payload/sing-box"
-fi
+for module in xray-core libxray; do
+  MODULE_DIR="$(GOTOOLCHAIN=local GOPATH="$ROOT_DIR/.build/go" "$ROOT_DIR/.build/toolchains/go1.27.1/bin/go" list -C "$ROOT_DIR/Runtime" -mod=readonly -m -f '{{.Dir}}' "github.com/xtls/$module")"
+  [[ -f "$MODULE_DIR/LICENSE" ]] || { echo "Pinned $module license is missing" >&2; exit 1; }
+  /usr/bin/install -m 644 "$MODULE_DIR/LICENSE" "$APP/Contents/Resources/$module-LICENSE"
+done
 
 /usr/bin/xattr -cr "$APP"
-SIGN_ARGS=(--force --deep --sign "${CODE_SIGN_IDENTITY:--}")
+SIGN_ARGS=(--force --sign "${CODE_SIGN_IDENTITY:--}")
 if [[ -n "${CODE_SIGN_IDENTITY:-}" && "$CODE_SIGN_IDENTITY" != - ]]; then
   SIGN_ARGS+=(--options runtime --timestamp)
-  /usr/bin/codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$APP/Contents/Resources/.payload/sing-box"
-  /usr/bin/codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$APP/Contents/Resources/.payload/xray"
 fi
+# --deep does not discover executables in Resources/.payload. Sign every
+# helper explicitly, including the new service and worker, then their bundles.
+for name in matveev-xray-service matveev-xray-worker; do
+  /usr/bin/lipo "$APP/Contents/Resources/.payload/$name" -verify_arch arm64
+  /usr/bin/codesign "${SIGN_ARGS[@]}" "$APP/Contents/Resources/.payload/$name"
+  /usr/bin/codesign --verify --strict "$APP/Contents/Resources/.payload/$name"
+done
+while IFS= read -r -d '' executable; do
+  if /usr/bin/file -b "$executable" | /usr/bin/grep -q 'Mach-O'; then
+    /usr/bin/codesign "${SIGN_ARGS[@]}" --preserve-metadata=identifier,entitlements,flags "$executable"
+  fi
+done < <(/usr/bin/find "$APP/Contents/Frameworks" -type f -print0)
+while IFS= read -r -d '' bundle; do
+  /usr/bin/codesign "${SIGN_ARGS[@]}" --preserve-metadata=identifier,entitlements,flags "$bundle"
+done < <(/usr/bin/find "$APP/Contents/Frameworks" -depth -type d \( -name '*.app' -o -name '*.xpc' -o -name '*.framework' \) -print0)
+/usr/bin/lipo "$APP/Contents/MacOS/matveevVpn" -verify_arch arm64
 /usr/bin/codesign "${SIGN_ARGS[@]}" "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
 

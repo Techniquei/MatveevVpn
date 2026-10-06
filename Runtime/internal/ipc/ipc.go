@@ -31,12 +31,12 @@ type request struct {
 }
 
 type response struct {
-	Version   int                `json:"version"`
-	RequestID string             `json:"requestID,omitempty"`
-	Success   bool               `json:"success"`
-	Status    service.Status     `json:"status"`
+	Version   int                 `json:"version"`
+	RequestID string              `json:"requestID,omitempty"`
+	Success   bool                `json:"success"`
+	Status    service.Status      `json:"status"`
 	Probes    []service.NodeProbe `json:"probes,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Error     string              `json:"error,omitempty"`
 }
 
 type desiredPayload struct {
@@ -104,8 +104,10 @@ func handleConn(conn net.Conn, vpn *service.Service, ownerUID int) {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	reader := bufio.NewReaderSize(conn, 4096)
-	line, err := reader.ReadSlice('\n')
+	// Bound the entire message, rather than rejecting at the reader's 4 KiB
+	// buffer boundary. A normal subscription can contain many more nodes.
+	reader := bufio.NewReader(io.LimitReader(conn, maximumMessageBytes+1))
+	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > maximumMessageBytes {
 		writeResponse(conn, response{Version: version, Error: "invalid_request"})
 		return

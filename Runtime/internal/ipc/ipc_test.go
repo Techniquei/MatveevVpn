@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -83,6 +85,54 @@ func TestSocketRoundTripKeepsTheWorkerIdleDuringProbes(t *testing.T) {
 	}
 }
 
+func TestSocketAcceptsLargeSubscriptionAndRejectsOversize(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "mvpnipc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	listener, err := Listen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var launches atomic.Int32
+	vpn := openIdleService(t, &launches)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go Serve(ctx, listener, vpn, -1)
+	nodes := make([]map[string]string, 80)
+	for i := range nodes {
+		nodes[i] = map[string]string{"id": fmt.Sprintf("node-%d", i), "uri": fmt.Sprintf("vless://11111111-1111-1111-1111-111111111111@server-%d.test:443?encryption=none", i)}
+	}
+	payload, _ := json.Marshal(map[string]any{"nodes": nodes, "selectedNodeID": "node-0", "mode": "selective"})
+	if len(payload) <= 4096 {
+		t.Fatal("fixture must cross the reader buffer boundary")
+	}
+	result := call(t, listener.Addr().String(), request{Version: version, RequestID: "large", Action: "Apply", Payload: payload})
+	if !result.Success || result.Status.AcceptedRevision != 1 || launches.Load() != 0 {
+		t.Fatalf("large stopped subscription: %+v launches=%d", result, launches.Load())
+	}
+	conn, err := net.Dial("unix", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	// One byte above the bound must fail without waiting for EOF or a newline.
+	_, _ = conn.Write([]byte(strings.Repeat(" ", maximumMessageBytes+1)))
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected response
+	if json.Unmarshal(line, &rejected) != nil || rejected.Success || rejected.Error != "invalid_request" {
+		t.Fatalf("oversized request: %s", line)
+	}
+	if vpn.Status().AcceptedRevision != 1 {
+		t.Fatal("rejected request changed accepted state")
+	}
+}
+
 func call(t *testing.T, path string, command request) response {
 	t.Helper()
 	conn, err := net.Dial("unix", path)
@@ -139,8 +189,8 @@ func (idleNetwork) Discover(context.Context) (network.Physical, error) {
 	return network.Physical{Interface: "en0", GatewayIPv4: "192.0.2.1", Service: "Wi-Fi", DNS: []string{"192.0.2.53"}}, nil
 }
 func (idleNetwork) Apply(context.Context, network.Physical, string, []string) error { return nil }
-func (idleNetwork) Restore(context.Context) error { return nil }
-func (idleNetwork) Reclaim(context.Context) error { return nil }
+func (idleNetwork) Restore(context.Context) error                                   { return nil }
+func (idleNetwork) Reclaim(context.Context) error                                   { return nil }
 
 type idleTransport struct{}
 
@@ -150,9 +200,9 @@ func (idleTransport) Resolve(context.Context, *dns.Msg, fakedns.Action) (*dns.Ms
 func (idleTransport) Bootstrap(context.Context, string) ([]string, error) {
 	return []string{"203.0.113.10"}, nil
 }
-func (idleTransport) Probe(context.Context, bool) error           { return nil }
-func (idleTransport) ProbeTCP(context.Context, string) error      { return nil }
-func (idleTransport) Close() {}
+func (idleTransport) Probe(context.Context, bool) error      { return nil }
+func (idleTransport) ProbeTCP(context.Context, string) error { return nil }
+func (idleTransport) Close()                                 {}
 
 type idleWorker struct{ done chan struct{} }
 

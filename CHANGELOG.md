@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0-beta.xray.1
+
+- Removes quarantine from installed component copies before bootstrap and rollback,
+  preserving the downloaded app and unrelated extended attributes.
+- Applies and validates the initial configuration while stopped; component 25
+  restores the complete previous service state after a failed replacement.
+- Repairs Xray installations without depending on legacy configuration files.
+- Supports subscription IPC requests beyond the reader’s 4 KiB buffer up to 1 MiB.
+- Signs service/worker explicitly, checks arm64 slices, and removes unused legacy
+  CLI binaries from the Xray app bundle.
+- Reports the current Xray engine and imported protocol correctly in diagnostics.
+
 ## 1.3.4
 
 - Ignores `REACH` summary lines when selecting the physical IPv4 interface in

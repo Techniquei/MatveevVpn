@@ -1,23 +1,17 @@
 # Third-party notices
 
-matveevVpn downloads and distributes sing-box 1.14.0 for macOS arm64 during
-the build. sing-box is copyright 2022 nekohasekai and contributors and is
-licensed under GPL-3.0-or-later with an additional naming restriction. Its
-source and license are available at:
+The worker links Xray-core 26.9.30 (commit b26a91de4f32), licensed under
+MPL-2.0. libXray v1.260930.0 supplies share-link conversion under MIT.
+Both exact module versions and their dependencies are pinned in `Runtime/go.mod`
+and verified with `Runtime/go.sum`. Their licenses are bundled as
+`xray-core-LICENSE` and `libxray-LICENSE`.
 
-- https://github.com/SagerNet/sing-box
-- https://github.com/SagerNet/sing-box/releases/tag/v1.14.0
+- https://github.com/XTLS/Xray-core/tree/b26a91de4f32
+- https://github.com/XTLS/libXray/tree/v1.260930.0
 
-The sing-box archive is pinned by SHA-256 in `Scripts/build-dmg.sh`.
-
-Xray-core 26.3.27 is distributed for modern VLESS REALITY compatibility under
-MPL-2.0. Its source and license are available at:
-
-- https://github.com/XTLS/Xray-core
-- https://github.com/XTLS/Xray-core/releases/tag/v26.3.27
-
-The Xray archive is pinned by SHA-256 in `Scripts/build-dmg.sh`.
-Its MPL-2.0 license is bundled as `Xray-LICENSE`.
+The Xray beta no longer distributes the legacy sing-box or standalone Xray CLI
+binaries. Legacy controller sources remain in the repository for regression
+checks and migration documentation.
 
 Sparkle 2.9.6 is distributed under its permissive license and bundled notices.
 The build pins its archive SHA-256 in `Scripts/fetch-sparkle.sh` and includes
@@ -26,9 +20,9 @@ Sparkle-LICENSE in the application's resources.
 - https://github.com/sparkle-project/Sparkle
 - https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6
 
-When service presets are enabled, matveevVpn downloads binary rule sets from
-MetaCubeX/meta-rules-dat. The repository is licensed under GPL-3.0 and
-incorporates data from the upstream projects listed in its notices.
+Service presets include normalized data from MetaCubeX/meta-rules-dat. The
+repository is licensed under GPL-3.0 and incorporates data from the upstream
+projects listed in its notices.
 
 - https://github.com/MetaCubeX/meta-rules-dat
 

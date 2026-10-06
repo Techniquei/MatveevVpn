@@ -28,6 +28,8 @@ export GOTOOLCHAIN=local
 export GOPATH="$ROOT_DIR/.build/go"
 export GOCACHE="$ROOT_DIR/.build/go-cache"
 export CGO_ENABLED=0
+export GOOS=darwin
+export GOARCH=arm64
 mkdir -p "$ROOT_DIR/.build/xray-runtime"
 cd "$ROOT_DIR/Runtime"
 "$GO_BINARY" build -mod=readonly -trimpath -o "$ROOT_DIR/.build/xray-runtime/matveev-xray-worker" .

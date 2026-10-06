@@ -4,7 +4,8 @@
 
 The privileged component is `matveev-xray-service`, installed through launchd.
 It owns accepted configuration, DNS, routes, health and recovery. A child
-worker links libXray and Xray-core and owns the TUN instance. The Swift app
+worker links Xray-core and owns the TUN instance. libXray supplies share-link
+conversion; engine lifecycle uses Xray-core directly. The Swift app
 stays the UI and the local socket client; it does not embed a Go runtime.
 The Go toolchain and modules are pinned. Downloaded tools and binaries stay
 in `.build/`.
@@ -18,7 +19,22 @@ arguments or ordinary errors. Engine logs are disabled.
 An older installation that still has `controller.sh` is replaced by the
 installer. That installer stops the previous daemon and restores the network
 before the Xray service starts. Validation uses a separate idle worker because
-libXray construction changes process-wide state.
+engine construction changes process-wide state.
+
+Component 25 stages and verifies signed arm64 helpers before stopping the old
+daemon. It snapshots the stopped installation (excluding sockets), clears only
+installed quarantine, starts the replacement off, and accepts the supplied intent
+through IPC before reporting success. Bootstrap or Apply failure restores the
+previous binaries, accepted state, configuration, owner, rules and version.
+Rollback readiness uses IPC for Xray and runtime-status for the legacy controller.
+The source downloaded app retains its quarantine/Gatekeeper state.
+
+IPC accepts newline-terminated requests up to 1 MiB; it is not limited by the
+reader’s internal buffer. Swift → service carries typed intent; service → worker
+carries generated engine JSON. The runtime and GUI explicitly target arm64/macOS
+13+, with no Intel slice. Every payload executable is signed explicitly before
+the enclosing app. Unused legacy CLI engines and controller helpers are excluded
+from the new bundle.
 
 ## Current application
 
@@ -86,7 +102,11 @@ disables overlapping user commands across windows and menu controls. Temporary
 files contain credentials but are private and removed when the operation exits.
 Subscription URLs are never passed in process arguments or error text.
 
-## Routing and diagnostics
+## Legacy controller routing and diagnostics
+
+The following controller/sing-box details describe the pre-Xray implementation.
+For the current DNS, routing and recovery ownership, see the Xray service section
+and `XRAY-DECISIONS.md`.
 
 The controller records the last successful remote preset download or HTTP 304
 in `control/routing-updated-at`, using sing-box 1.14 INFO success events. Remote
