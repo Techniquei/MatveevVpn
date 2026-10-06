@@ -86,3 +86,11 @@ connect, stop and verify DNS/routes restore. Repeat after a Sparkle update.
 These root/TUN and end-to-end Sparkle installation checks are not replaced by
 the disposable user-domain tests. Developer ID/notarization requires configured
 Apple credentials; clearing component quarantine does not notarize the app.
+
+## Retired public releases
+
+Public installer releases below 1.3.5 and the failed `v1.4.0-beta.xray` are
+retired. Their release assets and tags must not be restored or republished, and
+appcasts must not reference them. Keep the stable channel on 1.3.5 until a new
+stable release is explicitly authorized. The replacement Xray prerelease is
+`v1.4.0-beta.xray.1` (build 1414, component 25).
