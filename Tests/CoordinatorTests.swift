@@ -86,7 +86,19 @@ final class FakeTransport: ConfigurationTransport {
         transport.installed = true
         transport.currentVersion = "12"
         _ = try await coordinator.apply(next, previous: next)
-        precondition(transport.installDesiredStates.last == true, "Upgrades must still verify a running tunnel before replacing the previous service")
+        precondition(transport.installDesiredStates.last == false && transport.actions.last == "on",
+                     "Repairs must install stopped, commit settings, then connect")
+        transport.rejectStart = true
+        var repaired = next
+        repaired.subscription = "saved-before-connect"
+        do {
+            _ = try await coordinator.apply(repaired, previous: next)
+            fatalError("A failed post-repair connection was ignored")
+        } catch { precondition(error.localizedDescription.contains("subscription was saved")) }
+        let savedRepair = try store.load()
+        precondition(savedRepair.subscription == "saved-before-connect")
+        precondition(!FileManager.default.fileExists(atPath: store.pendingFile.path))
+        transport.rejectStart = false
 
         let freshHash = root.appendingPathComponent("fresh-hash")
         let freshStore = StateStore(directory: root.appendingPathComponent("fresh-state"), legacyDirectory: root.appendingPathComponent("none"), runtimeHashFile: freshHash)

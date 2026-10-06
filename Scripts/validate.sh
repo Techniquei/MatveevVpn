@@ -48,6 +48,7 @@ trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 /bin/bash -n "$ROOT_DIR/Resources/payload/install-service.sh"
 /bin/bash -n "$ROOT_DIR/Resources/payload/service-lifecycle.sh"
 /bin/bash "$ROOT_DIR/Tests/service-lifecycle-test.sh"
+/usr/bin/python3 "$ROOT_DIR/Tests/sing-box-installer-test.py"
 
 if /usr/bin/grep -Eq 'ByteCountFormatter' "$ROOT_DIR/Sources/matveevVpn.swift"; then
   echo "Unstable speed formatting was reintroduced." >&2

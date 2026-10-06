@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0-beta.3.install.1 (unreleased test build)
+
+- Fixes quarantine on installed helpers and launchd plist.
+- Restores the full previous installation after failure, including native Xray.
+- Separates stopped component installation from the connection attempt.
+- Uses component 27 and the existing beta.3 runtime/network configuration.
+
 ## 1.3.4
 
 - Ignores `REACH` summary lines when selecting the physical IPv4 interface in

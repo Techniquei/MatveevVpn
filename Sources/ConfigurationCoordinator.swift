@@ -37,8 +37,9 @@ actor ConfigurationCoordinator {
         let isFirstInstall = !transport.installed
         let requiresInstall = isFirstInstall || transport.currentVersion != SystemService.version
         if requiresInstall {
-            // First installation must finish without waiting for the new tunnel to reach the network.
-            try await transport.install(config, desiredOn: isFirstInstall ? false : next.desiredOn)
+            // Installing or repairing the component proves local readiness.
+            // Connecting happens only after the admitted settings are saved.
+            try await transport.install(config, desiredOn: false)
         } else {
             try await transport.deploy(config, until: deadline)
             if next.desiredOn != transport.running { try await transport.send(next.desiredOn ? "on" : "off", until: deadline) }
@@ -61,8 +62,10 @@ actor ConfigurationCoordinator {
             throw VPNError.message("Could not save settings. The previous configuration was restored where available.")
         }
         try store.finishTransaction()
-        if isFirstInstall && next.desiredOn {
-            do { try await transport.send("on", until: deadline) }
+        if requiresInstall && next.desiredOn {
+            // An administrator prompt can outlive the configuration budget.
+            // Connecting after installation is a separate bounded operation.
+            do { try await transport.send("on", until: Date().addingTimeInterval(SystemService.operationTimeout)) }
             catch {
                 let details = (error as? VPNError)?.diagnosticDetails ?? error.localizedDescription
                 throw VPNError.diagnostic("The component was installed and your subscription was saved, but the VPN could not connect. Try connecting again.", details)

@@ -33,7 +33,9 @@ enum Command {
 
 struct SystemService {
     // Version 14 carries the operation deadline so rollback finishes before UI timeout.
-    static let version = "14"
+    // Component 27 installs quarantined copies safely and can roll back a
+    // replacement of the retired native Xray service.
+    static let version = "27"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -150,7 +152,7 @@ struct SystemService {
 
     func install(_ config: URL, desiredOn: Bool) async throws {
         let script = payload.appendingPathComponent("install-service.sh")
-        let command = ["/bin/bash", script.path, payload.path, config.path, String(getuid()), String(getgid()), desiredOn ? "on" : "off"].map(Self.quote).joined(separator: " ")
+        let command = ["/bin/bash", script.path, payload.path, config.path, String(getuid()), String(getgid()), "off"].map(Self.quote).joined(separator: " ")
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let result = await Command.run("/usr/bin/osascript", ["-e", "do shell script \"\(escaped)\" with administrator privileges"])
         guard result.status == 0 else {
@@ -163,7 +165,10 @@ struct SystemService {
             throw VPNError.diagnostic(summary, details)
         }
         for _ in 0..<150 {
-            if currentVersion == Self.version && (!desiredOn || running) { return }
+            if currentVersion == Self.version && runtimeStatus == "stopped" {
+                if desiredOn { try await send("on", until: Date().addingTimeInterval(Self.operationTimeout)) }
+                return
+            }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         throw VPNError.diagnostic("The service was installed but did not become ready within 15 seconds.", recentRuntimeErrors())

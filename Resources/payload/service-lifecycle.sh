@@ -8,7 +8,7 @@ SLEEP_BIN="${MATVEEV_SLEEP:-/bin/sleep}"
 bootout_service() {
   "$LAUNCHCTL_BIN" bootout "system/$SERVICE_LABEL" 2>/dev/null || true
   local attempt
-  for attempt in {1..100}; do
+  for attempt in {1..300}; do
     if ! "$LAUNCHCTL_BIN" print "system/$SERVICE_LABEL" >/dev/null 2>&1; then
       return 0
     fi

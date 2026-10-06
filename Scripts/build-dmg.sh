@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.4.0-beta.3"
-BUILD_NUMBER="1402"
+VERSION="1.4.0-beta.3.install.1"
+BUILD_NUMBER="1416"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
@@ -35,12 +35,13 @@ echo "Compiling matveevVpn $VERSION..."
 /bin/bash "$ROOT_DIR/Scripts/fetch-sparkle.sh"
 mkdir -p "$APP/Contents/Frameworks"
 /usr/bin/ditto "$ROOT_DIR/.build/sparkle/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+/usr/bin/ditto --noextattr --noqtn "$ROOT_DIR/Sources" "$WORK_DIR/Sources"
 /usr/bin/xcrun --sdk macosx swiftc \
   -parse-as-library \
   -O \
   -target arm64-apple-macos13.0 \
   -F "$ROOT_DIR/.build/sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-  "$ROOT_DIR"/Sources/*.swift \
+  "$WORK_DIR"/Sources/*.swift \
   -o "$APP/Contents/MacOS/matveevVpn"
 
 INFO_PLIST="$APP/Contents/Info.plist"
@@ -128,12 +129,27 @@ else
 fi
 
 /usr/bin/xattr -cr "$APP"
-SIGN_ARGS=(--force --deep --sign "${CODE_SIGN_IDENTITY:--}")
+for name in sing-box xray; do
+  /usr/bin/lipo "$APP/Contents/Resources/.payload/$name" -verify_arch arm64
+  /usr/bin/codesign --verify --strict "$APP/Contents/Resources/.payload/$name"
+done
+SIGN_ARGS=(--force --sign "${CODE_SIGN_IDENTITY:--}")
 if [[ -n "${CODE_SIGN_IDENTITY:-}" && "$CODE_SIGN_IDENTITY" != - ]]; then
   SIGN_ARGS+=(--options runtime --timestamp)
-  /usr/bin/codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$APP/Contents/Resources/.payload/sing-box"
-  /usr/bin/codesign --force --options runtime --timestamp --sign "$CODE_SIGN_IDENTITY" "$APP/Contents/Resources/.payload/xray"
 fi
+for name in sing-box xray; do
+  /usr/bin/codesign "${SIGN_ARGS[@]}" "$APP/Contents/Resources/.payload/$name"
+  /usr/bin/codesign --verify --strict "$APP/Contents/Resources/.payload/$name"
+done
+while IFS= read -r -d '' executable; do
+  if /usr/bin/file -b "$executable" | /usr/bin/grep -q 'Mach-O'; then
+    /usr/bin/codesign "${SIGN_ARGS[@]}" --preserve-metadata=identifier,entitlements,flags "$executable"
+  fi
+done < <(/usr/bin/find "$APP/Contents/Frameworks" -type f -print0)
+while IFS= read -r -d '' bundle; do
+  /usr/bin/codesign "${SIGN_ARGS[@]}" --preserve-metadata=identifier,entitlements,flags "$bundle"
+done < <(/usr/bin/find "$APP/Contents/Frameworks" -depth -type d \( -name '*.app' -o -name '*.xpc' -o -name '*.framework' \) -print0)
+/usr/bin/lipo "$APP/Contents/MacOS/matveevVpn" -verify_arch arm64
 /usr/bin/codesign "${SIGN_ARGS[@]}" "$APP"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP"
 
