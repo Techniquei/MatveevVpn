@@ -18,7 +18,8 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-PAYLOAD_SOURCE = Path(sys.argv[1]).resolve() / 'Contents/Resources/.payload' if len(sys.argv) > 1 else ROOT / 'Resources/payload'
+PACKAGED = len(sys.argv) > 1 and bool(sys.argv[1])
+PAYLOAD_SOURCE = Path(sys.argv[1]).resolve() / 'Contents/Resources/.payload' if PACKAGED else ROOT / 'Resources/payload'
 PREVIOUS_SOURCE = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
 UID, GID = os.getuid(), os.getgid()
 assert UID != 0, 'Run as a normal user, never root'
@@ -46,12 +47,12 @@ with tempfile.TemporaryDirectory(prefix='mvlegacy-', dir='/private/tmp') as temp
     shutil.copyfile('/usr/bin/true', app / 'Contents/MacOS/matveevVpn')
     (app / 'Contents/MacOS/matveevVpn').chmod(0o755)
     (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.matveev.vpn'}))
-    if len(sys.argv) == 1:
+    if not PACKAGED:
         fixture_source = work / 'engine.c'
         fixture_source.write_text('int main(void) { return 0; }\n')
         run('/usr/bin/xcrun', 'clang', '-target', 'arm64-apple-macos13.0', fixture_source, '-o', work / 'engine')
     for name in ('sing-box', 'xray'):
-        source = PAYLOAD_SOURCE / name if len(sys.argv) > 1 else work / 'engine'
+        source = PAYLOAD_SOURCE / name if PACKAGED else work / 'engine'
         shutil.copyfile(source, payload / name)
         (payload / name).chmod(0o755)
         run('/usr/bin/codesign', '--force', '--sign', '-', payload / name)

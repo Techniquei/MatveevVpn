@@ -347,8 +347,8 @@ import Foundation
         upgrade.refresh()
         upgrade.run("restart")
         try await wait(upgrade)
-        precondition(!upgrade.needsUpgrade && SystemService.installs == 2 && SystemService.actions.isEmpty,
-                     "A manual connection command must install the required component through the coordinator rather than restart the incompatible runtime")
+        precondition(!upgrade.needsUpgrade && SystemService.installs == 2 && SystemService.actions == ["on"] && SystemService.runningValue,
+                     "A manual connection must install stopped through the coordinator, save settings, then connect the compatible component")
 
         print("first run: setup, serialization, cancellation retry, node preservation and required streaming-logger upgrade passed")
     }
