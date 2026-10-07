@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0-beta.3.install.1 (unreleased test build)
+## 1.4.0-beta.4
 
 - Fixes quarantine on installed helpers and launchd plist.
 - Restores the full previous installation after failure, including native Xray.

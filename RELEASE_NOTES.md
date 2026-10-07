@@ -1,17 +1,21 @@
-# matveevVpn 1.4.0-beta.3.install.1 — manual test build
+# matveevVpn 1.4.0-beta.4
 
-This build uses the same runtime and network configuration as beta.3 and fixes
-system-component installation. It is not published to Releases or the update feed.
+Исправлено обновление и установка системного компонента на macOS, в том числе
+возврат с экспериментальной версии Xray к прежнему контроллеру.
 
-- Removes quarantine from staged and installed helper/plist copies while preserving
-  the downloaded app and unrelated attributes.
-- Verifies arm64 helpers and configuration before stopping an existing component.
-- Backs up the full stopped installation, including a previous native Xray service
-  without a legacy config.json, and restores it after failed replacement.
-- Installs the legacy controller stopped. Settings are committed before connecting,
-  so network filtering cannot be reported as a failed system installation.
-- Preserves Sparkle helper entitlements when signing the app.
+- Карантин снимается с установленных копий системных помощников и launchd plist.
+- Архитектура arm64, подписи и конфигурация проверяются до остановки старой службы.
+- При неудачной замене восстанавливается предыдущая установка целиком.
+- Установка компонента отделена от подключения: сетевой сбой больше не выдаётся
+  за ошибку установки и не мешает сохранению настроек.
+- Исправлено сохранение прав помощников Sparkle при подписании приложения.
 
-After copying the app to Applications, install or repair the system component.
-The expected component version is 27. Internet access through the affected Mac's
-corporate endpoint security still requires a separate connection test.
+После обновления установите или восстановите системный компонент в приложении.
+Ожидаемая версия компонента — 27. Сборка предназначена для Mac с Apple Silicon.
+
+Используется прежняя схема beta.3: sing-box для туннеля и отдельный помощник Xray
+для REALITY/XHTTP. Ошибки подключения и замедления на отдельных узлах или при
+фильтрации корпоративным антивирусом ещё исследуются; этот релиз не заявляет
+их исправление.
+
+Бета доступна через канал бета-обновлений. Стабильный релиз остаётся 1.3.5.

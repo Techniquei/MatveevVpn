@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.3.install.1"
+    static let releaseVersion = "1.4.0-beta.4"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
