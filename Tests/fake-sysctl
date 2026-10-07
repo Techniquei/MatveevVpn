@@ -1,0 +1,2 @@
+#!/bin/bash
+cat "$MATVEEV_BASE_DIR/wake-signature" 2>/dev/null || printf 'initial-wake\n'

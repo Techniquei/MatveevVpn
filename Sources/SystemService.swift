@@ -35,7 +35,8 @@ struct SystemService {
     // Version 14 carries the operation deadline so rollback finishes before UI timeout.
     // Component 27 installs quarantined copies safely and can roll back a
     // replacement of the retired native Xray service.
-    static let version = "27"
+    // Component 28 owns runtime retries and publishes readiness on both DNS paths.
+    static let version = "28"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -50,7 +51,7 @@ struct SystemService {
         (try? String(contentsOf: control.appendingPathComponent("runtime-status"), encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unavailable"
     }
-    var isConnecting: Bool { ["starting", "waiting for network"].contains(runtimeStatus) }
+    var isConnecting: Bool { ["starting", "recovering", "waiting for network", "waiting for direct DNS", "waiting for VPN DNS"].contains(runtimeStatus) }
     var automaticRoutingLastUpdate: Date? {
         Self.routingUpdateDate(at: control.appendingPathComponent("routing-updated-at"))
     }
@@ -82,10 +83,20 @@ struct SystemService {
         while Date() < deadline {
             if let value = try? String(contentsOf: response, encoding: .utf8) {
                 try? FileManager.default.removeItem(at: response)
-                guard value.hasPrefix("ok") else {
-                    throw VPNError.diagnostic("The controller rejected the change. The previous configuration was retained.", recentRuntimeErrors())
+                let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if result == "ok" || (result == "pending" && ["on", "restart"].contains(action)) { return }
+                let explanation: String
+                switch action {
+                case "on", "restart":
+                    explanation = runtimeStatus == "waiting to retry"
+                        ? "VPN could not start. The controller will retry automatically. See diagnostics for the cause."
+                        : "VPN could not start. See diagnostics for the cause."
+                case "reload": explanation = "Could not apply the configuration. The previous configuration was retained."
+                case "off": explanation = "The controller could not confirm that the VPN stopped."
+                case "reset": explanation = "The controller could not complete the reset."
+                default: explanation = "The controller could not complete the operation."
                 }
-                return
+                throw VPNError.diagnostic(explanation, recentRuntimeErrors())
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }

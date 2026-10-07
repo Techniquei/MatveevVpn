@@ -148,7 +148,7 @@ clear_installed_quarantine
 /usr/bin/printf 'off\n' > "$BASE/run/desired-state"
 /bin/chmod 600 "$BASE/run/desired-state"
 /bin/rm -f "$BASE/control/command" "$BASE/control/pending-config.json" "$BASE/control/pending-xray.json" "$BASE/control/runtime-status"
-/usr/bin/printf '27\n' > "$BASE/control/version"
+/usr/bin/printf '28\n' > "$BASE/control/version"
 /bin/chmod 644 "$BASE/control/version"
 /usr/bin/shasum -a 256 "$BASE/config.json" | /usr/bin/awk '{print $1}' > "$BASE/control/config-sha256"
 /bin/chmod 644 "$BASE/control/config-sha256"

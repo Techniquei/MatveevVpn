@@ -432,6 +432,26 @@ private struct NodeListView: View {
     }
 }
 
+private struct BackgroundConnectionStatusView: View {
+    @ObservedObject var controller: VPNController
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+                .accessibilityHidden(true)
+            Text(controller.connectionStatusText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(9)
+        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("vpn.connection.progress")
+    }
+}
+
 private struct MainView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var controller: VPNController
@@ -496,6 +516,10 @@ private struct MainView: View {
                     controller: controller
                 )
 
+                if controller.isConnecting && !controller.isBusy {
+                    BackgroundConnectionStatusView(controller: controller)
+                }
+
                 if controller.isRecovering {
                     HStack(spacing: 10) {
                         ProgressView().controlSize(.small)
@@ -520,7 +544,7 @@ private struct MainView: View {
                         }
                     }
                     .disabled(controller.isBusy || (controller.needsUpgrade && !controller.state.desiredOn))
-                    .accessibilityValue(controller.isRunning ? "Connected" : "Disconnected")
+                    .accessibilityValue(controller.connectionStatusText)
 
                     ActionIconButton(systemName: "arrow.clockwise", title: "Restart VPN") { controller.run("restart") }
                     .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy || controller.needsUpgrade)
@@ -539,7 +563,7 @@ private struct MainView: View {
 
                 if !controller.failureReport.isEmpty {
                     HStack {
-                        Label(controller.message, systemImage: "exclamationmark.triangle")
+                        Label(controller.failureReport, systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .lineLimit(2)
@@ -635,7 +659,7 @@ private struct MenuContent: View {
     @ObservedObject var controller: VPNController
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-            Text(controller.isRunning ? "Connected" : "Disconnected")
+            Text(controller.connectionStatusText)
             Text(controller.selectedNode?.name ?? "Not selected")
             Button(controller.state.desiredOn ? "Turn Off" : "Turn On") { controller.run(controller.state.desiredOn ? "off" : "on") }
                 .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil || (controller.needsUpgrade && !controller.state.desiredOn))

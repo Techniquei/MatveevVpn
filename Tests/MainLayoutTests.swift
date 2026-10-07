@@ -70,6 +70,46 @@ import AppKit
             guard let options = findScrollView(editor) else { preconditionFailure("Editor options must remain scrollable") }
             precondition(options.frame.width <= width, "Restored window sizes must not stretch editor controls")
         }
-        print("UI layout: full-width server rows and compact subscription controls passed")
+        controller.autoFailoverEnabled = false
+        controller.state.desiredOn = true
+        let progressHost = NSHostingView(rootView: BackgroundConnectionStatusView(controller: controller).frame(width: 284))
+        let progressWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 284, height: 90), styleMask: [.borderless], backing: .buffered, defer: false)
+        progressWindow.isReleasedWhenClosed = false
+        progressWindow.contentView = progressHost
+        defer { progressWindow.close() }
+        for status in ["starting", "waiting for network", "waiting for direct DNS", "waiting for VPN DNS", "waiting to retry", "recovering"] {
+            SystemService.runningValue = false
+            SystemService.runtimeStatusValue = status
+            controller.refresh()
+            precondition(controller.isConnecting && !controller.isBusy,
+                         "Service progress must not disable manual Disconnect")
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+            progressHost.frame = NSRect(origin: .zero, size: progressHost.fittingSize)
+            progressHost.layoutSubtreeIfNeeded()
+            precondition(abs(progressHost.frame.width - 284) < 1 && progressHost.frame.height > 20 && progressHost.frame.height < 100,
+                         "Waiting-state copy must wrap within the main window")
+        }
+        let mainHost = NSHostingView(rootView: MainView(controller: controller, speedMonitor: SpeedMonitor()))
+        mainHost.frame = NSRect(origin: .zero, size: mainHost.fittingSize)
+        let mainWindow = NSWindow(contentRect: mainHost.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        mainWindow.isReleasedWhenClosed = false
+        mainWindow.contentView = mainHost
+        defer { mainWindow.close() }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        mainHost.layoutSubtreeIfNeeded()
+        if let bitmap = mainHost.bitmapImageRepForCachingDisplay(in: mainHost.bounds) {
+            mainHost.cacheDisplay(in: mainHost.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/private/tmp/matveev-vpn-background-progress.png"))
+        }
+        SystemService.runningValue = true
+        SystemService.runtimeStatusValue = "running"
+        controller.refresh()
+        precondition(!controller.isConnecting && controller.connectionStatusText == "Connected")
+        controller.state.desiredOn = false
+        SystemService.runningValue = false
+        SystemService.runtimeStatusValue = "stopped"
+        controller.refresh()
+        precondition(!controller.isConnecting && controller.connectionStatusText == "Disconnected")
+        print("UI layout: full-width server rows and compact subscription controls and service connection progress passed")
     }
 }

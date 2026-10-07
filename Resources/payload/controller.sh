@@ -28,12 +28,18 @@ START_RETRY_SECONDS="${MATVEEV_START_RETRY_SECONDS:-30}"
 
 CHILD_PID=""
 XRAY_PID=""
-LAST_TICK="$(/bin/date +%s)"
+LAST_TICK=0
 LAST_NETWORK_CHECK=0
 LAST_NETWORK_SIGNATURE=""
 LAST_DEFAULT_ROUTE_SIGNATURE=""
 TUN_MISSES=0
 LAST_STATUS_PUBLISH=0
+LAST_WAKE_SIGNATURE=""
+DNS_CONFIGURED=false
+READINESS_STATUS="starting"
+VPN_DNS_READY=false
+DIRECT_DNS_READY=false
+DNS_MISSES=0
 START_FAILURES=0
 NEXT_START_ATTEMPT=0
 
@@ -140,12 +146,13 @@ record_unexpected_exit() {
     exit_status=$?
   fi
   bounded_log_line "$ERROR_FILE" "$(/bin/date '+%Y-%m-%d %H:%M:%S') controller: $process_name exited unexpectedly (pid=$pid, status=$exit_status)"
-  write_status "error"
+  write_status "recovering"
   publish_recent_errors || true
 }
 
 write_status() {
   local value="$1"
+  READINESS_STATUS="$value"
   local temporary
   temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.runtime-status.XXXXXX")" || return 1
   /usr/bin/printf '%s\n' "$value" > "$temporary"
@@ -158,7 +165,7 @@ write_response() {
   local value="$2"
   local response="$CONTROL_DIR/response-$token"
   local temporary
-  if [[ "$value" != "ok" ]]; then publish_recent_errors || true; fi
+  if [[ "$value" != "ok" && "$value" != "pending" ]]; then publish_recent_errors || true; fi
   temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.response.XXXXXX")" || return 1
   /usr/bin/printf '%s\n' "$value" > "$temporary"
   /bin/chmod 644 "$temporary"
@@ -250,83 +257,116 @@ check_engine_config() {
   wait "$checker"
 }
 
-start_child() {
-  if runtime_running; then
-    write_status "running"
+# Every publication of running uses this result, including an already-live runtime.
+# Both probes have explicit DNS routing rules, including in All Traffic mode.
+check_runtime_readiness() {
+  local deadline="${1:-$(( $(monotonic_ms) + 2500 ))}"
+  if ! runtime_running || ! tunnel_ready || [[ "$DNS_CONFIGURED" != true ]]; then
+    READINESS_STATUS="starting"
+    return 1
+  fi
+  if ! physical_network_ready; then READINESS_STATUS="waiting for network"; return 1; fi
+  # Keep the previous diagnosis if the budget cannot fit another pair of probes.
+  [[ $(( $(monotonic_ms) + 2000 )) -le "$deadline" ]] || return 1
+  VPN_DNS_READY=false
+  DIRECT_DNS_READY=false
+  READINESS_STATUS="starting"
+  if tunnel_dns_ready; then VPN_DNS_READY=true; fi
+  if tunnel_dns_ready api64.ipify.org; then DIRECT_DNS_READY=true; fi
+  # A process or TUN can disappear during a blocking DNS query.
+  runtime_running && tunnel_ready || return 1
+  [[ "$(monotonic_ms)" -le "$deadline" ]] || return 1
+  if [[ "$VPN_DNS_READY" == true && "$DIRECT_DNS_READY" == true ]]; then
+    READINESS_STATUS="running"
     return 0
+  elif [[ "$VPN_DNS_READY" == true ]]; then
+    READINESS_STATUS="waiting for direct DNS"
+  elif [[ "$DIRECT_DNS_READY" == true ]]; then
+    READINESS_STATUS="waiting for VPN DNS"
+  else
+    READINESS_STATUS="waiting for network"
   fi
-  if child_running || xray_running; then
-    stop_child
-  fi
+  return 1
+}
+
+start_child() {
   local started="$(monotonic_ms)"
   local deadline="${1:-$((started + 10000))}"
   if [[ "${operation_deadline:-$deadline}" -lt "$deadline" ]]; then deadline="$operation_deadline"; fi
   if [[ "$started" -ge "$deadline" ]]; then write_status "error"; return 1; fi
-  write_status "starting"
-  if [[ ! -x "$SING_BOX" || ! -f "$CONFIG_FILE" ]]; then
-    write_status "error"
-    return 1
-  fi
-  if ! check_engine_config "$deadline" "$SING_BOX" check -c "$CONFIG_FILE"; then
-    write_status "error"
-    return 1
-  fi
-
-  if [[ -f "$XRAY_CONFIG_FILE" ]]; then
-    if [[ ! -x "$XRAY" ]] || ! check_engine_config "$deadline" "$XRAY" run -test -c "$XRAY_CONFIG_FILE"; then
+  if [[ ! -x "$SING_BOX" || ! -f "$CONFIG_FILE" ]]; then write_status "error"; return 1; fi
+  # Boot/DHCP delay is normal. Do not create a TUN or alter DNS before a
+  # physical IPv4 address and scoped default route exist.
+  if ! physical_network_ready; then write_status "waiting for network"; return 1; fi
+  if ! runtime_running; then
+    if child_running || xray_running; then stop_child "$deadline" recovering; fi
+    write_status "starting"
+    if ! check_engine_config "$deadline" "$SING_BOX" check -c "$CONFIG_FILE"; then
       write_status "error"
       return 1
     fi
-    "$XRAY" run -c "$XRAY_CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
-    XRAY_PID=$!
-    /usr/bin/printf '%s\n' "$XRAY_PID" > "$XRAY_PID_FILE"
+    if [[ -f "$XRAY_CONFIG_FILE" ]]; then
+      if [[ ! -x "$XRAY" ]] || ! check_engine_config "$deadline" "$XRAY" run -test -c "$XRAY_CONFIG_FILE"; then
+        write_status "error"
+        return 1
+      fi
+      "$XRAY" run -c "$XRAY_CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
+      XRAY_PID=$!
+      /usr/bin/printf '%s\n' "$XRAY_PID" > "$XRAY_PID_FILE"
+    fi
+    "$SING_BOX" run -c "$CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
+    CHILD_PID=$!
+    /usr/bin/printf '%s\n' "$CHILD_PID" > "$PID_FILE"
   fi
-
-  "$SING_BOX" run -c "$CONFIG_FILE" > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") &
-  CHILD_PID=$!
-  /usr/bin/printf '%s\n' "$CHILD_PID" > "$PID_FILE"
   local ready_attempt
-  # Poll immediately; TUN and successful DNS, rather than elapsed time, prove readiness.
   for ready_attempt in {1..30}; do
     [[ "$(monotonic_ms)" -lt "$deadline" ]] || break
     runtime_running || break
     if tunnel_ready; then
       log_event "runtime launch: TUN ready" "$started"
       local dns_started="$(monotonic_ms)"
-      if ! configure_system_dns; then
-        log_event "could not apply the DNS policy"
-        stop_child "$deadline"
-        write_status "error"
-        return 1
+      if [[ "$DNS_CONFIGURED" != true ]]; then
+        if ! configure_system_dns; then
+          if ! physical_network_ready; then write_status "waiting for network"; return 1; fi
+          log_event "could not apply the DNS policy"
+          stop_child "$deadline" recovering
+          write_status "error"
+          return 1
+        fi
+        DNS_CONFIGURED=true
       fi
       local dns_attempt
       for dns_attempt in {1..8}; do
-        runtime_running || break
-        # Reserve the bounded DNS query's second within the same startup budget.
-        [[ $(( $(monotonic_ms) + 1000 )) -le "$deadline" ]] || break
-        if tunnel_dns_ready && [[ "$(monotonic_ms)" -le "$deadline" ]]; then
-          log_event "tunnel DNS is ready after $dns_attempt check(s)" "$dns_started"
-          write_status "running"
+        [[ $(( $(monotonic_ms) + 2000 )) -le "$deadline" ]] || break
+        if check_runtime_readiness "$deadline"; then
+          DNS_MISSES=0
+          log_event "tunnel DNS is ready on VPN and direct paths after $dns_attempt check(s)" "$dns_started"
+          write_status "$READINESS_STATUS"
           return 0
+        fi
+        runtime_running && tunnel_ready || break
+        # Preserve a working VPN when only direct DNS is unavailable.
+        if [[ "$READINESS_STATUS" == "waiting for direct DNS" ]]; then
+          log_event "startup DNS: direct DNS unavailable; VPN DNS ready" "$dns_started"
+          write_status "$READINESS_STATUS"
+          return 1
         fi
         /bin/sleep 0.25
       done
-      # Keep the engine alive while the physical connection settles. This
-      # diagnostic domain is routed directly by the generated configuration.
-      if runtime_running && [[ $(( $(monotonic_ms) + 1000 )) -le "${operation_deadline:-$((deadline + 2000))}" ]] && ! tunnel_dns_ready api64.ipify.org; then
+      if runtime_running && [[ "$READINESS_STATUS" == "waiting for network" ]]; then
         log_event "startup DNS: waiting for network" "$dns_started"
-        write_status "waiting for network"
+        write_status "$READINESS_STATUS"
         return 1
       fi
       log_event "VPN DNS did not become ready before the startup deadline" "$dns_started"
-      stop_child "$deadline"
+      stop_child "$deadline" recovering
       write_status "error"
       return 1
     fi
     /bin/sleep 0.2
   done
   log_event "runtime launch did not become ready" "$started"
-  stop_child "$deadline"
+  stop_child "$deadline" recovering
   write_status "error"
   return 1
 }
@@ -353,6 +393,8 @@ cleanup_tunnel_state() {
 
 stop_child() {
   local started="$(monotonic_ms)"
+  local final_status="${2:-stopped}"
+  write_status "$final_status"
   local deadline=$((started + 5000))
   # Failed startup cleanup must not consume the caller's rollback reserve.
   if [[ "${1:-$deadline}" -lt "$deadline" ]]; then deadline="$1"; fi
@@ -382,7 +424,10 @@ stop_child() {
   if [[ -z "${MATVEEV_BASE_DIR:-}" && -n "$owned_interface" ]]; then
     cleanup_tunnel_state "$owned_interface"
   fi
-  write_status "stopped"
+  DNS_CONFIGURED=false
+  DNS_MISSES=0
+  READINESS_STATUS="$final_status"
+  write_status "$final_status"
   log_event "runtime stop: processes and DNS restored" "$started"
 }
 
@@ -427,7 +472,7 @@ reload_config() {
   fi
   publish_config_hash || return 1
   if [[ "$(desired_state)" == "on" ]]; then
-    stop_child
+    stop_child "${operation_deadline:-$(( $(monotonic_ms) + 5000 ))}" recovering
     # Reserve half the remaining command budget for rollback of a rejected runtime.
     local now="$(monotonic_ms)"
     local attempt_deadline=$((now + (${operation_deadline:-$((now + 20000))} - now) / 2))
@@ -446,7 +491,7 @@ reload_config() {
       publish_config_hash || return 1
       /bin/rm -f "$ROLLBACK_CONFIG"
       /bin/rm -f "$ROLLBACK_XRAY_CONFIG"
-      stop_child
+      stop_child "${operation_deadline:-$(( $(monotonic_ms) + 5000 ))}" recovering
       start_child || true
     else
       /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$CONTROL_DIR/config-sha256"
@@ -460,6 +505,7 @@ reload_config() {
 
 network_signature() {
   local route_info interface gateway address
+  if [[ -n "${MATVEEV_NETWORK_PROBE:-}" ]]; then "$MATVEEV_NETWORK_PROBE"; return; fi
   interface="$(/usr/sbin/scutil --nwi 2>/dev/null | /usr/bin/awk '$2 == ":" && $3 == "flags" && $1 !~ /^utun/ && index($0, "(IPv4") { print $1; exit }')"
   if [[ -n "$interface" ]]; then
     route_info="$(/sbin/route -n get -ifscope "$interface" default 2>/dev/null || true)"
@@ -469,7 +515,7 @@ network_signature() {
   fi
   gateway="$(/usr/bin/awk '/gateway:/{print $2; exit}' <<< "$route_info")"
   address="$(/usr/sbin/ipconfig getifaddr "$interface" 2>/dev/null || true)"
-  if [[ -n "$interface" ]]; then
+  if [[ -n "$interface" && "$interface" != utun* && -n "$gateway" && -n "$address" && "$address" != 169.254.* ]]; then
     /usr/bin/printf '%s|%s|%s\n' "$interface" "$gateway" "$address"
   else
     /usr/bin/printf 'offline\n'
@@ -488,6 +534,15 @@ default_route_signature() {
   fi
 }
 
+physical_network_ready() {
+  [[ "$(network_signature)" != "offline" ]]
+}
+
+wake_signature() {
+  # Compare the kernel timeval, excluding its local date/time rendering.
+  "${MATVEEV_SYSCTL:-/usr/sbin/sysctl}" -n kern.waketime 2>/dev/null | /usr/bin/sed 's/ }.*$/ }/' || true
+}
+
 tunnel_ready() {
   [[ -n "$(tunnel_interface)" ]]
 }
@@ -495,7 +550,8 @@ tunnel_ready() {
 recover_child() {
   local reason="$1"
   log_event "restarting VPN after $reason"
-  stop_child
+  stop_child "$(( $(monotonic_ms) + 5000 ))" recovering
+  NEXT_START_ATTEMPT=0
   start_with_retry || true
 }
 
@@ -511,7 +567,7 @@ start_with_retry() {
     return 0
   fi
   now="$(/bin/date +%s)"
-  if [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" == "waiting for network" ]]; then
+  if [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" == "waiting for network" || "$(/usr/bin/head -n 1 "$STATUS_FILE")" == "waiting for direct DNS" ]]; then
     NEXT_START_ATTEMPT=$((now + 5))
     return 1
   fi
@@ -523,14 +579,21 @@ start_with_retry() {
 }
 
 run_watchdog() {
-  local now gap signature default_route recovered=false
+  local now tick gap wake signature default_route recovered=false
   now="$(/bin/date +%s)"
-  gap=$((now - LAST_TICK))
-
-  if [[ "$gap" -gt "$WATCHDOG_GAP_SECONDS" ]] && runtime_running; then
-    recover_child "sleep or a scheduler pause"
+  tick="$(monotonic_ms)"
+  gap=$((tick - LAST_TICK))
+  wake="$(wake_signature)"
+  # kern.waketime changes even if sleep/wake occurred inside a blocking
+  # startup or command. The loop gap measures only time outside our work.
+  if [[ -n "$wake" && -n "$LAST_WAKE_SIGNATURE" && "$wake" != "$LAST_WAKE_SIGNATURE" ]] && runtime_running; then
+    recover_child "system wake"
+    recovered=true
+  elif [[ "$LAST_TICK" -gt 0 && "$gap" -gt $((WATCHDOG_GAP_SECONDS * 1000)) ]] && runtime_running; then
+    recover_child "a scheduler pause"
     recovered=true
   fi
+  LAST_WAKE_SIGNATURE="$wake"
 
   if [[ $((now - LAST_NETWORK_CHECK)) -ge 5 ]]; then
     signature="$(network_signature)"
@@ -541,7 +604,7 @@ run_watchdog() {
     LAST_DEFAULT_ROUTE_SIGNATURE="$default_route"
     if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]]; then
       log_event "physical network changed: $LAST_NETWORK_SIGNATURE -> $signature"
-      if runtime_running; then
+      if runtime_running && [[ "$recovered" == false ]]; then
         recover_child "a network interface change"
         recovered=true
       else
@@ -552,32 +615,41 @@ run_watchdog() {
     LAST_NETWORK_SIGNATURE="$signature"
     LAST_NETWORK_CHECK="$now"
 
-    if runtime_running && [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" == "waiting for network" ]]; then
-      if tunnel_dns_ready; then
-        START_FAILURES=0
-        NEXT_START_ATTEMPT=0
-        log_event "tunnel DNS is ready after network recovery"
-        write_status "running"
-      elif tunnel_dns_ready api64.ipify.org; then
-        # The network recovered but this node did not. Normal retry/failover
-        # can now act without mistaking an offline network for a failed node.
-        stop_child
-        NEXT_START_ATTEMPT=$((now + START_RETRY_SECONDS))
-        write_status "waiting to retry"
-      fi
-    fi
-    if tunnel_ready; then
-      TUN_MISSES=0
-    else
-      TUN_MISSES=$((TUN_MISSES + 1))
-      if [[ "$TUN_MISSES" -ge 2 ]] && runtime_running; then
-        recover_child "the TUN interface disappeared"
+    if runtime_running && [[ "$recovered" == false ]]; then
+      if tunnel_ready; then
         TUN_MISSES=0
-        recovered=true
+        if [[ "$DNS_CONFIGURED" != true ]] && physical_network_ready; then
+          if configure_system_dns; then DNS_CONFIGURED=true; fi
+        fi
+        check_runtime_readiness || true
+        if [[ "$READINESS_STATUS" == "running" ]]; then
+          if [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" != running ]]; then log_event "tunnel DNS is ready after network recovery on VPN and direct paths"; fi
+          START_FAILURES=0
+          NEXT_START_ATTEMPT=0
+          DNS_MISSES=0
+        elif [[ "$READINESS_STATUS" == "waiting for VPN DNS" ]]; then
+          DNS_MISSES=$((DNS_MISSES + 1))
+          if [[ "$DNS_MISSES" -ge 3 ]]; then
+            recover_child "VPN DNS failures with working direct DNS"
+            recovered=true
+          fi
+        else
+          DNS_MISSES=0
+        fi
+        if [[ "$recovered" == false ]]; then write_status "$READINESS_STATUS"; fi
+      else
+        TUN_MISSES=$((TUN_MISSES + 1))
+        READINESS_STATUS="recovering"
+        write_status "$READINESS_STATUS"
+        if [[ "$TUN_MISSES" -ge 2 ]]; then
+          recover_child "the TUN interface disappeared"
+          TUN_MISSES=0
+          recovered=true
+        fi
       fi
     fi
   fi
-  if child_running && [[ -f "$XRAY_CONFIG_FILE" ]] && ! xray_running; then
+  if child_running && [[ -f "$XRAY_CONFIG_FILE" ]] && ! xray_running && [[ "$recovered" == false ]]; then
     record_unexpected_exit "xray" "$XRAY_PID"
     XRAY_PID=""
     /bin/rm -f "$XRAY_PID_FILE"
@@ -588,10 +660,9 @@ run_watchdog() {
   if [[ "$recovered" == true ]]; then
     LAST_NETWORK_SIGNATURE="$(network_signature)"
     LAST_DEFAULT_ROUTE_SIGNATURE="$(default_route_signature)"
-    LAST_NETWORK_CHECK="$now"
+    LAST_NETWORK_CHECK="$(/bin/date +%s)"
     TUN_MISSES=0
   fi
-  LAST_TICK="$(/bin/date +%s)"
 }
 
 process_command() {
@@ -615,7 +686,14 @@ process_command() {
       set_desired "on"
       START_FAILURES=0
       NEXT_START_ATTEMPT=0
-      if start_with_retry; then write_response "$token" "ok"; else write_response "$token" "error"; fi
+      if start_with_retry; then
+        write_response "$token" "ok"
+      elif [[ "$READINESS_STATUS" == "waiting for network" || "$READINESS_STATUS" == "waiting for direct DNS" ]]; then
+        # The on request is admitted; readiness continues in the background.
+        write_response "$token" "pending"
+      else
+        write_response "$token" "error"
+      fi
       ;;
     off)
       set_desired "off"
@@ -626,8 +704,15 @@ process_command() {
       set_desired "on"
       START_FAILURES=0
       NEXT_START_ATTEMPT=0
-      stop_child
-      if start_with_retry; then write_response "$token" "ok"; else write_response "$token" "error"; fi
+      stop_child "$(( $(monotonic_ms) + 5000 ))" recovering
+      if start_with_retry; then
+        write_response "$token" "ok"
+      elif [[ "$READINESS_STATUS" == "waiting for network" || "$READINESS_STATUS" == "waiting for direct DNS" ]]; then
+        # The on request is admitted; readiness continues in the background.
+        write_response "$token" "pending"
+      else
+        write_response "$token" "error"
+      fi
       ;;
     reload)
       if reload_config; then write_response "$token" "ok"; else write_response "$token" "error"; fi
@@ -650,6 +735,7 @@ shutdown() {
 }
 trap shutdown TERM INT HUP
 publish_config_hash
+LAST_WAKE_SIGNATURE="$(wake_signature)"
 
 if [[ "$(desired_state)" == "on" ]]; then
   start_with_retry || true
@@ -661,12 +747,17 @@ LAST_NETWORK_SIGNATURE="$(network_signature)"
 LAST_DEFAULT_ROUTE_SIGNATURE="$(default_route_signature)"
 log_event "network state: physical=$LAST_NETWORK_SIGNATURE default=$LAST_DEFAULT_ROUTE_SIGNATURE routing=$(routing_mode)"
 LAST_NETWORK_CHECK="$(/bin/date +%s)"
-LAST_TICK="$LAST_NETWORK_CHECK"
+LAST_TICK="$(monotonic_ms)"
 
 while true; do
+  # A queued user command takes precedence over another automatic restart.
+  if [[ "$(desired_state)" == "on" ]]; then
+    if [[ ! -f "$COMMAND_FILE" ]]; then run_watchdog; fi
+  else
+    LAST_WAKE_SIGNATURE="$(wake_signature)"
+  fi
   if [[ -f "$COMMAND_FILE" ]]; then
     process_command
-    LAST_TICK="$(/bin/date +%s)"
   fi
   if [[ "$(desired_state)" == "on" && -n "$CHILD_PID" ]] && ! child_running; then
     record_unexpected_exit "sing-box" "$CHILD_PID"
@@ -676,15 +767,15 @@ while true; do
   if [[ "$(desired_state)" == "on" ]] && ! child_running; then
     start_with_retry || true
   fi
-  if [[ "$(desired_state)" == "on" ]]; then
-    run_watchdog
-  else
-    LAST_TICK="$(/bin/date +%s)"
-  fi
   NOW="$(/bin/date +%s)"
   if [[ $((NOW - LAST_STATUS_PUBLISH)) -ge 2 ]]; then
-    if child_running && [[ "$(/usr/bin/head -n 1 "$STATUS_FILE")" != "waiting for network" ]]; then write_status "running"; fi
+    # Refresh status freshness without bypassing the latest DNS readiness result.
+    if runtime_running; then
+      if ! tunnel_ready; then READINESS_STATUS="recovering"; fi
+      write_status "$READINESS_STATUS"
+    fi
     LAST_STATUS_PUBLISH="$NOW"
   fi
+  LAST_TICK="$(monotonic_ms)"
   /bin/sleep 0.5
 done

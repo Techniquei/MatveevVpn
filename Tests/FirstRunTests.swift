@@ -233,10 +233,11 @@ import Foundation
         let recovery = model(recoveryStore)
         recovery.autoFailoverEnabled = true
         try await Task.sleep(nanoseconds: 50_000_000)
-        precondition(!recovery.isBusy && SystemService.actions.isEmpty, "Startup must not compete with the controller")
+        precondition(!recovery.isBusy && recovery.isConnecting && recovery.connectionStatusText == "Connecting…" && SystemService.actions.isEmpty,
+                     "Opening the app during service startup must show background progress without competing with the controller")
         SystemService.runtimeStatusValue = "waiting for network"
         recovery.refresh()
-        precondition(recovery.message == "Waiting for network…" && !recovery.isBusy)
+        precondition(recovery.message == "Waiting for network…" && recovery.isConnecting && !recovery.isBusy)
         SystemService.runningValue = true
         SystemService.runtimeStatusValue = nil
         Command.tunnelDNSAvailable = true
@@ -252,9 +253,10 @@ import Foundation
         recovery.refresh()
         try await Task.sleep(nanoseconds: 10_000_000)
         try await wait(recovery)
-        precondition(!recovery.failureReport.isEmpty && recovery.state.desiredOn)
-        precondition(SystemService.actions == ["restart", "restart"] && Command.tunnelDNSRequests == 0,
-                     "Rejected startups must not wait or probe a stopped tunnel")
+        precondition(!recovery.failureReport.isEmpty && recovery.state.desiredOn && recovery.isConnecting && recovery.connectionStatusText == "Waiting to retry automatically…",
+                     "An unsuccessful attempt must keep background retry progress visible")
+        precondition(SystemService.actions.isEmpty && Command.tunnelDNSRequests == 0,
+                     "The app must leave current-node retries to the controller")
         precondition(Command.pendingContext != nil && !recovery.isBusy,
                      "Collecting failure context must not keep the UI blocked")
         Command.pendingContext?.resume(returning: CommandResult(status: 1, output: ""))
@@ -276,35 +278,74 @@ import Foundation
         precondition(recovery.failureReport == "Unrelated settings error")
         SystemService.runningValue = false
         SystemService.runtimeStatusValue = "waiting to retry"
-        SystemService.waitForNetworkOnRestart = true
-        recovery.refresh()
-        try await Task.sleep(nanoseconds: 10_000_000)
+        for status in ["recovering", "waiting for direct DNS", "waiting for VPN DNS", "waiting for network"] {
+            SystemService.runtimeStatusValue = status
+            recovery.refresh()
+            try await Task.sleep(nanoseconds: 50_000_000)
+            precondition(!recovery.isBusy && SystemService.actions.isEmpty,
+                         "Controller recovery and DNS degradation must not trigger app restarts or failover")
+        }
+        precondition(recovery.message == "Waiting for network…")
+        SystemService.pendingStartStatus = "waiting for network"
+        recovery.run("on")
         try await wait(recovery)
-        precondition(SystemService.actions.count == 3 && !recovery.isBusy && recovery.message == "Waiting for network…")
+        precondition(recovery.state.desiredOn && recovery.failureReport.isEmpty && recovery.message == "Waiting for network…",
+                     "A manual on request accepted for background startup must not show a configuration-rejection error")
+        SystemService.pendingStartStatus = nil
         recovery.run("off")
         try await wait(recovery)
         let turnedOff = try recoveryStore.load()
-        precondition(!turnedOff.desiredOn && !recovery.isRunning)
-        recovery.state.desiredOn = true
+        precondition(!turnedOff.desiredOn && !recovery.isRunning && !recovery.isConnecting && recovery.connectionStatusText == "Disconnected")
+        precondition(SystemService.actions == ["on", "off"])
+        recovery.autoFailoverEnabled = false
+
+        SystemService.reset()
+        SystemService.installedValue = true
         SystemService.runningValue = true
-        recovery.refresh()
+        let failoverStore = makeStore("controller-owned-retry")
+        var failoverState = recoveryState
+        failoverState.subscription = subscription
+        try failoverStore.save(failoverState)
+        let failover = model(failoverStore)
         try await Task.sleep(nanoseconds: 50_000_000)
+        failover.autoFailoverEnabled = true
+        Command.directInterfaceAvailable = true
         SystemService.runningValue = false
         SystemService.runtimeStatusValue = "waiting to retry"
-        SystemService.waitForNetworkOnRestart = false
-        SystemService.restartDelay = 8
-        SystemService.restartDeadlines = []
-        let recoveryStarted = Date()
-        recovery.refresh()
+        failover.refresh()
         try await Task.sleep(nanoseconds: 10_000_000)
-        while recovery.isBusy && Date().timeIntervalSince(recoveryStarted) < 16 {
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        precondition(!recovery.isBusy && Date().timeIntervalSince(recoveryStarted) < 15.4,
-                     "Automatic recovery must unlock within one fifteen-second budget")
-        precondition(SystemService.restartDeadlines.count == 2 && SystemService.restartDeadlines[0] == SystemService.restartDeadlines[1],
-                     "A second restart must not reset the recovery deadline")
-        recovery.autoFailoverEnabled = false
+        try await wait(failover)
+        precondition(failover.state.selectedNodeID == nodes[1].id && SystemService.deployments == 1)
+        precondition(SystemService.actions == ["on"], "Failover may deploy another node but must not restart the current node")
+        failover.autoFailoverEnabled = false
+        Command.directInterfaceAvailable = false
+
+        SystemService.reset()
+        SystemService.installedValue = true
+        SystemService.runtimeStatusValue = "stopped"
+        let backgroundStore = makeStore("manual-failure-background-success")
+        var backgroundState = recoveryState
+        backgroundState.desiredOn = false
+        try backgroundStore.save(backgroundState)
+        let background = model(backgroundStore)
+        SystemService.rejectStart = true
+        background.run("on")
+        try await wait(background)
+        precondition(background.state.desiredOn && background.isConnecting && !background.isBusy && !background.failureReport.isEmpty)
+        precondition(background.connectionStatusText == "Waiting to retry automatically…")
+        SystemService.runningValue = true
+        SystemService.runtimeStatusValue = "running"
+        background.refresh()
+        precondition(!background.isConnecting && background.isRunning && background.failureReport.isEmpty,
+                     "Later service success must replace a manual connection error with connected status")
+        background.failureReport = "Unrelated settings error"
+        SystemService.runningValue = false
+        SystemService.runtimeStatusValue = "starting"
+        background.refresh()
+        SystemService.runningValue = true
+        SystemService.runtimeStatusValue = "running"
+        background.refresh()
+        precondition(background.failureReport == "Unrelated settings error")
 
         SystemService.reset()
         SystemService.operationTimeout = 0.1

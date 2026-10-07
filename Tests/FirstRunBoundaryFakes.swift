@@ -43,7 +43,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "27"
+    static let version = "28"
     static var operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -59,6 +59,8 @@ struct SystemService {
     static var routingUpdateValue: Date?
     static var currentVersionValue = version
     static var runtimeStatusValue: String?
+    static var rejectStart = false
+    static var pendingStartStatus: String?
     static var rejectRestart = false
     static var waitForNetworkOnRestart = false
     static var restartDelay: TimeInterval = 0
@@ -67,7 +69,7 @@ struct SystemService {
     var running: Bool { Self.runningValue }
     var currentVersion: String { Self.currentVersionValue }
     var runtimeStatus: String { Self.runtimeStatusValue ?? (running ? "running" : "stopped") }
-    var isConnecting: Bool { ["starting", "waiting for network"].contains(runtimeStatus) }
+    var isConnecting: Bool { ["starting", "recovering", "waiting for network", "waiting for direct DNS", "waiting for VPN DNS"].contains(runtimeStatus) }
     var automaticRoutingLastUpdate: Date? { Self.routingUpdateValue }
     var payload: URL { FileManager.default.temporaryDirectory }
     func generate(_ state: SavedState, at stage: URL, until deadline: Date = Date().addingTimeInterval(15)) async throws -> URL {
@@ -95,6 +97,16 @@ struct SystemService {
     func send(_ action: String, until deadline: Date = Date().addingTimeInterval(15)) async throws {
         try Self.checkDeadline(deadline)
         Self.actions.append(action)
+        if action == "on" && Self.rejectStart {
+            Self.runningValue = false
+            Self.runtimeStatusValue = "waiting to retry"
+            throw VPNError.message("VPN could not start. The controller will retry automatically.")
+        }
+        if action == "on", let status = Self.pendingStartStatus {
+            Self.runningValue = false
+            Self.runtimeStatusValue = status
+            return
+        }
         if action == "restart" {
             Self.restartDeadlines.append(deadline)
             try await Task.sleep(nanoseconds: UInt64(max(0, min(Self.restartDelay, deadline.timeIntervalSinceNow)) * 1_000_000_000))
@@ -118,6 +130,8 @@ struct SystemService {
         installs = 0; deployments = 0; actions = []
         routingUpdateValue = nil
         currentVersionValue = version
+        rejectStart = false
+        pendingStartStatus = nil
         runtimeStatusValue = nil; rejectRestart = false; waitForNetworkOnRestart = false
         restartDelay = 0; restartDeadlines = []
         operationTimeout = 15

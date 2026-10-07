@@ -42,6 +42,10 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise 'destination is routed before secure re-resolution' unless route.index(resolver) < route.index { |r| r['domain_suffix'] == ['example.com'] && r['outbound'] == 'vpn' }
     raise 'VPN diagnostic endpoint does not use VPN' unless route.any? { |r| r['domain'] == ['api4.ipify.org'] && r['outbound'] == 'vpn' }
     raise 'direct diagnostic endpoint does not bypass VPN' unless route.any? { |r| r['domain'] == ['api64.ipify.org'] && r['outbound'] == 'direct' }
+    %w[api4.ipify.org api64.ipify.org].each do |domain|
+      health_rule = value['dns']['rules'].find { |rule| rule['domain'] == [domain] }
+      raise 'health checks can return stale cached DNS readiness' unless health_rule && health_rule['disable_cache'] == true
+    end
     raise 'diagnostic DNS does not use VPN' unless value['dns']['rules'].any? { |r| r['domain'] == ['api4.ipify.org'] && r['server'] == 'dns-vpn' }
     raise 'DNS intercepted after custom domain route' unless route.index { |r| r['action'] == 'hijack-dns' } < route.index { |r| r['domain_suffix'] == ['example.com'] }
     raise 'legacy application DNS rule retained' if value['dns']['rules'].any? { |r| r.key?('process_name') || r.key?('process_path_regex') }

@@ -1,28 +1,32 @@
-# matveevVpn 1.4.0-beta.5
+# matveevVpn 1.4.0-beta.6
 
-Automatic component updates and simpler routing settings.
+More reliable startup and recovery, with visible background connection progress.
 
-- Outdated system components now update automatically when the app launches.
-  macOS requests administrator authorization. If installation fails or is
-  cancelled, the app retries on the next launch.
-- Shows installation progress and removes the separate component Update button.
-- Keeps your subscription, selected server, routing mode, service presets and
-  custom domains during upgrades.
-- Adds **Change server** beside **Servers** in the main window.
-- Simplifies **Custom rules** to a single **Domains** editor. Enter one domain
-  per line; `example.com` and `*.example.com` include the base domain and its
-  subdomains.
-- Removes rules import/export and the routing-rule inspector from Settings.
-- Fixes Disconnect and Reset compatibility with older system components before
-  they are updated, and preserves customized legacy domain lists.
+- Waits for the physical network and default route before starting the tunnel
+  and applying system DNS after boot. The connection starts automatically when
+  networking becomes available.
+- Checks both VPN and direct DNS before showing the VPN as connected.
+  Diagnostic DNS queries bypass cache so an old answer cannot mask a broken
+  resolver connection. A direct-DNS failure has its own waiting status.
+- Prevents slow startup from triggering a false sleep recovery. Detects wake
+  separately, including sleep during a startup operation.
+- Keeps current-server recovery in the controller and alternate-server
+  selection in the app, avoiding competing restart attempts.
+- Shows a spinner and the current connection or waiting state while the service
+  works in the background, including after a failed manual connection attempt
+  or reboot. Disconnect remains available during background waiting.
+- Clears a manual connection error when the service later connects successfully.
+- Replaces the configuration-rollback message on Connect with a connection
+  status or a command-specific error. Waiting for network or direct DNS is
+  acknowledged as an accepted connection request.
 
-**Upgrade notes:** Application-name and executable-path rules are no longer
-applied. In Selective mode, use domains or service presets to route the required
-traffic through the VPN, or choose All Traffic. Existing custom domains remain
-available.
+**Upgrade notes:** Uses system component **28**. The app updates an older
+component on launch; macOS requests administrator authorization. Subscriptions,
+selected server and routing settings are preserved.
 
-Uses system component **27**, sing-box for TUN/DNS/routing and Xray-core for
-REALITY/XHTTP. Requires an Apple Silicon Mac running macOS 13 or later.
+The underlying cause of direct-DNS stalls reported on a Mac with Kaspersky is
+still under investigation. This release fixes startup, recovery and status
+handling; it does not change the DNS transport.
 
-Available through the opt-in beta update channel. The latest stable release
-remains **1.3.5**.
+Requires an Apple Silicon Mac running macOS 13 or later. Available through the
+opt-in beta update channel. The latest stable release remains **1.3.5**.

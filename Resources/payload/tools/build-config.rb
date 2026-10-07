@@ -232,9 +232,10 @@ diagnostic_vpn_domains = ["api4.ipify.org"]
 diagnostic_direct_domains = ["api64.ipify.org"]
 ad_block_update_domains = ["raw.githubusercontent.com"]
 
+# Health checks must reach the resolver rather than accept an old cached answer.
 dns_rules = [
-  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" },
-  { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "prefer_ipv4" }
+  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4", "disable_cache" => true },
+  { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "prefer_ipv4", "disable_cache" => true }
 ]
 dns_rules << { "domain" => ad_block_update_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } if ad_blocking_enabled
 dns_rules << { "rule_set" => ["ad-block"], "action" => "reject" } if ad_blocking_enabled

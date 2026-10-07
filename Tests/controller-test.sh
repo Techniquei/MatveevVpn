@@ -21,13 +21,17 @@ DNS_CALL_LOG="$RUNTIME/dns-calls"
 /usr/bin/printf '9.9.9.9\n' > "$CURRENT_DNS"
 : > "$DNS_CALL_LOG"
 /usr/bin/printf '4\n' > "$RUNTIME/tunnel-delay"
+/usr/bin/touch "$RUNTIME/physical-offline"
 # Seed oversized text logs; binary NUL padding makes grep platform-dependent.
 /usr/bin/ruby -e 'ARGV.each { |path| File.write(path, ("x" * 99 + "\n") * 31000) }' "$RUNTIME/vpn.log" "$RUNTIME/vpn.error.log"
 
 MATVEEV_BASE_DIR="$RUNTIME" \
 MATVEEV_LOG_FILE="$RUNTIME/vpn.log" \
 MATVEEV_ERROR_FILE="$RUNTIME/vpn.error.log" \
+MATVEEV_WATCHDOG_GAP_SECONDS=2 \
 MATVEEV_START_RETRY_SECONDS=1 \
+MATVEEV_NETWORK_PROBE="$TEST_DIR/fake-network-probe" \
+MATVEEV_SYSCTL="$TEST_DIR/fake-sysctl" \
 MATVEEV_NETWORKSETUP="$RUNTIME/bin/networksetup" \
 MATVEEV_DIG="$RUNTIME/bin/dig" \
 MATVEEV_IFCONFIG="$RUNTIME/bin/ifconfig" \
@@ -64,7 +68,7 @@ wait_for_file_text() {
   local file="$1"
   local expected="$2"
   local attempt=0
-  while [[ "$attempt" -lt 100 ]]; do
+  while [[ "$attempt" -lt 200 ]]; do
     if [[ -f "$file" ]] && /usr/bin/grep -q "$expected" "$file"; then
       return 0
     fi
@@ -92,7 +96,15 @@ send_action_expect() {
   LAST_COMMAND_RESPONSE="$CONTROL/response-$token"
 }
 
+# Launching before DHCP must not create engines or alter system DNS.
+wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
+[[ ! -f "$RUNTIME/run/sing-box.pid" && ! -f "$RUNTIME/run/xray.pid" ]]
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+[[ "$(cat "$RUNTIME/run/desired-state")" == on ]]
+[[ ! -s "$DNS_CALL_LOG" ]]
+/bin/rm "$RUNTIME/physical-offline"
 # Wi-Fi parameters stay the same while Internet connectivity arrives later.
+wait_for_file_text "$RUNTIME/vpn.log" 'startup DNS: waiting for network'
 wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
 /usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
 lines = File.read(ARGV[0]).lines
@@ -140,6 +152,53 @@ timing = File.read(ARGV[0]).lines.grep(/runtime launch: TUN ready; duration_ms=/
 abort 'Runtime accepted before TUN readiness' unless timing && timing[/duration_ms=(\d+)/, 1].to_i >= 400
 RUBY
 /bin/rm "$RUNTIME/tunnel-delay"
+# A DNS path can fail independently in selective mode. Keep the same engines,
+# including when an explicit on command finds already-live processes.
+send_action off
+/usr/bin/printf '{"route":{"final":"direct"}}\n' > "$CONTROL/pending-config.json"
+send_action reload
+/usr/bin/touch "$RUNTIME/direct-unavailable"
+send_action_expect on pending
+wait_for_file_value "$CONTROL/runtime-status" "waiting for direct DNS"
+PARTIAL_ENGINE_PID="$(cat "$RUNTIME/run/sing-box.pid")"
+/bin/sleep 2.5
+[[ "$(cat "$CONTROL/runtime-status")" == "waiting for direct DNS" ]]
+send_action_expect on pending
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$PARTIAL_ENGINE_PID" ]]
+/bin/rm "$RUNTIME/direct-unavailable"
+wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$PARTIAL_ENGINE_PID" ]]
+
+# Losing direct DNS after running must revoke readiness without engine churn.
+/usr/bin/touch "$RUNTIME/direct-unavailable"
+wait_for_file_value "$CONTROL/runtime-status" "waiting for direct DNS"
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$PARTIAL_ENGINE_PID" ]]
+/bin/rm "$RUNTIME/direct-unavailable"
+wait_for_file_value "$CONTROL/runtime-status" "running"
+# A slow retry without sleep must retain the new engine without another restart.
+/usr/bin/printf '3\n' > "$RUNTIME/tunnel-delay"
+/bin/kill -KILL "$(cat "$RUNTIME/run/sing-box.pid")"
+wait_for_file_value "$CONTROL/runtime-status" "starting"
+wait_for_file_value "$CONTROL/runtime-status" "running"
+/bin/sleep 1
+! /usr/bin/grep -q 'restarting VPN after a scheduler pause' "$RUNTIME/vpn.log"
+# Blocking startup in the main retry loop is not a scheduler pause. Inject a
+# wake during that same operation; the kernel wake marker must still recover once.
+/usr/bin/printf '4\n' > "$RUNTIME/tunnel-delay"
+/bin/kill -KILL "$(cat "$RUNTIME/run/sing-box.pid")"
+wait_for_file_value "$CONTROL/runtime-status" "starting"
+/usr/bin/printf 'wake-during-start\n' > "$RUNTIME/wake-signature"
+wait_for_file_text "$RUNTIME/vpn.log" 'restarting VPN after system wake'
+wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(/usr/bin/grep -c 'restarting VPN after system wake' "$RUNTIME/vpn.log")" == 1 ]]
+! /usr/bin/grep -q 'restarting VPN after a scheduler pause' "$RUNTIME/vpn.log"
+/bin/rm "$RUNTIME/tunnel-delay"
+# A wake while idle also produces exactly one recovery.
+/usr/bin/printf 'wake-while-idle\n' > "$RUNTIME/wake-signature"
+wait_for_file_text "$RUNTIME/vpn.log" 'restarting VPN after system wake'
+/bin/sleep 2
+wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(/usr/bin/grep -c 'restarting VPN after system wake' "$RUNTIME/vpn.log")" == 2 ]]
 # Unexpected runtime exits publish a user-readable snapshot before retrying.
 /bin/kill -KILL "$(/usr/bin/head -n 1 "$RUNTIME/run/sing-box.pid")"
 wait_for_file_text "$CONTROL/last-error.log" 'sing-box exited unexpectedly'
@@ -178,7 +237,21 @@ send_action off
 send_action on
 wait_for_file_text "$CONTROL/routing-updated-at" '^[0-9][0-9][0-9]*$'
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+# A managed restart never publishes stopped, and launches only one engine.
+ENGINE_LAUNCHES="$(/usr/bin/wc -l < "$RUNTIME/engine-launches" | /usr/bin/tr -d '[:space:]')"
+/usr/bin/touch "$RUNTIME/watch-restart"
+(
+  while [[ -f "$RUNTIME/watch-restart" ]]; do
+    if [[ "$(cat "$CONTROL/runtime-status")" == stopped ]]; then /usr/bin/touch "$RUNTIME/unexpected-stopped"; fi
+    /bin/sleep 0.02
+  done
+) &
+STATUS_WATCHER=$!
 send_action restart
+/bin/rm "$RUNTIME/watch-restart"
+wait "$STATUS_WATCHER"
+[[ ! -f "$RUNTIME/unexpected-stopped" ]]
+[[ "$(/usr/bin/wc -l < "$RUNTIME/engine-launches" | /usr/bin/tr -d '[:space:]')" -eq $((ENGINE_LAUNCHES + 1)) ]]
 wait_for_file_value "$CONTROL/runtime-status" "running"
 # Selective routing still needs the macOS system DNS override; native TUN DNS
 # alone can become intermittently unreachable in sing-box CLI mode.
@@ -245,7 +318,7 @@ fi
 echo "controller protocol: ok"
 send_action off
 /bin/rm "$RUNTIME/network-ready"
-send_action_expect on error
+send_action_expect on pending
 wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
 [[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 send_action off
@@ -274,4 +347,4 @@ START_FAILURE_COUNT="$(/usr/bin/grep -c 'VPN start failed' "$RUNTIME/vpn.log")"
 [[ "$(/usr/bin/grep -c 'VPN start failed' "$RUNTIME/vpn.log")" -gt "$START_FAILURE_COUNT" ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
 [[ "$(/usr/bin/wc -c < "$RUNTIME/vpn.error.log" | /usr/bin/tr -d '[:space:]')" -le 3000000 ]]
-echo "controller: unexpected exits are published; reload preserves off state; reset removes credentials; retries persist and logs are bounded"
+echo "controller: boot/network waits, independent DNS readiness, slow startup/wake recovery, single managed restart, rollback, retries and bounded logs passed"

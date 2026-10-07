@@ -8,6 +8,7 @@ case "${1:-}" in
     if [[ "${2:-}" == "-c" ]] && /usr/bin/grep -q 'fail_run' "${3:-}" 2>/dev/null; then
       exit 1
     fi
+    printf 'launch\n' >> "$MATVEEV_BASE_DIR/engine-launches"
     trap 'rm -f "$MATVEEV_BASE_DIR/tunnel-ready"; exit 0' TERM INT
     if [[ -f "$MATVEEV_BASE_DIR/ignore-term" ]]; then trap '' TERM; fi
     if [[ -f "$MATVEEV_BASE_DIR/tunnel-delay" ]]; then /bin/sleep "$(cat "$MATVEEV_BASE_DIR/tunnel-delay")"; fi

@@ -38,3 +38,17 @@ Do not run destructive actions or service/network checks in the installed app.
 4. Edit the draft, choose Revert Changes and confirm the saved domains return.
 5. Clear Custom, confirm, then Save and Apply. Preset and ad-blocking choices
    must remain unchanged.
+
+## Background service connection
+
+- Open the app while the service reports starting, recovering, waiting for network,
+  waiting for either DNS path, or waiting to retry. Show a spinner and the specific
+  state even though no foreground operation is busy.
+- During background waiting, Disconnect must stay enabled; using it hides the
+  spinner and stops future attempts.
+- After a failed manual Connect, keep showing background retry progress. When the
+  service later becomes ready, remove the connection error and spinner. Preserve
+  unrelated settings errors.
+- The menu bar status and power-button accessibility value must use the same
+  connection-state text. Long DNS waiting labels must wrap within the 320-point
+  main window.

@@ -125,26 +125,48 @@ no further nodes are queued after it expires, and each probe uses the remaining 
 Probes are bound to the physical network interface so the TUN
 cannot report a local connect time for an alternate node. Three ICMP packets
 provide the average RTT; nodes that block ICMP use one direct, interface-bound
-TCP handshake as a fallback. The UI displays latency without the probe method. While the VPN is expected to be on, a bounded tunnel-DNS probe
-runs every 15 seconds. Three consecutive failures start recovery: two restarts
-of the current node, then up to three alternate nodes ordered by known TCP
-latency. A persistent circuit breaker permits at most three actual node switches
-in ten minutes. Exhausting a recovery cycle surfaces an error and schedules the
-next cycle after 30 seconds without clearing the desired-on state. The privileged
-controller independently retries a failing runtime every 30 seconds, including
-when the UI is absent. If startup DNS fails on both the VPN and the explicitly direct
-diagnostic domain, the controller keeps the engine alive in `waiting for network`.
-Its existing five-second watchdog checks DNS again, so Internet can become available
-without an IP or gateway change or another engine restart. If direct DNS recovers but
-VPN DNS still fails, normal node retry/failover resumes. `starting` and `waiting for network` leave the app's controls
-available and suppress competing UI recovery and startup reconciliation. The app gives
-launchd one 15-second startup window before escalating an unpublished initial status.
+TCP handshake as a fallback. The UI displays latency without the probe method.
+The privileged controller owns current-node restarts and checks both explicitly
+routed DNS paths every five seconds. `running` requires live required engines, TUN,
+applied system DNS, physical IPv4 routing, VPN DNS and direct DNS. The diagnostic
+domains disable DNS caching so a previous successful answer cannot mask a broken
+resolver connection. Interface byte counters measure attempted traffic, not site
+availability; successful DNS probes do not guarantee that every site is reachable. A failed direct
+path with working VPN DNS publishes `waiting for direct DNS` and keeps the engine
+alive. Failures on both paths publish `waiting for network`; neither state starts
+node failover. Three consecutive VPN-only DNS failures trigger one controlled
+restart. A failed node start with working direct DNS publishes `waiting to retry`
+and retries after 30 seconds, including while the UI is absent.
+
+The UI owns alternate-node selection, eligible only in `waiting to retry`. It
+tries up to three alternate nodes ordered by known latency within one fifteen-second
+cycle. A persistent circuit breaker permits at most three actual node switches in
+ten minutes. A failed cycle surfaces an error and waits 30 seconds before trying
+again. `starting`, `recovering` and the DNS/network waiting states suppress competing
+app recovery and keep manual controls available. The UI publishes service status
+independently of foreground busy state, showing a spinner and the specific waiting
+reason while desired-on has not reached readiness, including after reboot or a
+failed manual Connect. Disconnect remains enabled. The menu bar and the power
+button accessibility value use the same status text. Background success clears
+the last manual connection error while preserving unrelated settings errors. Managed stop/start sequences
+publish `recovering`, never intermediate `stopped`. An `on` or `restart` accepted
+for background network/DNS readiness returns `pending`; the app displays the
+specific waiting state without a configuration-rejection error. Actual command
+failures use command-specific messages; only rejected reloads mention configuration
+rollback.
+
+Startup before a physical IPv4 address and scoped default route waits without
+creating engines or changing system DNS. Desired-on persists until network readiness
+allows startup. This background wait has no total timeout and can be cancelled by
+turning the VPN off. Blocking controller work is excluded from the loop-gap watchdog;
+changes to the kernel's `kern.waketime` separately detect wake, including sleep
+inside a command or startup attempt.
 A healthy tunnel check clears a pending automatic-recovery error even when the controller
 restored the connection itself; unrelated user-operation errors remain intact.
 A physical-network change after wake clears the delay and triggers the next startup
 attempt immediately. Every startup attempt shares one ten-second readiness budget
 across TUN and DNS, reserving time for each bounded DNS query. Exceeding that budget
-fails the attempt; offline diagnosis and cleanup/rollback follow separately. Both
+ends the foreground attempt; background waiting retains live engines for network/DNS delays. Both
 engines receive TERM together and share one five-second shutdown grace, polled every
 100 ms. User operations and each automatic-recovery cycle have one fifteen-second
 deadline shared by configuration generation/validation, controller actions, probes and
@@ -159,7 +181,7 @@ Failure-context collection runs after UI unlocking. The macOS administrator dial
 privileged install/uninstall are separate OS lifecycle operations; their existing
 transaction/authorization handling is preserved.
 Startup checks TUN readiness immediately and polls for up to six seconds, then confirms
-tunnel DNS; it has no fixed initial sleep. Both required engines must stay alive during
+both tunnel DNS paths; it has no fixed initial sleep. Both required engines must stay alive during
 these checks, and reload retains its existing rollback on failure. Monotonic millisecond
 timings cover configuration generation/validation, runtime launch, DNS readiness and
 shutdown (including DNS restoration). They use the existing bounded app/runtime logs;

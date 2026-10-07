@@ -13,12 +13,44 @@ import Foundation
         try privateWrite(Data("runtime launch: duration_ms=123".utf8), to: runtime.appendingPathComponent("vpn.error.log"))
         let diagnostics = service.recentRuntimeErrors()
         precondition(diagnostics.contains("previous failure") && diagnostics.contains("duration_ms=123"), "A captured failure must not hide current runtime timings from exported diagnostics")
-        for status in ["starting", "waiting for network"] {
+        for status in ["starting", "recovering", "waiting for network", "waiting for direct DNS", "waiting for VPN DNS"] {
             try privateWrite(Data(status.utf8), to: control.appendingPathComponent("runtime-status"))
             precondition(service.isConnecting && !service.running)
         }
         try privateWrite(Data("waiting to retry".utf8), to: control.appendingPathComponent("runtime-status"))
         precondition(!service.isConnecting && !service.running)
+
+        // Waiting for network/DNS acknowledges the on request without claiming
+        // readiness; real failures are described according to the command.
+        for (action, result, status) in [("on", "pending", "waiting for network"),
+                                          ("restart", "pending", "waiting for direct DNS"),
+                                          ("on", "error", "waiting to retry"),
+                                          ("reload", "error", "running")] {
+            try privateWrite(Data(status.utf8), to: control.appendingPathComponent("runtime-status"))
+            let responder = Task {
+                let command = control.appendingPathComponent("command")
+                for _ in 0..<100 {
+                    if let text = try? String(contentsOf: command, encoding: .utf8) {
+                        let fields = text.split(whereSeparator: \.isWhitespace)
+                        try FileManager.default.removeItem(at: command)
+                        try privateWrite(Data(result.utf8), to: control.appendingPathComponent("response-" + fields[1]))
+                        return
+                    }
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                }
+                fatalError("Missing command")
+            }
+            do {
+                try await service.send(action, until: Date().addingTimeInterval(2))
+                precondition(result == "pending")
+                precondition(!service.running && service.isConnecting)
+            } catch {
+                precondition(result == "error")
+                precondition(error.localizedDescription.contains("previous configuration") == (action == "reload"))
+                if action == "on" { precondition(error.localizedDescription.contains("retry automatically")) }
+            }
+            try await responder.value
+        }
 
         for version in ["1", "12", "13", "14", SystemService.version] {
             try privateWrite(Data(version.utf8), to: control.appendingPathComponent("version"))

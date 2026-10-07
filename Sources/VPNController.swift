@@ -7,12 +7,13 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.5"
+    static let releaseVersion = "1.4.0-beta.6"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
     @Published var isInstalled = false
     @Published var isRunning = false
+    @Published private(set) var runtimeStatus = "unavailable"
     @Published var needsUpgrade = false
     @Published private(set) var isUpdatingComponent = false
     @Published var message = "Checking status…"
@@ -41,6 +42,7 @@ final class VPNController: ObservableObject {
     private var timer: Timer?
     private var loadFailed = false
     private var previouslyRunning: Bool?
+    private var pendingConnectionFailure = false
     private var connectionCheck: Task<Void, Never>?
     private var nodeProbe: Task<Void, Never>?
     private var healthCheck: Task<Void, Never>?
@@ -55,7 +57,6 @@ final class VPNController: ObservableObject {
 
     private static let healthCheckInterval: TimeInterval = 15
     private static let healthFailureThreshold = 3
-    private static let currentNodeRestartAttempts = 2
     private static let maximumNodeSwitchesPerWindow = 3
     private static let failoverWindow: TimeInterval = 10 * 60
     private static let recoveryRetryInterval: TimeInterval = 30
@@ -92,10 +93,31 @@ final class VPNController: ObservableObject {
         }
     }
 
+    // Service retrying is independent of a foreground UI operation. Keep its
+    // progress visible without making the interface busy or disabling Disconnect.
+    var isConnecting: Bool {
+        state.desiredOn && isInstalled && !isRunning && !needsUpgrade && state.selectedNodeID != nil
+    }
+
+    var connectionStatusText: String {
+        if isRunning { return "Connected" }
+        guard isConnecting else { return "Disconnected" }
+        switch runtimeStatus {
+        case "starting": return "Connecting…"
+        case "recovering": return "Restoring VPN connection…"
+        case "waiting for network": return "Waiting for network…"
+        case "waiting for direct DNS": return "VPN DNS is ready. Waiting for direct DNS…"
+        case "waiting for VPN DNS": return "Direct DNS is ready. Waiting for VPN DNS…"
+        case "waiting to retry": return "Waiting to retry automatically…"
+        default: return "Waiting for the VPN service…"
+        }
+    }
+
     func refresh() {
         guard !isBusy else { return }
         isInstalled = service.installed
         isRunning = service.running
+        runtimeStatus = service.runtimeStatus
         let wasRunning = previouslyRunning
         // launchd may not have published its first status yet when the UI opens.
         if wasRunning == nil && !isRunning && state.desiredOn {
@@ -112,7 +134,11 @@ final class VPNController: ObservableObject {
         }
         if wasRunning == false && isRunning {
             lastHealthCheck = .distantPast
-            if failureReport.isEmpty { message = "" }
+            if pendingConnectionFailure {
+                pendingConnectionFailure = false
+                failureReport = ""
+                message = "Connected."
+            } else if failureReport.isEmpty { message = "" }
         }
         previouslyRunning = isRunning
         needsUpgrade = isInstalled && service.currentVersion != SystemService.version
@@ -122,7 +148,7 @@ final class VPNController: ObservableObject {
         }
         if !recoverySuppressed && !isRunning && state.desiredOn && isInstalled && !needsUpgrade {
             if service.isConnecting {
-                message = service.runtimeStatus == "waiting for network" ? "Waiting for network…" : "Connecting…"
+                message = connectionStatusText
             } else {
                 beginAutomaticRecovery(reason: "the VPN runtime stopped")
             }
@@ -152,6 +178,7 @@ final class VPNController: ObservableObject {
         nextRecoveryAttempt = .distantPast
         recoveryFailureNotified = false
         failureReport = ""
+        pendingConnectionFailure = false
         message = "Applying changes…"
         AppLogger.shared.write("operation started: \(operationName)")
         Task {
@@ -166,6 +193,7 @@ final class VPNController: ObservableObject {
                 AppLogger.shared.write("automatic recovery suppressed for 30 seconds after failed operation: \(operationName)")
                 message = error.localizedDescription; rulesMessage = message
                 failureReport = error.localizedDescription
+                pendingConnectionFailure = operationName == "Connect VPN"
                 let report = makeLogReport(operation: operationName, error: error)
                 Task { AppLogger.shared.write(report + "\n" + (await connectionContext())) }
             }
@@ -531,6 +559,8 @@ final class VPNController: ObservableObject {
                 self.consecutiveHealthFailures += 1
                 AppLogger.shared.write("tunnel health check failed; consecutive=\(self.consecutiveHealthFailures)")
                 if self.consecutiveHealthFailures >= Self.healthFailureThreshold {
+                    // The controller verifies both DNS paths and owns restarts.
+                    // Failover becomes eligible only after its node retry failed.
                     self.beginAutomaticRecovery(reason: "three tunnel health checks failed")
                 }
             }
@@ -540,7 +570,7 @@ final class VPNController: ObservableObject {
     private func beginAutomaticRecovery(reason: String) {
         guard autoFailoverEnabled, recoveryTask == nil, !isBusy, state.desiredOn,
               Date() >= recoverySuppressedUntil, Date() >= nextRecoveryAttempt,
-              isInstalled, !needsUpgrade, !service.isConnecting,
+              isInstalled, !needsUpgrade, service.runtimeStatus == "waiting to retry",
               state.selectedNodeID != nil else { return }
         healthCheck?.cancel()
         healthCheck = nil
@@ -618,24 +648,9 @@ final class VPNController: ObservableObject {
     }
 
     private func recoverConnection(until deadline: Date) async throws {
-        for attempt in 1...Self.currentNodeRestartAttempts {
-            try Task.checkCancellation()
-            try SystemService.checkDeadline(deadline)
-            if service.isConnecting { return }
-            AppLogger.shared.write("automatic recovery: restart current node attempt \(attempt)/\(Self.currentNodeRestartAttempts)")
-            do { try await service.send("restart", until: deadline) }
-            catch {
-                AppLogger.shared.write("automatic restart \(attempt) was rejected: \(error.localizedDescription)\nDetails:\n\(rawErrorDetails(error))")
-                try Task.checkCancellation()
-                continue
-            }
-            let tunnelHealthy = await Self.tunnelDNSReachable(until: deadline)
-            if service.running && tunnelHealthy {
-                message = "Connection restored on the current node."
-                AppLogger.shared.write("automatic recovery succeeded on the current node")
-                return
-            }
-        }
+        // Runtime restarts belong to the service. The UI only chooses another
+        // node after the service confirms a failed node with working direct DNS.
+        guard service.runtimeStatus == "waiting to retry" else { return }
 
         let currentID = state.selectedNodeID
         let alternatives = availableNodes.filter { $0.id != currentID }.sorted { lhs, rhs in
@@ -651,7 +666,7 @@ final class VPNController: ObservableObject {
             checked += 1
             try Task.checkCancellation()
             try SystemService.checkDeadline(deadline)
-            if service.isConnecting { return }
+            if service.runtimeStatus != "waiting to retry" { return }
 
             let probe = await NodeProbe.measure(candidate, timeout: min(3, deadline.timeIntervalSinceNow))
             try Task.checkCancellation()
@@ -659,6 +674,7 @@ final class VPNController: ObservableObject {
             probeResults[candidate.id] = probe
             AppLogger.shared.write("failover candidate \(candidate.id.prefix(8)) probe: \(probe.displayText)")
             guard probe.isReachable else { continue }
+            guard service.runtimeStatus == "waiting to retry" else { return }
             guard consumeNodeSwitchBudget() else {
                 throw VPNError.message("Automatic failover stopped: the limit of three node switches in 10 minutes was reached.")
             }
@@ -682,7 +698,7 @@ final class VPNController: ObservableObject {
         }
 
         if service.isConnecting { return }
-        throw VPNError.message("Automatic recovery failed after two restarts and \(checked) alternate-node attempts.")
+        throw VPNError.message("Automatic failover failed after \(checked) alternate-node attempts. The controller will keep retrying the current node.")
     }
 
     private func consumeNodeSwitchBudget() -> Bool {

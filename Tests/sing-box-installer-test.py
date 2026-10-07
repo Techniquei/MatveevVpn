@@ -134,7 +134,7 @@ exec /bin/launchctl "${{args[@]}}"
         ready()
         assert sorted(p.name for p in (base / 'bin').iterdir()) == ['controller.sh', 'dns-manager.sh', 'sing-box', 'xray']
         assert (base / 'run/desired-state').read_text().strip() == 'off'
-        assert (base / 'control/version').read_text().strip() == '27'
+        assert (base / 'control/version').read_text().strip() == '28'
         assert (base / 'control/config-sha256').read_text().strip() == digest(config)
         for path in (installed_plist, base / 'bin', *(base / 'bin').iterdir()):
             assert 'com.apple.quarantine' not in attrs(path), path

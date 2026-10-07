@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0-beta.6
+
+- Waits for physical networking before starting engines and applying DNS at boot.
+- Checks diagnostic DNS without cache and requires VPN and direct DNS readiness before publishing running; preserves the tunnel while direct DNS recovers.
+- Excludes blocking operations from watchdog gaps and detects wake during startup separately.
+- Makes the controller own current-node recovery and the app own alternate-node failover, without intermediate stopped states.
+- Shows network/DNS waiting for accepted connection requests and command-specific errors instead of configuration rollback messages on Connect.
+- Shows a spinner and specific status while the service connects or waits to retry, with Disconnect available; clears connection errors after background success.
+- Uses system component 28.
+
 ## 1.4.0-beta.5
 
 - Automatically updates outdated system components at launch, with progress and a fresh attempt on the next launch after cancellation or failure.
