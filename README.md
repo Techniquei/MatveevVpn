@@ -5,7 +5,7 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 ## Features
 
 - Selective routing with per-service presets for commonly restricted services in Russia.
-- Custom routing by domain, application name or executable path alongside presets.
+- Custom domain routing alongside presets, including subdomains.
 - Optional DNS-level advertising and tracker blocking.
 - All Traffic mode with private and local networks kept direct.
 - Native TUN, DNS interception and VPN-side DNS re-resolution.
@@ -50,8 +50,16 @@ Then paste an HTTPS subscription or direct VLESS link and select **Connect**.
 The app loads the subscription and selects its first server automatically, without
 a second installation prompt. You can change the server on the main screen.
 
-The system component requires one administrator prompt on first installation or
-repair. Normal connection and configuration changes do not require a password.
+The system component requires administrator authorization on first installation,
+component updates and repair. After an app update, an outdated installed component
+is updated automatically at launch. If authorization is cancelled or installation
+fails, relaunch the app to retry. Normal connection and configuration changes do
+not require a password once the component is up to date.
+
+In **Routing → Custom rules → Domains**, enter one domain per line, such as
+`example.com` or `*.example.com`. Both match the base domain and its subdomains.
+Choose **Save and Apply** to activate changes. Existing custom domains survive
+updates; old application-name and executable-path rules are ignored.
 
 Service presets use binary rule sets from
 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat). Selected

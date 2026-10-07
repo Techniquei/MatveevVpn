@@ -1,7 +1,8 @@
 # Releasing
 
 1. Update app version in VPNController.swift and VERSION/BUILD_NUMBER in build-dmg.sh.
-2. Update release notes and run Scripts/validate.sh.
+2. Move the Unreleased changelog and release notes into the intended version and
+   run Scripts/validate.sh.
 3. Build and verify the DMG on a test Mac.
 4. Push an explicit matching version tag when ready to publish.
 
@@ -31,6 +32,8 @@ Before relying on automatic updates, test an installed 1.1 build against a newer
 signed test update and verify persistence. Version 1.0 has no updater and must
 be upgraded manually once. A local signed appcast alone does not prove that the
 end-to-end UI installation and relaunch work on every supported macOS version.
+For the domain-only routing change, verify that an upgrade preserves custom
+domains and that removed application/path fields do not produce runtime rules.
 
 ## Stable and beta releases
 
@@ -51,13 +54,20 @@ Verify both default-channel and beta-channel update discovery against the signed
 feed before publication. Signed archive verification is required; local test apps
 must never be installed over the user's current VPN during these checks.
 
-For a combined feed containing a beta newer than stable, run:
+For either a stable release or a combined feed containing a beta, run:
 
 ```sh
 bash Scripts/test-update-feed.sh .build/release-1.4.0-beta.1/appcast.xml
 ```
 
-This probes Sparkle against a loopback-only feed using disposable bundles with
-beta off, on, then off. It never downloads or installs an update. The beta release
-workflow runs this check before publishing the prerelease or changing the public
-appcast. Stable clients must continue to be offered only the default-channel build.
+This probes Sparkle from build 1305 (1.3.5) against a loopback-only feed using
+disposable bundles with beta off, on, then off. It never downloads or installs
+an update. Both stable and beta release workflows run this check before
+publication. Stable clients must be offered only the default-channel build;
+beta clients also receive a newer stable build when available.
+
+For 1.4.0 stable, use a build number greater than 1418 (the beta.5 build), retain
+the existing signing key and publish the item without a beta channel. The
+application update preserves settings and automatically updates system component
+12 to 27 on launch, with administrator authorization. Check cancellation/failure
+followed by relaunch: a new attempt must start without a separate Update button.

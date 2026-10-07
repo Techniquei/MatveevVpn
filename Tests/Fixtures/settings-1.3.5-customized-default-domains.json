@@ -1,0 +1,65 @@
+{
+  "desiredOn": true,
+  "lastRefresh": 721692800,
+  "migratedFromV1": false,
+  "rules": {
+    "adBlockingEnabled": true,
+    "applications": [
+      "Example App"
+    ],
+    "automaticRoutingEnabled": true,
+    "automaticServices": [
+      "youtube",
+      "telegram",
+      "openai"
+    ],
+    "domains": [
+      "openai.com",
+      "chatgpt.com",
+      "oaistatic.com",
+      "oaiusercontent.com",
+      "oaistatsig.com",
+      "cdn.openaimerge.com",
+      "anthropic.com",
+      "claude.ai",
+      "claude.com",
+      "claudeusercontent.com",
+      "telegram.org",
+      "telegram.me",
+      "telegram.dog",
+      "t.me",
+      "telegra.ph",
+      "telesco.pe",
+      "stel.com",
+      "tg.dev",
+      "youtube.com",
+      "youtu.be",
+      "googlevideo.com",
+      "ytimg.com",
+      "ggpht.com",
+      "youtube-nocookie.com",
+      "youtubeeducation.com",
+      "youtubekids.com",
+      "yt.be",
+      "youtube.googleapis.com",
+      "youtubei.googleapis.com",
+      "cursor.com",
+      "cursor.sh",
+      "cursorapi.com",
+      "cursor-cdn.com",
+      "cursorusercontent.com",
+      "anysphere.com",
+      "anysphere.co",
+      "anysphere.dev",
+      "anysphereinc.com"
+    ],
+    "mode": "selective",
+    "processPathRegexes": [
+      "^.*/Example\\.app/Contents/.*"
+    ]
+  },
+  "schemaVersion": 2,
+  "selectedNodeID": "bb8bb98d76fe4938c0b09e4a97ca0d75aadf500f38bf7548404675ea99b80975",
+  "subscription": "vless://11111111-1111-1111-1111-111111111111@first.example.invalid:443?security=tls#First\nvless://22222222-2222-2222-2222-222222222222@second.example.invalid:443?type=raw&security=reality&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123456789abcdef#Second\n",
+  "subscriptionURL": "https://subscription.example.invalid/test"
+}

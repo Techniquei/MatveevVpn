@@ -171,8 +171,6 @@ private struct RoutingRulesView: View {
     @State private var automaticServices = Set<String>()
     @State private var adBlockingEnabled = false
     @State private var domainsText = ""
-    @State private var applicationsText = ""
-    @State private var pathsText = ""
     @State private var confirmClear = false
     private let presetColumns = [GridItem(.adaptive(minimum: 145), spacing: 10)]
 
@@ -233,25 +231,12 @@ private struct RoutingRulesView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Custom rules").font(.headline)
-                        Text("One entry per line. Use these for sites and applications that are not covered by a preset.")
+                        Text("One domain per line. Matching sites and their subdomains use the VPN.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
-                    HStack(alignment: .top, spacing: 14) {
-                        editor(title: "Domains", hint: "example.com or *.example.com", text: $domainsText, height: 145)
-                        editor(title: "Application process names", hint: "Example App", text: $applicationsText, height: 145)
-                    }
-                    editor(title: "Application paths (regular expressions)", hint: "Use Add Application to include its helpers", text: $pathsText, height: 120)
-                    Button("Add Application…") {
-                        let panel = NSOpenPanel()
-                        panel.allowedContentTypes = [.applicationBundle]
-                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-                        if panel.runModal() == .OK, let url = panel.url {
-                            let pattern = "^.*/" + NSRegularExpression.escapedPattern(for: url.lastPathComponent) + "/Contents/.*"
-                            pathsText += (pathsText.isEmpty ? "" : "\n") + pattern
-                        }
-                    }
+                    domainEditor
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -271,13 +256,11 @@ private struct RoutingRulesView: View {
                         automaticRoutingEnabled: automaticRoutingEnabled,
                         automaticServices: automaticServices,
                         adBlockingEnabled: adBlockingEnabled,
-                        domains: lines(domainsText),
-                        applications: lines(applicationsText),
-                        paths: lines(pathsText)
+                        domains: domainsText.components(separatedBy: .newlines)
                     )
                 }
                 .buttonStyle(HoverButtonStyle(prominent: true))
-                .disabled(controller.isBusy)
+                .disabled(controller.isBusy || controller.needsUpgrade)
             }
         }
         .controlSize(.large)
@@ -288,7 +271,7 @@ private struct RoutingRulesView: View {
         .preferredColorScheme(.dark)
         .buttonStyle(HoverButtonStyle())
         .confirmationDialog("Clear custom routing rules?", isPresented: $confirmClear) {
-            Button("Clear Custom Rules", role: .destructive) { domainsText = ""; applicationsText = ""; pathsText = "" }
+            Button("Clear Custom Rules", role: .destructive) { domainsText = "" }
         } message: { Text("Changes take effect after Save and Apply.") }
         .onAppear {
             controller.rulesMessage = ""
@@ -297,16 +280,17 @@ private struct RoutingRulesView: View {
         }
     }
 
-    private func editor(title: String, hint: String, text: Binding<String>, height: CGFloat) -> some View {
+    private var domainEditor: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.headline)
-            Text("For example: \(hint)").font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: text)
+            Text("Domains").font(.headline)
+            Text("For example: example.com or *.example.com").font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $domainsText)
+                .accessibilityLabel("Custom domains")
                 .font(.system(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
-                .frame(height: height)
+                .frame(height: 145)
                 .modifier(InteractiveHover())
         }
         .frame(maxWidth: .infinity)
@@ -322,17 +306,11 @@ private struct RoutingRulesView: View {
         )
     }
 
-    private func lines(_ text: String) -> [String] {
-        text.components(separatedBy: .newlines)
-    }
-
     private func load(_ rules: RoutingRules) {
         automaticRoutingEnabled = rules.automaticRoutingEnabled
         automaticServices = Set(rules.automaticServices)
         adBlockingEnabled = rules.adBlockingEnabled
         domainsText = rules.domains.joined(separator: "\n")
-        applicationsText = rules.applications.joined(separator: "\n")
-        pathsText = rules.processPathRegexes.joined(separator: "\n")
     }
 }
 
@@ -348,6 +326,14 @@ private struct NodeListView: View {
                 Text("Servers").font(.headline)
                 Text("\(controller.availableNodes.count)").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button("Change server…") {
+                    controller.openSetup()
+                    openWindow(id: "connection")
+                }
+                .buttonStyle(HoverButtonStyle())
+                .controlSize(.small)
+                .help("Open subscription and server settings")
+                .disabled(controller.isBusy)
                 if controller.testingNodes {
                     ProgressView().controlSize(.small)
                 } else {
@@ -402,7 +388,8 @@ private struct NodeListView: View {
     }
 
     private func nodeButton(_ node: VPNNode, selected: Bool) -> some View {
-        let hovering = hoveringNodeID == node.id && !controller.isBusy
+        let disabled = controller.isBusy || controller.needsUpgrade
+        let hovering = hoveringNodeID == node.id && !disabled
         return Button { controller.selectNode(node.id) } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -432,8 +419,8 @@ private struct NodeListView: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .disabled(controller.isBusy)
-        .opacity(controller.isBusy ? 0.6 : 1)
+        .disabled(disabled)
+        .opacity(disabled ? 0.6 : 1)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
         .onHover { inside in
             if inside { hoveringNodeID = node.id }
@@ -477,18 +464,22 @@ private struct MainView: View {
                     ))
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .disabled(!controller.isInstalled || controller.isBusy || controller.state.selectedNodeID == nil)
+                    .disabled(!controller.isInstalled || controller.isBusy || controller.needsUpgrade || controller.state.selectedNodeID == nil)
                     .help("On uses selective routing rules. Off sends all traffic through the VPN.")
                     .modifier(InteractiveHover())
                 }
 
-                if controller.needsUpgrade {
+                if controller.needsUpgrade || controller.isUpdatingComponent {
                     HStack {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("A system component update is required")
-                        Spacer()
-                        Button("Update") { controller.repair() }
+                        if controller.isUpdatingComponent {
+                            ProgressView().controlSize(.small)
+                            Text("Updating the VPN component…")
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("Relaunch the app to update the VPN component.")
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(11)
                     .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 13))
                 }
@@ -528,17 +519,16 @@ private struct MainView: View {
                             controller.run(controller.state.desiredOn ? "off" : "on")
                         }
                     }
-                    .disabled(controller.isBusy)
+                    .disabled(controller.isBusy || (controller.needsUpgrade && !controller.state.desiredOn))
                     .accessibilityValue(controller.isRunning ? "Connected" : "Disconnected")
 
                     ActionIconButton(systemName: "arrow.clockwise", title: "Restart VPN") { controller.run("restart") }
-                    .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy)
+                    .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy || controller.needsUpgrade)
 
                     ActionIconButton(systemName: "arrow.triangle.branch", title: "Routing rules") {
-                        if controller.needsUpgrade { controller.repair() }
-                        else { openWindow(id: "routing") }
+                        openWindow(id: "routing")
                     }
-                    .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy)
+                    .disabled(!controller.isInstalled || controller.state.selectedNodeID == nil || controller.isBusy || controller.needsUpgrade)
 
                     ActionIconButton(systemName: "gearshape", title: "Settings and diagnostics") { openWindow(id: "settings") }
                     .disabled(controller.isBusy)
@@ -648,7 +638,7 @@ private struct MenuContent: View {
             Text(controller.isRunning ? "Connected" : "Disconnected")
             Text(controller.selectedNode?.name ?? "Not selected")
             Button(controller.state.desiredOn ? "Turn Off" : "Turn On") { controller.run(controller.state.desiredOn ? "off" : "on") }
-                .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil)
+                .disabled(controller.isBusy || !controller.isInstalled || controller.state.selectedNodeID == nil || (controller.needsUpgrade && !controller.state.desiredOn))
             if controller.isRecovering {
                 Button(controller.isStoppingRecovery ? "Stopping Automatic Recovery…" : "Stop Automatic Recovery") { controller.cancelAutomaticRecovery() }
                     .disabled(controller.isStoppingRecovery)

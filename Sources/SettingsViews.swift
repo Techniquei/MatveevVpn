@@ -125,7 +125,7 @@ struct ConnectionView: View {
                 .buttonStyle(HoverButtonStyle(prominent: true))
                 .tint(AppPalette.blue)
                 .keyboardShortcut(.defaultAction)
-                .disabled(controller.isBusy || (!needsComponentInstallation && !controller.canApplySubscription))
+                .disabled(controller.isBusy || controller.needsUpgrade || (!needsComponentInstallation && !controller.canApplySubscription))
             }
             .controlSize(.large)
         }
@@ -264,9 +264,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmReset = false
     @State private var confirmRemoval = false
-    @State private var domain = ""
-    @State private var process = ""
-    @State private var path = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             AppWindowHeader(title: "Settings", subtitle: "Preferences and diagnostics", icon: "gearshape")
@@ -288,7 +285,7 @@ struct SettingsView: View {
                     .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Subscription and rules").font(.headline)
+                        Text("Subscription and updates").font(.headline)
                         HStack {
                             Button("Change subscription…") {
                                 controller.openSetup()
@@ -305,11 +302,6 @@ struct SettingsView: View {
                         .modifier(InteractiveHover())
                         Text("Includes test releases. Turning this off keeps your installed version until a newer stable release.")
                             .font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button("Export rules…") { controller.exportRules() }
-                            Button("Import rules…") { controller.importRules() }
-                        }
-                        Text("Rule exports do not include your subscription.").font(.caption).foregroundStyle(.secondary)
                         if !updater.available {
                             Text("App updates are unavailable in this development build.").font(.caption).foregroundStyle(.secondary)
                         }
@@ -335,28 +327,6 @@ struct SettingsView: View {
                         if !controller.message.isEmpty {
                             Text(controller.message).font(.caption).foregroundStyle(.secondary)
                         }
-                        DisclosureGroup("Explain a routing rule") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Menu("Use a running application") {
-                                    ForEach(NSWorkspace.shared.runningApplications.filter { $0.executableURL != nil }, id: \.processIdentifier) { application in
-                                        Button(application.localizedName ?? "Application") {
-                                            path = application.executableURL?.path ?? ""
-                                            process = application.executableURL?.lastPathComponent ?? ""
-                                        }
-                                    }
-                                }
-                                .modifier(InteractiveHover())
-                                TextField("Domain", text: $domain)
-                                    .modifier(InteractiveHover())
-                                TextField("Process name", text: $process)
-                                    .modifier(InteractiveHover())
-                                TextField("Executable path", text: $path)
-                                    .modifier(InteractiveHover())
-                                Text(RuleInspector.explain(domain: domain, process: process, path: path, rules: controller.state.rules)).font(.caption)
-                            }
-                            .textFieldStyle(.roundedBorder)
-                        }
-                        .disclosureGroupStyle(AppDisclosureStyle())
                     }
                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))

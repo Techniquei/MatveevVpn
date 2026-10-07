@@ -1,21 +1,28 @@
-# matveevVpn 1.4.0-beta.4
+# matveevVpn 1.4.0-beta.5
 
-Исправлено обновление и установка системного компонента на macOS, в том числе
-возврат с экспериментальной версии Xray к прежнему контроллеру.
+Automatic component updates and simpler routing settings.
 
-- Карантин снимается с установленных копий системных помощников и launchd plist.
-- Архитектура arm64, подписи и конфигурация проверяются до остановки старой службы.
-- При неудачной замене восстанавливается предыдущая установка целиком.
-- Установка компонента отделена от подключения: сетевой сбой больше не выдаётся
-  за ошибку установки и не мешает сохранению настроек.
-- Исправлено сохранение прав помощников Sparkle при подписании приложения.
+- Outdated system components now update automatically when the app launches.
+  macOS requests administrator authorization. If installation fails or is
+  cancelled, the app retries on the next launch.
+- Shows installation progress and removes the separate component Update button.
+- Keeps your subscription, selected server, routing mode, service presets and
+  custom domains during upgrades.
+- Adds **Change server** beside **Servers** in the main window.
+- Simplifies **Custom rules** to a single **Domains** editor. Enter one domain
+  per line; `example.com` and `*.example.com` include the base domain and its
+  subdomains.
+- Removes rules import/export and the routing-rule inspector from Settings.
+- Fixes Disconnect and Reset compatibility with older system components before
+  they are updated, and preserves customized legacy domain lists.
 
-После обновления установите или восстановите системный компонент в приложении.
-Ожидаемая версия компонента — 27. Сборка предназначена для Mac с Apple Silicon.
+**Upgrade notes:** Application-name and executable-path rules are no longer
+applied. In Selective mode, use domains or service presets to route the required
+traffic through the VPN, or choose All Traffic. Existing custom domains remain
+available.
 
-Используется прежняя схема beta.3: sing-box для туннеля и отдельный помощник Xray
-для REALITY/XHTTP. Ошибки подключения и замедления на отдельных узлах или при
-фильтрации корпоративным антивирусом ещё исследуются; этот релиз не заявляет
-их исправление.
+Uses system component **27**, sing-box for TUN/DNS/routing and Xray-core for
+REALITY/XHTTP. Requires an Apple Silicon Mac running macOS 13 or later.
 
-Бета доступна через канал бета-обновлений. Стабильный релиз остаётся 1.3.5.
+Available through the opt-in beta update channel. The latest stable release
+remains **1.3.5**.

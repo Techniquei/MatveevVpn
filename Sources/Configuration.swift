@@ -40,8 +40,6 @@ enum AutomaticRoutingCatalog {
 
 struct RoutingRules: Codable, Equatable {
     var domains: [String] = []
-    var applications: [String] = []
-    var processPathRegexes: [String] = []
     var mode: RoutingMode = .selective
     var automaticRoutingEnabled = true
     var automaticServices = AutomaticRoutingCatalog.recommended
@@ -50,8 +48,6 @@ struct RoutingRules: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         domains = try c.decodeIfPresent([String].self, forKey: .domains) ?? []
-        applications = try c.decodeIfPresent([String].self, forKey: .applications) ?? []
-        processPathRegexes = try c.decodeIfPresent([String].self, forKey: .processPathRegexes) ?? []
         mode = try c.decodeIfPresent(RoutingMode.self, forKey: .mode) ?? .selective
         automaticRoutingEnabled = try c.decodeIfPresent(Bool.self, forKey: .automaticRoutingEnabled) ?? true
         automaticServices = try c.decodeIfPresent([String].self, forKey: .automaticServices) ?? AutomaticRoutingCatalog.recommended
@@ -69,13 +65,6 @@ struct RoutingRules: Codable, Equatable {
                 $0.range(of: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", options: .regularExpression) != nil
             }
             guard valid else { throw VPNError.message("Domain line \(index + 1): use example.com or *.example.com, without a URL or path.") }
-        }
-        for (index, pattern) in processPathRegexes.enumerated() {
-            do { _ = try NSRegularExpression(pattern: pattern) }
-            catch { throw VPNError.message("Application path line \(index + 1): invalid regular expression.") }
-            if ["(?=", "(?!", "(?<=", "(?<!"].contains(where: pattern.contains) || pattern.range(of: #"\\[1-9]"#, options: .regularExpression) != nil {
-                throw VPNError.message("Application path line \(index + 1): lookarounds and backreferences are not supported. Use a simple path expression.")
-            }
         }
     }
 }
@@ -274,9 +263,8 @@ struct StateStore {
             if activeHash != nil { try FileManager.default.removeItem(at: pendingFile) }
         }
         guard FileManager.default.fileExists(atPath: file.path) else { return try migrate() }
-        var value = try JSONDecoder().decode(SavedState.self, from: Data(contentsOf: file))
+        let value = try JSONDecoder().decode(SavedState.self, from: Data(contentsOf: file))
         guard value.schemaVersion == 2 else { throw VPNError.message("These settings require a newer app version.") }
-        if value.rules.removeLegacyBundledDefaultsIfUnchanged() { try save(value) }
         return value
     }
     func stage(_ state: SavedState, config: Data) throws {
@@ -317,27 +305,5 @@ struct StateStore {
         state.migratedFromV1 = true
         try save(state)
         return state
-    }
-}
-
-private extension RoutingRules {
-    mutating func removeLegacyBundledDefaultsIfUnchanged() -> Bool {
-        let legacyDomains = [
-            "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "cdn.openaimerge.com",
-            "anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com",
-            "telegram.org", "telegram.me", "telegram.dog", "t.me", "telegra.ph", "telesco.pe", "stel.com", "tg.dev",
-            "youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com", "youtube-nocookie.com", "youtubeeducation.com", "youtubekids.com", "yt.be", "youtube.googleapis.com", "youtubei.googleapis.com",
-            "cursor.com", "cursor.sh", "cursorapi.com", "cursor-cdn.com", "cursorusercontent.com", "anysphere.com", "anysphere.co", "anysphere.dev", "anysphereinc.com"
-        ]
-        let legacyApplications = ["ChatGPT", "Codex", "Claude", "Telegram", "Telegram Lite", "Telegram Desktop", "Cursor"]
-        let legacyPaths = [
-            "^.*/ChatGPT\\.app/Contents/.*", "^.*/Claude\\.app/Contents/.*",
-            "^.*/Telegram[^/]*\\.app/Contents/.*", "^.*/Cursor\\.app/Contents/.*"
-        ]
-        guard domains == legacyDomains, applications == legacyApplications, processPathRegexes == legacyPaths else { return false }
-        domains = []
-        applications = []
-        processPathRegexes = []
-        return true
     }
 }

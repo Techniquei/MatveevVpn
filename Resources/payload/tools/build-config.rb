@@ -190,14 +190,11 @@ requested_services = Array(rules_data.fetch("automaticServices", automatic_servi
 unknown_services = requested_services - automatic_service_catalog
 abort "Unsupported service preset: #{unknown_services.first}" unless unknown_services.empty?
 routed_domains = Array(rules_data["domains"]).map { |value| value.to_s.strip.downcase }.reject(&:empty?).uniq
-routed_apps = Array(rules_data["applications"]).map { |value| value.to_s.strip }.reject(&:empty?).uniq
 routed_domains = routed_domains.map do |domain|
   domain = domain.delete_prefix("*.")
   abort "Invalid domain: use example.com or *.example.com" unless domain.length <= 253 && domain.split(".", -1).all? { |label| label.match?(/\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z/) }
   domain
 end.uniq
-paths = Array(rules_data["processPathRegexes"]).map(&:strip).reject(&:empty?).uniq
-paths.each { |pattern| Regexp.new(pattern) }
 full = rules_data.fetch("mode", "selective") == "all"
 automatic_services = automatic_enabled && !full ? automatic_service_catalog.select { |service| requested_services.include?(service) } : []
 domain_rule_set_tags = automatic_services.map { |service| "preset-#{service}" }
@@ -241,12 +238,6 @@ dns_rules = [
 ]
 dns_rules << { "domain" => ad_block_update_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } if ad_blocking_enabled
 dns_rules << { "rule_set" => ["ad-block"], "action" => "reject" } if ad_blocking_enabled
-unless paths.empty?
-  dns_rules << { "process_path_regex" => paths, "action" => "route", "server" => "dns-vpn" }
-end
-unless routed_apps.empty?
-  dns_rules << { "process_name" => routed_apps, "action" => "route", "server" => "dns-vpn" }
-end
 unless routed_domains.empty?
   dns_rules << { "domain_suffix" => routed_domains, "action" => "route", "server" => "dns-vpn" }
 end
@@ -269,14 +260,10 @@ if full
 else
   route_rules << { "rule_set" => domain_rule_set_tags, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless domain_rule_set_tags.empty?
   route_rules << { "domain_suffix" => routed_domains, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless routed_domains.empty?
-  route_rules << { "process_name" => routed_apps, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless routed_apps.empty?
-  route_rules << { "process_path_regex" => paths, "action" => "resolve", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } unless paths.empty?
 end
 route_rules << { "ip_is_private" => true, "action" => "route", "outbound" => "direct" }
 route_rules << { "domain" => diagnostic_vpn_domains, "action" => "route", "outbound" => "vpn" }
 route_rules << { "domain" => ad_block_update_domains, "action" => "route", "outbound" => "vpn" } if ad_blocking_enabled
-route_rules << { "process_name" => routed_apps, "action" => "route", "outbound" => "vpn" } unless routed_apps.empty?
-route_rules << { "process_path_regex" => paths, "action" => "route", "outbound" => "vpn" } unless paths.empty?
 unless routed_domains.empty?
   route_rules << { "domain_suffix" => routed_domains, "action" => "route", "outbound" => "vpn" }
 end

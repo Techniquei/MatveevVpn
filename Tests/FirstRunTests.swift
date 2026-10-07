@@ -327,6 +327,7 @@ import Foundation
         SystemService.installedValue = true
         SystemService.runningValue = true
         SystemService.currentVersionValue = "12"
+        SystemService.holdNextInstall = true
         let upgradeStore = makeStore("streaming-logger-upgrade")
         var beforeUpgrade = old
         beforeUpgrade.desiredOn = true
@@ -334,13 +335,16 @@ import Foundation
         let upgrade = model(upgradeStore)
         upgrade.refresh()
         try await Task.sleep(nanoseconds: 50_000_000)
-        precondition(upgrade.needsUpgrade && !upgrade.isBusy)
+        precondition(upgrade.needsUpgrade && upgrade.isBusy && upgrade.isUpdatingComponent && SystemService.installs == 1)
         precondition(Command.tunnelDNSRequests == 0 && SystemService.actions.isEmpty && SystemService.deployments == 0,
                      "The INFO-incompatible component must be updated before health checks or configuration reconciliation")
         upgrade.repair()
+        precondition(SystemService.installs == 1, "Another component operation must not duplicate an active installation")
+        SystemService.pendingInstall?.resume()
+        SystemService.pendingInstall = nil
         try await wait(upgrade)
         let afterUpgrade = try upgradeStore.load()
-        precondition(!upgrade.needsUpgrade && SystemService.currentVersionValue == SystemService.version && SystemService.installs == 1)
+        precondition(!upgrade.needsUpgrade && !upgrade.isUpdatingComponent && SystemService.currentVersionValue == SystemService.version && SystemService.installs == 1)
         precondition(afterUpgrade.subscription == beforeUpgrade.subscription && afterUpgrade.selectedNodeID == beforeUpgrade.selectedNodeID && afterUpgrade.desiredOn,
                      "Updating the logger must retain the subscription, selected node and desired connection")
         SystemService.currentVersionValue = "13"
@@ -350,6 +354,49 @@ import Foundation
         precondition(!upgrade.needsUpgrade && SystemService.installs == 2 && SystemService.actions == ["on"] && SystemService.runningValue,
                      "A manual connection must install stopped through the coordinator, save settings, then connect the compatible component")
 
-        print("first run: setup, serialization, cancellation retry, node preservation and required streaming-logger upgrade passed")
+        SystemService.reset()
+        SystemService.installedValue = true
+        SystemService.currentVersionValue = "12"
+        SystemService.cancelInstall = true
+        let cancelledUpgradeStore = makeStore("cancelled-startup-upgrade")
+        try cancelledUpgradeStore.save(old)
+        let cancelledUpgrade = model(cancelledUpgradeStore)
+        try await wait(cancelledUpgrade)
+        precondition(cancelledUpgrade.needsUpgrade && !cancelledUpgrade.isUpdatingComponent && !cancelledUpgrade.failureReport.isEmpty)
+        for _ in 0..<3 { cancelledUpgrade.refresh() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(SystemService.installs == 1 && SystemService.currentVersionValue == "12",
+                     "Cancellation must wait for the next launch without another automatic administrator prompt")
+        let preservedAfterCancellation = try cancelledUpgradeStore.load()
+        precondition(preservedAfterCancellation.subscription == old.subscription && preservedAfterCancellation.selectedNodeID == old.selectedNodeID)
+        let cancelledRelaunch = model(cancelledUpgradeStore)
+        try await wait(cancelledRelaunch)
+        precondition(cancelledRelaunch.needsUpgrade && SystemService.installs == 2,
+                     "A failed upgrade must automatically request administrator authorization on the next launch")
+        SystemService.cancelInstall = false
+        let successfulRelaunch = model(cancelledUpgradeStore)
+        try await wait(successfulRelaunch)
+        precondition(!successfulRelaunch.needsUpgrade && !successfulRelaunch.isUpdatingComponent && SystemService.installs == 3)
+        precondition(!SystemService.runningValue, "Updating an off-state installation must not connect the VPN")
+
+        SystemService.reset()
+        SystemService.installedValue = true
+        let compatibleStore = makeStore("compatible-startup")
+        try compatibleStore.save(old)
+        let compatible = model(compatibleStore)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(!compatible.needsUpgrade && !compatible.isUpdatingComponent && SystemService.installs == 0,
+                     "A compatible component must not prompt for administrator authorization")
+
+        SystemService.currentVersionValue = "12"
+        let unreadableStore = makeStore("unreadable-startup")
+        try FileManager.default.createDirectory(at: unreadableStore.directory, withIntermediateDirectories: true)
+        try Data("invalid settings".utf8).write(to: unreadableStore.file)
+        let unreadable = model(unreadableStore)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        precondition(unreadable.needsUpgrade && !unreadable.isUpdatingComponent && SystemService.installs == 0,
+                     "Unreadable settings must not trigger replacement with an empty component configuration")
+
+        print("first run: setup, serialization, cancellation retry, node preservation and automatic component upgrades passed")
     }
 }

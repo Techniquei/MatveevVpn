@@ -80,28 +80,3 @@ enum NodeProbe {
         return max(1, Int(average.rounded()))
     }
 }
-
-enum RuleInspector {
-    static func explain(domain: String, process: String, path: String, rules: RoutingRules) -> String {
-        if process == "sing-box" { return "Direct — VPN engine loop prevention." }
-        if rules.mode == .all { return "VPN — All Traffic mode (local/private destinations remain direct)." }
-        let host = domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        for value in rules.domains {
-            let suffix = value.hasPrefix("*.") ? String(value.dropFirst(2)) : value
-            if host == suffix || host.hasSuffix("." + suffix) { return "VPN — domain rule: \(value)" }
-        }
-        if rules.applications.contains(process) { return "VPN — process name: \(process)" }
-        for pattern in rules.processPathRegexes {
-            if let regex = try? NSRegularExpression(pattern: pattern), regex.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil {
-                return "VPN — application path rule: \(pattern)"
-            }
-        }
-        if rules.automaticRoutingEnabled && !rules.automaticServices.isEmpty {
-            return "Automatic service presets are enabled. Downloaded MetaCubeX rules are evaluated by the VPN engine; this inspector only predicts custom rules."
-        }
-        if rules.adBlockingEnabled {
-            return "Ad blocking is enabled. Downloaded advertising rules are evaluated by the VPN engine; this inspector only predicts custom rules."
-        }
-        return "Direct — no matching rule. This predicts configured rules; it does not inspect a live connection or DNS cache."
-    }
-}

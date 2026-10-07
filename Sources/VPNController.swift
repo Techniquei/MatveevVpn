@@ -7,13 +7,14 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.0-beta.4"
+    static let releaseVersion = "1.4.0-beta.5"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
     @Published var isInstalled = false
     @Published var isRunning = false
     @Published var needsUpgrade = false
+    @Published private(set) var isUpdatingComponent = false
     @Published var message = "Checking status…"
     @Published var rulesMessage = ""
     @Published private(set) var automaticRoutingLastUpdate: Date?
@@ -79,7 +80,11 @@ final class VPNController: ObservableObject {
             showConnection = true
         }
         testNodes()
-        reconcileInstalledConfiguration()
+        if needsUpgrade && !loadFailed {
+            repair()
+        } else {
+            reconcileInstalledConfiguration()
+        }
         AppLogger.shared.write("app \(Self.releaseVersion) started; automatic failover \(autoFailoverEnabled ? "enabled" : "disabled")")
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let controller = self else { return }
@@ -234,15 +239,13 @@ final class VPNController: ObservableObject {
         var next = state; next.rules.mode = mode
         perform { deadline in try await self.commit(next, until: deadline) }
     }
-    func applyRoutingRules(automaticRoutingEnabled: Bool, automaticServices: Set<String>, adBlockingEnabled: Bool, domains: [String], applications: [String], paths: [String]) {
+    func applyRoutingRules(automaticRoutingEnabled: Bool, automaticServices: Set<String>, adBlockingEnabled: Bool, domains: [String]) {
         var next = state
         func clean(_ lines: [String]) -> [String] {
             var seen = Set<String>()
             return lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && !$0.hasPrefix("#") && seen.insert($0).inserted }
         }
         next.rules.domains = clean(domains).map { $0.lowercased() }
-        next.rules.applications = clean(applications)
-        next.rules.processPathRegexes = clean(paths)
         next.rules.automaticRoutingEnabled = automaticRoutingEnabled
         next.rules.automaticServices = AutomaticRoutingCatalog.services.filter(automaticServices.contains)
         next.rules.adBlockingEnabled = adBlockingEnabled
@@ -722,7 +725,7 @@ final class VPNController: ObservableObject {
             let (direct, vpn, dns, tunnelDNS) = await (directIPv4, vpnIPv4, resolver, tunnelResolver)
             guard !Task.isCancelled else { return }
             let path = direct != "unavailable" && vpn != "unavailable" ? (direct == vpn ? "same" : "different") : "unavailable"
-            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nSystem DNS: \(dns)\nTunnel DNS: \(tunnelDNS)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nService presets: \(snapshot.rules.automaticRoutingEnabled ? snapshot.rules.automaticServices.count : 0)\nAd blocking: \(snapshot.rules.adBlockingEnabled ? "on" : "off")\nDomain rules: \(snapshot.rules.domains.count)\nApplication rules: \(snapshot.rules.applications.count + snapshot.rules.processPathRegexes.count)\nWhile connected, Tunnel DNS should be reachable. The two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
+            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nSystem DNS: \(dns)\nTunnel DNS: \(tunnelDNS)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nService presets: \(snapshot.rules.automaticRoutingEnabled ? snapshot.rules.automaticServices.count : 0)\nAd blocking: \(snapshot.rules.adBlockingEnabled ? "on" : "off")\nDomain rules: \(snapshot.rules.domains.count)\nWhile connected, Tunnel DNS should be reachable. The two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
         }
     }
     private nonisolated static func publicIP(endpoint: String) async -> String {
@@ -848,27 +851,16 @@ final class VPNController: ObservableObject {
     }
 
     func repair() {
-        perform { deadline in
+        guard !isBusy, !loadFailed else { return }
+        isUpdatingComponent = true
+        perform("Update system component") { deadline in
+            defer { self.isUpdatingComponent = false }
+            self.message = "Updating the VPN component. Confirm the macOS administrator request…"
             let stage = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: stage) }
             let config = try await self.service.generate(self.state, at: stage, until: deadline)
             try await self.service.install(config, desiredOn: self.state.desiredOn)
             self.checkConnection()
         }
-    }
-    func exportRules() {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = "matveevVpn-rules.json"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try privateWrite(JSONEncoder().encode(state.rules), to: url) }
-        catch { message = "Could not export routing rules." }
-    }
-    func importRules() {
-        let panel = NSOpenPanel(); panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let rules = try JSONDecoder().decode(RoutingRules.self, from: Data(contentsOf: url))
-            var next = state; next.rules = rules
-            perform { deadline in try await self.commit(next, until: deadline) }
-        } catch { message = "The file is not a valid routing configuration." }
     }
     func resetSettings() {
         perform(allowRecovery: true) { deadline in

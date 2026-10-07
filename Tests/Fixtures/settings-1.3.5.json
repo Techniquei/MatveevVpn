@@ -1,0 +1,29 @@
+{
+  "desiredOn" : true,
+  "lastRefresh" : 721692800,
+  "migratedFromV1" : false,
+  "rules" : {
+    "adBlockingEnabled" : true,
+    "applications" : [
+      "Example App"
+    ],
+    "automaticRoutingEnabled" : true,
+    "automaticServices" : [
+      "youtube",
+      "telegram",
+      "openai"
+    ],
+    "domains" : [
+      "custom.example.com",
+      "*.example.org"
+    ],
+    "mode" : "selective",
+    "processPathRegexes" : [
+      "^.*\/Example\\.app\/Contents\/.*"
+    ]
+  },
+  "schemaVersion" : 2,
+  "selectedNodeID" : "bb8bb98d76fe4938c0b09e4a97ca0d75aadf500f38bf7548404675ea99b80975",
+  "subscription" : "vless:\/\/11111111-1111-1111-1111-111111111111@first.example.invalid:443?security=tls#First\nvless:\/\/22222222-2222-2222-2222-222222222222@second.example.invalid:443?type=raw&security=reality&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123456789abcdef#Second\n",
+  "subscriptionURL" : "https:\/\/subscription.example.invalid\/test"
+}

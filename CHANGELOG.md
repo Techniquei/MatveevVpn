@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0-beta.5
+
+- Automatically updates outdated system components at launch, with progress and a fresh attempt on the next launch after cancellation or failure.
+- Removes the separate component Update button; configuration controls wait for the required component.
+- Preserves customized legacy domain lists even when they match old bundled defaults.
+- Keeps Disconnect and Reset compatible with the 1.3.5 system component until it is upgraded.
+- Adds a Change server shortcut beside Servers in the main window.
+- Limits Custom rules to a single Domains editor and preserves saved custom domains.
+- Removes application-name and executable-path rules from settings and generated configurations.
+- Removes rules import/export and the routing-rule inspector from Settings.
+- Updates routing documentation and interaction checks to match the simplified interface.
+
 ## 1.4.0-beta.4
 
 - Fixes quarantine on installed helpers and launchd plist.

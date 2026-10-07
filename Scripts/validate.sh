@@ -25,6 +25,8 @@ trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 "$ROOT_DIR/Tests/dns-manager-test.sh"
 /usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Tests/ConfigurationTests.swift" -o "$TEST_BUILD/configuration-tests"
 "$TEST_BUILD/configuration-tests"
+/usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Tests/UpgradeCompatibilityTests.swift" -o "$TEST_BUILD/upgrade-compatibility-tests"
+"$TEST_BUILD/upgrade-compatibility-tests" "$ROOT_DIR/Tests/Fixtures/settings-1.3.5.json"
 /usr/bin/xcrun swiftc "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Tests/AppLoggerTests.swift" -o "$TEST_BUILD/app-logger-tests"
 "$TEST_BUILD/app-logger-tests"
 /usr/bin/xcrun swiftc "$ROOT_DIR/Sources/Configuration.swift" "$ROOT_DIR/Sources/AdBlockRuleStore.swift" "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/SystemService.swift" "$ROOT_DIR/Tests/AdBlockRuleStoreTests.swift" -o "$TEST_BUILD/ad-block-rule-tests"

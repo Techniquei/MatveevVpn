@@ -48,8 +48,7 @@ jobs:
         run: |
           test -n "$SPARKLE_PRIVATE_KEY" || { echo 'Configure SPARKLE_PRIVATE_KEY before publishing a release.'; exit 1; }
           bash Scripts/sign-release.sh dist "${GITHUB_REF_NAME#v}" "${{ steps.version.outputs.channel }}"
-      - name: Verify beta opt-in with Sparkle
-        if: steps.version.outputs.channel == 'beta'
+      - name: Verify update discovery from 1.3.5 with Sparkle
         run: bash Scripts/test-update-feed.sh dist/appcast.xml
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

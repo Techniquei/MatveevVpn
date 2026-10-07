@@ -74,7 +74,11 @@ struct SystemService {
         let token = UUID().uuidString
         let response = control.appendingPathComponent("response-\(token)")
         let expiry = Int64(deadline.timeIntervalSince1970 * 1000)
-        try privateWrite(Data("\(action) \(token) \(expiry)\n".utf8), to: control.appendingPathComponent("command"))
+        // Components before 14 read only action/token; a third field invalidates
+        // their token. Keep Disconnect and Reset usable before the service upgrade.
+        let supportsDeadline = (Int(currentVersion) ?? 1) >= 14
+        let command = supportsDeadline ? "\(action) \(token) \(expiry)\n" : "\(action) \(token)\n"
+        try privateWrite(Data(command.utf8), to: control.appendingPathComponent("command"))
         while Date() < deadline {
             if let value = try? String(contentsOf: response, encoding: .utf8) {
                 try? FileManager.default.removeItem(at: response)
@@ -115,7 +119,7 @@ struct SystemService {
         let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(index), rules.path], timeout: deadline.timeIntervalSinceNow)
         try Self.checkDeadline(deadline)
         AppLogger.shared.write("configuration generation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))")
-        guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and process expressions.", generated.output) }
+        guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and the selected server.", generated.output) }
         let validationStarted = ProcessInfo.processInfo.systemUptime
         defer { AppLogger.shared.write("configuration validation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - validationStarted) * 1000))") }
         let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path], timeout: deadline.timeIntervalSinceNow)

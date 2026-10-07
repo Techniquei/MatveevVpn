@@ -1,7 +1,8 @@
 # Contributing
 
-Keep changes focused and preserve the universal routing model: service-specific
-behavior belongs in user-editable rules, not in the application interface.
+Keep changes focused. Selective routing combines service presets with custom
+domain rules. Keep the preset catalog and generated routing configuration in
+sync; custom rules accept domains only.
 
 Before opening a pull request, run:
 

@@ -19,7 +19,8 @@ Dir.mktmpdir('matveev-routing') do |dir|
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Test\n")
   raise 'provisioning ignored an existing subscription' if system(RbConfig.ruby, builder, sub, config, '0', rules, out: File::NULL, err: File::NULL)
   %w[selective all].each do |mode|
-    File.write(rules, JSON.generate({domains: ['*.example.com'], applications: ['Example'], processPathRegexes: ['^.*/Cursor\\.app/Contents/.*'], mode: mode, automaticRoutingEnabled: false, adBlockingEnabled: false}))
+    # Legacy application fields must be ignored, including invalid path expressions.
+    File.write(rules, JSON.generate({domains: ['*.example.com'], applications: ['Example'], processPathRegexes: ['['], mode: mode, automaticRoutingEnabled: false, adBlockingEnabled: false}))
     raise 'generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
     value = JSON.parse(File.read(config))
     raise 'wrong final' unless value['route']['final'] == (mode == 'all' ? 'vpn' : 'direct')
@@ -42,8 +43,10 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise 'VPN diagnostic endpoint does not use VPN' unless route.any? { |r| r['domain'] == ['api4.ipify.org'] && r['outbound'] == 'vpn' }
     raise 'direct diagnostic endpoint does not bypass VPN' unless route.any? { |r| r['domain'] == ['api64.ipify.org'] && r['outbound'] == 'direct' }
     raise 'diagnostic DNS does not use VPN' unless value['dns']['rules'].any? { |r| r['domain'] == ['api4.ipify.org'] && r['server'] == 'dns-vpn' }
-    raise 'DNS intercepted after process route' unless route.index { |r| r['action'] == 'hijack-dns' } < route.index { |r| r['process_name'] == ['Example'] }
-    raise 'process path missing in DNS' unless value['dns']['rules'].any? { |r| r.key?('process_path_regex') }
+    raise 'DNS intercepted after custom domain route' unless route.index { |r| r['action'] == 'hijack-dns' } < route.index { |r| r['domain_suffix'] == ['example.com'] }
+    raise 'legacy application DNS rule retained' if value['dns']['rules'].any? { |r| r.key?('process_name') || r.key?('process_path_regex') }
+    raise 'legacy application route retained' if route.any? { |r| r.key?('process_path_regex') || (r.key?('process_name') && r['process_name'] != ['sing-box', 'xray']) }
+    raise 'VPN engine loop prevention is missing' unless route.any? { |r| r['process_name'] == ['sing-box', 'xray'] && r['outbound'] == 'direct' }
   end
   ['api.*.example.com', 'https://example.com/a', '*example.com', 'foo..com'].each do |domain|
     File.write(rules, JSON.generate({domains: [domain]}))
@@ -52,7 +55,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
 
   preset_services = %w[youtube telegram discord]
   File.write(File.join(dir, 'ad-block-domains.txt'), "videoroll.net\nadnxs.com\n")
-  File.write(rules, JSON.generate({domains: [], applications: [], processPathRegexes: [], mode: 'selective', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: true}))
+  File.write(rules, JSON.generate({domains: [], mode: 'selective', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: true}))
   raise 'preset generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   generated_presets = JSON.parse(File.read(config))
   raise 'preset refresh events must be visible to the controller' unless generated_presets.dig('log', 'level') == 'info'
@@ -86,7 +89,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
   raise 'unknown service preset accepted' if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
   raise 'rules argument unexpectedly remained optional' if system(RbConfig.ruby, builder, sub, config, '1', out: File::NULL, err: File::NULL)
 
-  File.write(rules, JSON.generate({domains: ['example.com'], applications: [], processPathRegexes: [], mode: 'selective', automaticRoutingEnabled: false, adBlockingEnabled: false}))
+  File.write(rules, JSON.generate({domains: ['example.com'], mode: 'selective', automaticRoutingEnabled: false, adBlockingEnabled: false}))
   reality_key = 'A' * 43
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@reality.example.com:443?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&fp=chrome&sni=cover.example.com&pbk=#{reality_key}&sid=0123456789abcdef&spx=%2Fmodern#Reality\n")
   raise 'REALITY generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
@@ -131,4 +134,4 @@ Dir.mktmpdir('matveev-routing') do |dir|
   ws_tls = JSON.parse(File.read(config)).fetch('outbounds').first
   raise 'TLS ALPN was not applied to WebSocket' unless ws_tls.fetch('transport')['type'] == 'ws' && ws_tls.fetch('tls')['alpn'] == ['http/1.1']
 end
-puts 'routing: presets, ad blocking, modes, secure DNS, Xray transports, TLS aliases, wildcards and process paths passed'
+puts 'routing: domains, legacy application fields, presets, ad blocking, modes, secure DNS, Xray transports and TLS aliases passed'

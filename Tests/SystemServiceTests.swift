@@ -20,6 +20,30 @@ import Foundation
         try privateWrite(Data("waiting to retry".utf8), to: control.appendingPathComponent("runtime-status"))
         precondition(!service.isConnecting && !service.running)
 
+        for version in ["1", "12", "13", "14", SystemService.version] {
+            try privateWrite(Data(version.utf8), to: control.appendingPathComponent("version"))
+            for action in ["off", "reset"] {
+                let legacyResponse = Task {
+                    let command = control.appendingPathComponent("command")
+                    for _ in 0..<100 {
+                        if let text = try? String(contentsOf: command, encoding: .utf8) {
+                            let fields = text.split(whereSeparator: \.isWhitespace)
+                            let expectedCount = Int(version)! < 14 ? 2 : 3
+                            precondition(fields.count == expectedCount && fields[0] == action,
+                                         "Commands must match the installed component's protocol")
+                            try FileManager.default.removeItem(at: command)
+                            try privateWrite(Data("ok\n".utf8), to: control.appendingPathComponent("response-" + fields[1]))
+                            return
+                        }
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    fatalError("The client did not submit its command")
+                }
+                try await service.send(action, until: Date().addingTimeInterval(2))
+                try await legacyResponse.value
+            }
+        }
+
         let response = Task {
             let command = control.appendingPathComponent("command")
             for _ in 0..<300 {
@@ -52,6 +76,6 @@ import Foundation
         let timedOut = await Command.run("/bin/sleep", ["5"], timeout: 0.1)
         precondition(timedOut.status != 0 && Date().timeIntervalSince(processStarted) < 0.5,
                      "Configuration tools must not outlive their remaining operation budget")
-        print("system service: startup states and delayed reload acknowledgement passed")
+        print("system service: legacy/current command protocols, startup states and delayed reload acknowledgement passed")
     }
 }

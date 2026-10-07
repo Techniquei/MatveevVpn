@@ -23,7 +23,7 @@ the main content margin directly, without an additional inset panel.
 | SystemService | Fixed controller protocol, config generation and privileged install |
 | build-config.rb | Derive sing-box configuration and the optional REALITY sidecar |
 | controller.sh | Privileged tunnel lifetime, reload rollback, sleep/network recovery |
-| Diagnostics / Updater | Node latency, reachability, rule explanation and Sparkle integration |
+| Diagnostics / Updater | Node latency, reachability and Sparkle integration |
 
 ## State and transactions
 
@@ -31,10 +31,24 @@ The user state schema is version 2. App release, controller protocol and state
 schema versions are independent. An app-only replacement does not require
 reinstalling the controller. The system component remains necessary for TUN.
 
+If the installed component version differs at startup, the presentation model
+automatically runs the serialized component installation with the saved settings
+and desired connection state. It displays progress while macOS requests
+administrator authorization. Each launch makes one automatic attempt; cancellation
+or failure leaves the error visible and retries on the next launch, without a
+separate Update button. Compatible components do not prompt. Unreadable settings
+prevent automatic replacement. Configuration controls wait for the required
+component, while disconnecting the old tunnel remains available after failure.
+
 Subscription data, node ID, routing mode/rules and desired connection state are
 one atomic private JSON file. The parent directory has mode 0700; files have mode
 0600. Migration only reads canonical ~/VPN and never searches backups. Once the
 new file exists, reinstalling or resetting cannot trigger another migration.
+
+Custom routing stores only domains alongside routing mode, service presets and
+ad-blocking preferences. Older application-name and executable-path fields are
+ignored when decoding and omitted when saving. Saved custom domains are preserved
+even if they match the obsolete bundled domain list.
 
 Changes follow: parse → generate → engine checks → private journal → controller
 acceptance → atomic settings commit → journal removal. A journal stores the new
@@ -73,7 +87,11 @@ timer. It means the most recent successful preset refresh, not completion of
 every selected preset. Older installed components without this metadata display
 an unavailable date; cache-file modification time is not used as a substitute.
 
-DNS interception precedes application/private destination routing. Private
+Custom rules accept one domain per line. `example.com` and `*.example.com` both
+match the base domain and all subdomains. The editor validates these entries;
+the builder generates domain-suffix rules for DNS and VPN routing.
+
+DNS interception precedes domain/private destination routing. Private
 destinations are excluded from TUN so LAN and mesh interfaces retain ownership
 of their routes. Full mode changes route and DNS finals and prefers IPv4 DNS;
 IPv6 is disabled while connected because VLESS nodes do not consistently provide
@@ -93,11 +111,6 @@ endpoint because current servers can reject the legacy client version
 advertised by sing-box. sing-box still owns TUN, DNS and routing; an explicit
 process rule keeps the Xray uplink outside the tunnel. The primary configuration
 contains a hash marker for the private Xray sidecar, preserving transaction identity.
-
-Application bundle routing uses an escaped, anchored executable-path expression.
-It does not infer parent-process ancestry. Diagnostics may populate an executable
-path from a running application and explain configured rules, but do not claim
-to observe the actual rule used by an existing socket.
 
 The runtime status file is a heartbeat in controller v2. A stale heartbeat is not
 reported as connected. External IP checks are separate, bounded requests. They
@@ -153,8 +166,8 @@ shutdown (including DNS restoration). They use the existing bounded app/runtime 
 controller timings are also included in exported runtime diagnostics. No network work
 or timing probes were added to the app's status timer.
 Fixed actions and settings schema remain unchanged. Controller compatibility version
-14 requires the deadline field in commands; installations of version 13 or earlier need
-the system component Update action or Repair Service before bounded operations can run.
+14 requires the deadline field in commands; installations of version 13 or earlier
+are updated automatically at launch before bounded operations can run.
 Watchdog timestamps are recorded after controller work finishes, so a slow startup or
 reload is not mistaken for sleep and followed by another restart.
 
@@ -172,9 +185,9 @@ traffic logging from filling the engine output pipe and stalling DNS processing.
 The streaming writer remains required for INFO preset telemetry; version 12 cannot
 safely consume that configuration under load. Version 14 additionally enforces command
 deadlines; it retains the streaming writer introduced in version 13.
-Existing installations display the system component Update action (also available
-through Repair Service); health checks and startup reconciliation wait for that
-update. Fixed actions and settings schema remain unchanged.
+Existing installations automatically update an outdated component at launch;
+health checks and startup reconciliation wait for that update. Fixed actions and
+settings schema remain unchanged.
 
 ## Platform boundaries
 

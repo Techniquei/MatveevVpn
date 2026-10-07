@@ -42,8 +42,8 @@ import Sparkle
             try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
             let info: [String: Any] = [
                 "CFBundleIdentifier": identifier, "CFBundleName": "Channel Test",
-                "CFBundlePackageType": "APPL", "CFBundleVersion": "1304",
-                "CFBundleShortVersionString": "1.3.4", "SUFeedURL": CommandLine.arguments[1],
+                "CFBundlePackageType": "APPL", "CFBundleVersion": "1305",
+                "CFBundleShortVersionString": "1.3.5", "SUFeedURL": CommandLine.arguments[1],
                 "SUEnableAutomaticChecks": false, "SUAutomaticallyUpdate": false,
                 "SUPublicEDKey": try String(contentsOfFile: CommandLine.arguments[4]).trimmingCharacters(in: .whitespacesAndNewlines),
             ]
@@ -57,9 +57,17 @@ import Sparkle
             let deadline = Date(timeIntervalSinceNow: 20)
             while !probe.finished && Date() < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
             precondition(probe.finished, "Update discovery must finish within its test bound")
-            if let failure = probe.failure { throw failure }
             let expected = CommandLine.arguments[enabled ? 3 : 2]
-            precondition(probe.found == expected, "Beta=\(enabled): expected \(expected), found \(probe.found ?? "none")")
+            if expected == "none" {
+                precondition(probe.found == nil, "No update must be offered to an up-to-date 1.3.5 host")
+                if let failure = probe.failure {
+                    let error = failure as NSError
+                    precondition(error.domain == SUSparkleErrorDomain && error.code == SUError.noUpdateError.rawValue)
+                }
+            } else {
+                if let failure = probe.failure { throw failure }
+                precondition(probe.found == expected, "Beta=\(enabled): expected \(expected), found \(probe.found ?? "none")")
+            }
             print("Sparkle probe: beta=\(enabled), offered build \(expected)")
         }
     }

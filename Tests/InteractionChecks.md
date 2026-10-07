@@ -23,9 +23,18 @@ and toggle successfully with `AppDisclosureStyle`. The hover outline is visible.
 
 ## Hover coverage
 
-Check buttons, toggles, the server picker, the running-app menu, text fields and
-rule editors in Subscription, Settings and Routing; also the mode switch, server
+Check buttons, toggles, the server picker, subscription fields and the domain
+editor in Subscription, Settings and Routing; also the mode switch, server
 rows and actions in Main. Enabled controls must highlight on entry and restore
 their appearance on exit. Disabled controls must not highlight or act. Keyboard
 focus and activation remain native. System menus/dialogs use macOS highlighting.
 Do not run destructive actions or service/network checks in the installed app.
+
+## Custom domains
+
+1. Open Routing. Custom rules must show a single full-width Domains editor.
+2. Enter `example.com` and `*.example.org` on separate lines in the fake preview.
+3. Save and Apply, reopen Routing and confirm both entries were saved.
+4. Edit the draft, choose Revert Changes and confirm the saved domains return.
+5. Clear Custom, confirm, then Save and Apply. Preset and ad-blocking choices
+   must remain unchanged.

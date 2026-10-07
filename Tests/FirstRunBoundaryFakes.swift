@@ -43,7 +43,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "14"
+    static let version = "27"
     static var operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -51,6 +51,8 @@ struct SystemService {
     static var installedValue = false
     static var runningValue = false
     static var cancelInstall = false
+    static var holdNextInstall = false
+    static var pendingInstall: CheckedContinuation<Void, Never>?
     static var installs = 0
     static var deployments = 0
     static var actions: [String] = []
@@ -80,6 +82,10 @@ struct SystemService {
     }
     func install(_ config: URL, desiredOn: Bool) async throws {
         Self.installs += 1
+        if Self.holdNextInstall {
+            Self.holdNextInstall = false
+            await withCheckedContinuation { Self.pendingInstall = $0 }
+        }
         if Self.cancelInstall { throw VPNError.message("System installation was cancelled. Your settings were preserved.") }
         Self.installedValue = true
         Self.currentVersionValue = Self.version
@@ -108,6 +114,7 @@ struct SystemService {
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     static func reset() {
         installedValue = false; runningValue = false; cancelInstall = false
+        holdNextInstall = false; pendingInstall = nil
         installs = 0; deployments = 0; actions = []
         routingUpdateValue = nil
         currentVersionValue = version

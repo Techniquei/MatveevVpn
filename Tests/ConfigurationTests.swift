@@ -42,12 +42,16 @@ import Foundation
         try Data(text.utf8).write(to: service.appendingPathComponent("private/subscription.decoded"))
         try Data("2\n".utf8).write(to: service.appendingPathComponent("current-server.txt"))
         try Data("https://example.com/private-token\n".utf8).write(to: service.appendingPathComponent("private/subscription-url.txt"))
-        try Data("{\"domains\":[\"example.com\"],\"applications\":[\"Example\"]}".utf8).write(to: legacy.appendingPathComponent("routing-rules.json"))
+        try Data("{\"domains\":[\"example.com\"],\"applications\":[\"Example\"],\"processPathRegexes\":[\"[\"]}".utf8).write(to: legacy.appendingPathComponent("routing-rules.json"))
         let hashFile = root.appendingPathComponent("runtime-hash")
         let store = StateStore(directory: root.appendingPathComponent("settings"), legacyDirectory: legacy, runtimeHashFile: hashFile)
         var state = try store.load()
         precondition(state.migratedFromV1 && state.selectedNodeID == nodes[1].id)
-        precondition(state.rules.domains == ["example.com"] && state.rules.processPathRegexes.isEmpty)
+        precondition(state.rules.domains == ["example.com"], "Legacy domains must survive removal of application rules")
+        try state.rules.validate()
+        let encodedRules = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state.rules)) as! [String: Any]
+        precondition(encodedRules["applications"] == nil && encodedRules["processPathRegexes"] == nil,
+                     "Removed application rules must not be saved again")
         precondition(state.rules.automaticRoutingEnabled && state.rules.automaticServices == AutomaticRoutingCatalog.recommended)
         precondition(!state.rules.adBlockingEnabled)
         state.rules.mode = .all
@@ -73,7 +77,7 @@ import Foundation
         try store.save(try store.freshState())
         let reset = try store.load()
         precondition(reset.subscription.isEmpty, "Reset must not remigrate legacy settings")
-        precondition(reset.rules.domains.isEmpty && reset.rules.applications.isEmpty && reset.rules.processPathRegexes.isEmpty, "Reset must clear custom routes")
+        precondition(reset.rules.domains.isEmpty, "Reset must clear custom domains")
         precondition(reset.rules.automaticRoutingEnabled && reset.rules.automaticServices == AutomaticRoutingCatalog.recommended, "Reset must enable every service preset")
         precondition(!reset.rules.adBlockingEnabled, "Ad blocking must remain opt-in")
 
