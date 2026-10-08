@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+- Promotes 1.4.0-beta.6 to the stable update channel, with build 1420.
+- Includes the redesigned interface, streamlined first-run setup, modern REALITY/XHTTP support and bounded recovery from the 1.4.0 beta series.
+- Automatically updates older system components to version 28 on launch, with administrator authorization and a fresh attempt after cancellation or failure.
+- Preserves subscriptions, selected server, custom domains and routing settings. Removes application-name and executable-path routing rules; custom rules now use domains only.
+- Includes beta.6 network/DNS readiness checks, wake recovery and visible background connection progress.
+
 ## 1.4.0-beta.6
 
 - Waits for physical networking before starting engines and applying DNS at boot.

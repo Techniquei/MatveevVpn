@@ -66,8 +66,8 @@ an update. Both stable and beta release workflows run this check before
 publication. Stable clients must be offered only the default-channel build;
 beta clients also receive a newer stable build when available.
 
-For 1.4.0 stable, use a build number greater than 1419 (the beta.6 build), retain
-the existing signing key and publish the item without a beta channel. The
+The 1.4.0 stable release uses build 1420, greater than 1419 (the beta.6 build),
+retains the existing signing key and publishes the item without a beta channel. The
 application update preserves settings and automatically updates system component
 12 to 28 on launch, with administrator authorization. Check cancellation/failure
 followed by relaunch: a new attempt must start without a separate Update button.

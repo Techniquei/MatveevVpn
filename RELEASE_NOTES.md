@@ -1,6 +1,18 @@
-# matveevVpn 1.4.0-beta.6
+# matveevVpn 1.4.0
 
-More reliable startup and recovery, with visible background connection progress.
+Stable release of 1.4.0-beta.6, including the redesigned interface, streamlined
+setup, modern REALITY/XHTTP support and improved startup and recovery from the
+1.4.0 beta series.
+
+- Redesigned main window, settings and routing controls, with a Change server
+  shortcut and visible background connection progress.
+- Automatically installs the system component during first-run setup and updates
+  older components at launch. If authorization is cancelled or installation
+  fails, relaunch the app to retry.
+- Uses native Xray-core for modern REALITY and XHTTP, alongside sing-box for TUN
+  and routing. Failed component installation restores the previous installation.
+- Simplifies Custom rules to a Domains editor. Saved custom domains are preserved;
+  application-name and executable-path routing rules are removed.
 
 - Waits for the physical network and default route before starting the tunnel
   and applying system DNS after boot. The connection starts automatically when
@@ -24,9 +36,15 @@ More reliable startup and recovery, with visible background connection progress.
 component on launch; macOS requests administrator authorization. Subscriptions,
 selected server and routing settings are preserved.
 
+**Routing change for 1.3.5 users:** In Selective mode, traffic previously matched
+only by an application-name or executable-path rule now goes directly unless
+covered by a domain rule or service preset. Use domains or presets to route it
+through the VPN.
+
 The underlying cause of direct-DNS stalls reported on a Mac with Kaspersky is
 still under investigation. This release fixes startup, recovery and status
 handling; it does not change the DNS transport.
 
 Requires an Apple Silicon Mac running macOS 13 or later. Available through the
-opt-in beta update channel. The latest stable release remains **1.3.5**.
+standard update channel. Build **1420** updates both stable 1.3.5 and all 1.4.0
+betas, including beta.6.
