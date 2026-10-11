@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+- Installs the system component without Apple Command Line Tools. The installer no longer calls the `python3` and `lipo` developer-tool stubs, which fail for an administrator install when no GUI session can request the tools.
+- Keeps system component 28. Machines that already have it are not reinstalled; a failed installation retries with the updated app.
+
 ## 1.4.0
 
 - Promotes 1.4.0-beta.6 to the stable update channel, with build 1420.

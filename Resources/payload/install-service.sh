@@ -10,12 +10,30 @@ SERVICE_LABEL='com.matveev.vpn'
 SERVICE_PLIST='/Library/LaunchDaemons/com.matveev.vpn.plist'
 . "$PAYLOAD/service-lifecycle.sh"
 
-APP_BUNDLE="$(/usr/bin/python3 -c 'import os,sys; print(os.path.realpath(os.path.join(sys.argv[1], os.pardir, os.pardir, os.pardir)))' "$PAYLOAD")"
+# python3, lipo and other developer tools in /usr/bin are Command Line Tools
+# stubs: as root without a GUI session they fail instead of offering the
+# install, so payload scripts must not use them.
+verify_arm64() {
+  /usr/bin/ruby -e '
+    data = File.binread(ARGV.fetch(0), 4096).to_s
+    arm64 = ->(type, subtype) { type == 0x0100000C && [0, 1].include?(subtype.to_i & 0xFFFFFF) }
+    magic = data.unpack("N").first
+    ok = case magic
+         when 0xCFFAEDFE then arm64.call(*data.unpack("x4VV"))
+         when 0xCAFEBABE, 0xCAFEBABF
+           stride = magic == 0xCAFEBABE ? 20 : 32
+           (0...[data.unpack("x4N").first.to_i, 64].min).any? { |i| arm64.call(*data.unpack("x#{8 + i * stride}NN")) }
+         else false
+         end
+    exit(ok ? 0 : 1)' "$1" || { /usr/bin/printf '%s does not contain arm64.\n' "$1" >&2; return 1; }
+}
+
+APP_BUNDLE="$(cd -P -- "$PAYLOAD/../../.." && /bin/pwd -P)"
 [[ "$APP_BUNDLE" == *.app && -f "$APP_BUNDLE/Contents/Info.plist" && -x "$APP_BUNDLE/Contents/MacOS/matveevVpn" && -f "$CONFIG" ]] || exit 2
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_BUNDLE/Contents/Info.plist")" == 'com.matveev.vpn' ]] || exit 2
 for name in sing-box xray; do
   [[ -x "$PAYLOAD/$name" ]] || exit 2
-  /usr/bin/lipo "$PAYLOAD/$name" -verify_arch arm64
+  verify_arm64 "$PAYLOAD/$name"
   /usr/bin/codesign --verify --strict "$PAYLOAD/$name"
 done
 
@@ -45,24 +63,24 @@ wait_for_legacy() {
 }
 
 wait_for_previous_xray() {
-  /usr/bin/python3 - "$BASE/ipc/service.sock" <<'PY_STATUS'
-import json, socket, sys, time
-end = time.monotonic() + 15
-while time.monotonic() < end:
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(min(1, end - time.monotonic()))
-            sock.connect(sys.argv[1])
-            sock.sendall(b'{"version":1,"requestID":"rollback-status","action":"GetStatus","expectedRevision":0}\n')
-            with sock.makefile("rb") as stream:
-                message = json.loads(stream.readline((1 << 20) + 1))
-            if message.get("success"):
-                raise SystemExit(0)
-    except (OSError, ValueError):
-        pass
-    time.sleep(min(0.1, max(0, end - time.monotonic())))
-raise SystemExit(1)
-PY_STATUS
+  /usr/bin/ruby -rjson -rsocket -rtimeout - "$BASE/ipc/service.sock" <<'RB_STATUS'
+clock = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+deadline = clock.call + 15
+while clock.call < deadline
+  begin
+    Timeout.timeout([1, deadline - clock.call].min) do
+      UNIXSocket.open(ARGV.fetch(0)) do |sock|
+        sock.write(%({"version":1,"requestID":"rollback-status","action":"GetStatus","expectedRevision":0}\n))
+        message = JSON.parse(sock.gets("\n", (1 << 20) + 1).to_s)
+        exit 0 if message.is_a?(Hash) && message["success"]
+      end
+    end
+  rescue SystemCallError, IOError, JSON::ParserError, Timeout::Error
+  end
+  sleep [0.1, [0, deadline - clock.call].max].min
+end
+exit 1
+RB_STATUS
 }
 
 cleanup() {

@@ -1,6 +1,8 @@
 #!/bin/bash
 
-if [[ ! -f "$MATVEEV_BASE_DIR/network-ready" ]]; then sleep 1; exit 1; fi
+# A one-second sleep plus process startup overruns the controller's two-second
+# probe budget on a slow runner, so the waiting-for-network result is never logged.
+if [[ ! -f "$MATVEEV_BASE_DIR/network-ready" ]]; then sleep 0.2; exit 1; fi
 if [[ ! -f "$MATVEEV_BASE_DIR/tunnel-ready" ]]; then exit 1; fi
 if [[ "$*" == *'api4.ipify.org'* && -f "$MATVEEV_BASE_DIR/node-unavailable" ]]; then exit 1; fi
 if [[ "$*" == *'api64.ipify.org'* && -f "$MATVEEV_BASE_DIR/direct-unavailable" ]]; then sleep 1; exit 1; fi

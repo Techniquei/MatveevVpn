@@ -66,8 +66,8 @@ an update. Both stable and beta release workflows run this check before
 publication. Stable clients must be offered only the default-channel build;
 beta clients also receive a newer stable build when available.
 
-The 1.4.0 stable release uses build 1420, greater than 1419 (the beta.6 build),
-retains the existing signing key and publishes the item without a beta channel. The
-application update preserves settings and automatically updates system component
-12 to 28 on launch, with administrator authorization. Check cancellation/failure
-followed by relaunch: a new attempt must start without a separate Update button.
+The 1.4.1 stable release uses build 1421, greater than 1420. It retains the
+existing signing key, publishes without a beta channel and keeps system component
+28. The installer fix is in the app bundle, so machines that already have
+component 28 are not asked to reinstall. A 1.4.0 installation that failed because
+Command Line Tools were missing retries after the app update.
