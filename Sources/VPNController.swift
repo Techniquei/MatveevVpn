@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.1"
+    static let releaseVersion = "1.4.2"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -848,7 +848,6 @@ final class VPNController: ObservableObject {
         Security: \(security)
         Flow: \(query["flow"] ?? "none")
         Runtime core: \(core)
-        VLESS URI: \(raw)
         """
     }
 

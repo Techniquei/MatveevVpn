@@ -43,7 +43,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "28"
+    static let version = "29"
     static var operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }

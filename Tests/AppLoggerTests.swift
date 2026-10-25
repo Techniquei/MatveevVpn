@@ -5,7 +5,17 @@ import Foundation
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("app.log")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let secret = "vless://test-credential@vpn.example.invalid:443?security=tls#Private"
+        try Data("legacy diagnostic: \(secret)\n".utf8).write(to: file)
         let logger = AppLogger(file: file)
+        let upgradedLog = try String(contentsOf: file, encoding: .utf8)
+        precondition(!upgradedLog.contains("test-credential"), "Old logs must be sanitized on upgrade")
+        logger.write("new diagnostic: \(secret.uppercased())\nRuntime core: sing-box")
+        let sanitized = logger.contents()
+        precondition(!sanitized.localizedCaseInsensitiveContains("test-credential"))
+        precondition(!sanitized.localizedCaseInsensitiveContains("vless://"))
+        precondition(sanitized.contains("Runtime core: sing-box"))
 
         for index in 0..<80 {
             logger.write("entry-\(index) " + String(repeating: "x", count: 50_000))

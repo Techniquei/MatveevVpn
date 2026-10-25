@@ -1,9 +1,21 @@
 #!/bin/bash
 
-# A one-second sleep plus process startup overruns the controller's two-second
-# probe budget on a slow runner, so the waiting-for-network result is never logged.
+# Keep offline replies short so process startup overhead on slow runners does
+# not consume the startup budget before waiting-for-network can be published.
 if [[ ! -f "$MATVEEV_BASE_DIR/network-ready" ]]; then sleep 0.2; exit 1; fi
 if [[ ! -f "$MATVEEV_BASE_DIR/tunnel-ready" ]]; then exit 1; fi
+if [[ -f "$MATVEEV_BASE_DIR/dns-query-delay" ]]; then
+  delay="$(cat "$MATVEEV_BASE_DIR/dns-query-delay")"
+  timeout=1
+  for arg in "$@"; do
+    if [[ "$arg" == +time=* ]]; then timeout="${arg#+time=}"; fi
+  done
+  if /usr/bin/awk -v delay="$delay" -v timeout="$timeout" 'BEGIN { exit !(delay > timeout) }'; then
+    sleep "$timeout"
+    exit 1
+  fi
+  sleep "$delay"
+fi
 if [[ "$*" == *'api4.ipify.org'* && -f "$MATVEEV_BASE_DIR/node-unavailable" ]]; then exit 1; fi
 if [[ "$*" == *'api64.ipify.org'* && -f "$MATVEEV_BASE_DIR/direct-unavailable" ]]; then sleep 1; exit 1; fi
 printf '192.0.2.1\n'

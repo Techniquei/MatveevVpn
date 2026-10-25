@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+export SDKROOT="$(/usr/bin/xcrun --sdk "${MATVEEV_MACOS_SDK:-macosx}" --show-sdk-path)"
 TEST_BUILD="$(/usr/bin/mktemp -d /private/tmp/matveev-validation.XXXXXX)"
 trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 
@@ -11,7 +12,7 @@ trap '/bin/rm -rf "$TEST_BUILD"' EXIT
 /bin/bash -n "$ROOT_DIR/Resources/payload/dns-manager.sh"
 /usr/bin/ruby -c "$ROOT_DIR/Resources/payload/tools/build-config.rb" >/dev/null
 /usr/bin/plutil -lint "$ROOT_DIR/Resources/payload/com.matveev.vpn.plist" >/dev/null
-/usr/bin/xcrun --sdk macosx swiftc -parse-as-library -typecheck -target arm64-apple-macos13.0 "$ROOT_DIR"/Sources/*.swift
+/usr/bin/xcrun --sdk "${MATVEEV_MACOS_SDK:-macosx}" swiftc -parse-as-library -typecheck -target arm64-apple-macos13.0 "$ROOT_DIR"/Sources/*.swift
 /usr/bin/xcrun swiftc -parse-as-library "$ROOT_DIR/Sources/AppLogger.swift" "$ROOT_DIR/Sources/Updater.swift" "$ROOT_DIR/Tests/UpdaterTests.swift" -o "$TEST_BUILD/updater-tests"
 "$TEST_BUILD/updater-tests"
 # Exercise the real Sparkle delegate callbacks as well as the development build.

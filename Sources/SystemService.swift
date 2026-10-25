@@ -36,7 +36,8 @@ struct SystemService {
     // Component 27 installs quarantined copies safely and can roll back a
     // replacement of the retired native Xray service.
     // Component 28 owns runtime retries and publishes readiness on both DNS paths.
-    static let version = "28"
+    // Component 29 allows slow DNS replies while probing both paths concurrently.
+    static let version = "29"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }

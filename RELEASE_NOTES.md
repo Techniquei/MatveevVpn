@@ -1,19 +1,16 @@
-# matveevVpn 1.4.1
+# matveevVpn 1.4.2
 
-System component installation works on a Mac that does not have Xcode or the
-Command Line Tools installed.
+Improves connection reliability on networks where DNS replies take longer than
+one second. VPN and direct DNS checks run concurrently and allow up to three
+seconds per query, while retaining the connection operation and rollback limits.
+Xray transport connections resolve their server using IPv4.
 
-The installer ran helper checks through developer-tool stubs. On a Mac without
-those tools, macOS tries to show an installation prompt. An administrator
-install has no GUI session that can display it, so installation stopped with
-“No developer tools were found and no install could be requested.” Those checks
-now use the system tools that ship with macOS.
+Diagnostics no longer include full VLESS connection links. Existing app logs
+are sanitized on launch so connection credentials are removed before export.
 
-**Upgrade notes:** Build **1421**. System component **28** is unchanged, so an
-existing installation is not replaced and macOS does not ask for administrator
-authorization again. If installation failed on 1.4.0, relaunch after this update
-and approve the prompt once. Subscriptions, the selected server and routing
-settings are preserved.
+**Upgrade notes:** Build **1422**, system component **29**. Approve the macOS
+administrator prompt once to update the system component and install the DNS
+fix. Subscriptions, the selected server and routing settings are preserved.
 
 Requires an Apple Silicon Mac running macOS 13 or later. Available through the
 standard update channel.

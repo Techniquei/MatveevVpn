@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2
+
+- Allows DNS replies to take up to three seconds and probes VPN/direct DNS concurrently, preserving operation and rollback deadlines.
+- Uses system component 29 so existing installations receive the DNS controller fix.
+- Removes VLESS connection credentials from new diagnostics and sanitizes legacy app logs on launch.
+- Resolves the Xray transport uplink using IPv4 to avoid unusable IPv6 paths.
+
 ## 1.4.1
 
 - Installs the system component without Apple Command Line Tools. The installer no longer calls the `python3` and `lipo` developer-tool stubs, which fail for an administrator install when no GUI session can request the tools.

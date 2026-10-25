@@ -102,6 +102,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
   vpn = reality_main.fetch('outbounds').find { |outbound| outbound['tag'] == 'vpn' }
   raise 'REALITY must use the private Xray transport' unless vpn == {'type' => 'socks', 'tag' => 'vpn', 'server' => '127.0.0.1', 'server_port' => 18_443, 'version' => '5'}
   raise 'Xray loop prevention is missing' unless reality_main.fetch('route').fetch('rules').any? { |rule| rule['process_name']&.include?('xray') && rule['outbound'] == 'direct' }
+  raise 'Xray uplink must dial IPv4' unless reality_sidecar.fetch('outbounds').first.fetch('settings')['domainStrategy'] == 'UseIPv4'
   stream = reality_sidecar.fetch('outbounds').first.fetch('streamSettings')
   settings = stream.fetch('realitySettings')
   raise 'modern raw transport was not preserved' unless stream['network'] == 'raw'

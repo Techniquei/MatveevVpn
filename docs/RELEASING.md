@@ -6,6 +6,13 @@
 3. Build and verify the DMG on a test Mac.
 4. Push an explicit matching version tag when ready to publish.
 
+For a local toolchain with multiple SDKs, `MATVEEV_MACOS_SDK=macosx26.5`
+selects that SDK for validation and DMG builds. The default is `macosx`.
+
+Release 1.4.2 uses build 1422 and system component 29. Updating the component
+requires administrator authorization so existing installations receive the
+controller DNS fix.
+
 The release workflow verifies the tag, validates, builds the DMG, signs an
 appcast and attaches both to GitHub Releases. The app reads the appcast from the
 latest release attachment. No release is published merely by building locally.

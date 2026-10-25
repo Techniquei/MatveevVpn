@@ -123,7 +123,10 @@ if query["security"] == "reality" || xhttp
     "outbounds" => [{
       "tag" => "reality",
       "protocol" => "vless",
-      "settings" => { "vnext" => [{ "address" => uri.host, "port" => uri.port, "users" => [user] }] },
+      "settings" => {
+        "vnext" => [{ "address" => uri.host, "port" => uri.port, "users" => [user] }],
+        "domainStrategy" => "UseIPv4"
+      },
       "streamSettings" => stream
     }]
   }

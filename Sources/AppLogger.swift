@@ -26,7 +26,7 @@ final class AppLogger: @unchecked Sendable {
                 attributes: [.posixPermissions: 0o700]
             )
             let timestamp = ISO8601DateFormatter().string(from: Date())
-            let entry = Data("\(timestamp) \(message)\n".utf8)
+            let entry = Data("\(timestamp) \(Self.redactingConnectionURIs(in: message))\n".utf8)
             let previous = (try? Data(contentsOf: file)) ?? Data()
             try writeBounded(previous + entry)
         } catch {
@@ -37,7 +37,7 @@ final class AppLogger: @unchecked Sendable {
     func contents() -> String {
         lock.lock()
         defer { lock.unlock() }
-        return (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+        return Self.redactingConnectionURIs(in: (try? String(contentsOf: file, encoding: .utf8)) ?? "")
     }
 
     static func exportFileName(at date: Date = Date(), timeZone: TimeZone = .current) -> String {
@@ -52,8 +52,15 @@ final class AppLogger: @unchecked Sendable {
     private func trimIfNeeded() {
         lock.lock()
         defer { lock.unlock() }
-        guard let data = try? Data(contentsOf: file), data.count > Self.maximumBytes else { return }
-        try? writeBounded(data)
+        guard let data = try? Data(contentsOf: file) else { return }
+        let sanitized = Data(Self.redactingConnectionURIs(in: String(decoding: data, as: UTF8.self)).utf8)
+        guard data.count > Self.maximumBytes || sanitized != data else { return }
+        try? writeBounded(sanitized)
+    }
+
+    private static func redactingConnectionURIs(in text: String) -> String {
+        text.replacingOccurrences(of: #"vless://[^\s]+"#, with: "[VLESS connection redacted]",
+                                  options: [.regularExpression, .caseInsensitive])
     }
 
     private func writeBounded(_ data: Data) throws {

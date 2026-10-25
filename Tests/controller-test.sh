@@ -152,6 +152,18 @@ timing = File.read(ARGV[0]).lines.grep(/runtime launch: TUN ready; duration_ms=/
 abort 'Runtime accepted before TUN readiness' unless timing && timing[/duration_ms=(\d+)/, 1].to_i >= 400
 RUBY
 /bin/rm "$RUNTIME/tunnel-delay"
+# Cold DNS over a working tunnel can take longer than one second. Both paths
+# must fit the foreground deadline and recurring health checks without churn.
+send_action off
+/usr/bin/printf '2.2\n' > "$RUNTIME/dns-query-delay"
+send_action on
+/usr/bin/printf '{"route":{"final":"direct"}}\n' > "$CONTROL/pending-config.json"
+send_action reload
+SLOW_DNS_ENGINE_PID="$(cat "$RUNTIME/run/sing-box.pid")"
+/bin/sleep 6
+[[ "$(cat "$CONTROL/runtime-status")" == running ]]
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$SLOW_DNS_ENGINE_PID" ]]
+/bin/rm "$RUNTIME/dns-query-delay"
 # A DNS path can fail independently in selective mode. Keep the same engines,
 # including when an explicit on command finds already-live processes.
 send_action off

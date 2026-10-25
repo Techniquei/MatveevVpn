@@ -237,7 +237,7 @@ configure_system_dns() {
 }
 
 tunnel_dns_ready() {
-  "${MATVEEV_DIG:-/usr/bin/dig}" +time=1 +tries=1 +short @198.18.0.2 "${1:-api4.ipify.org}" A 2>/dev/null |
+  "${MATVEEV_DIG:-/usr/bin/dig}" +time="${2:-3}" +tries=1 +short @198.18.0.2 "${1:-api4.ipify.org}" A 2>/dev/null |
     /usr/bin/awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/ { found=1 } END { exit !found }'
 }
 
@@ -260,19 +260,28 @@ check_engine_config() {
 # Every publication of running uses this result, including an already-live runtime.
 # Both probes have explicit DNS routing rules, including in All Traffic mode.
 check_runtime_readiness() {
-  local deadline="${1:-$(( $(monotonic_ms) + 2500 ))}"
+  local deadline="${1:-$(( $(monotonic_ms) + 4000 ))}"
   if ! runtime_running || ! tunnel_ready || [[ "$DNS_CONFIGURED" != true ]]; then
     READINESS_STATUS="starting"
     return 1
   fi
   if ! physical_network_ready; then READINESS_STATUS="waiting for network"; return 1; fi
-  # Keep the previous diagnosis if the budget cannot fit another pair of probes.
-  [[ $(( $(monotonic_ms) + 2000 )) -le "$deadline" ]] || return 1
+  # Probe both paths concurrently so a cold VPN resolver gets up to three
+  # seconds without doubling the command budget. Leave time for bookkeeping,
+  # and shorten the final round to fit the existing operation/rollback deadline.
+  local query_timeout=$(( (deadline - $(monotonic_ms) - 500) / 1000 ))
+  [[ "$query_timeout" -ge 1 ]] || return 1
+  if [[ "$query_timeout" -gt 3 ]]; then query_timeout=3; fi
   VPN_DNS_READY=false
   DIRECT_DNS_READY=false
   READINESS_STATUS="starting"
-  if tunnel_dns_ready; then VPN_DNS_READY=true; fi
-  if tunnel_dns_ready api64.ipify.org; then DIRECT_DNS_READY=true; fi
+  local vpn_probe direct_probe
+  tunnel_dns_ready api4.ipify.org "$query_timeout" &
+  vpn_probe=$!
+  tunnel_dns_ready api64.ipify.org "$query_timeout" &
+  direct_probe=$!
+  if wait "$vpn_probe"; then VPN_DNS_READY=true; fi
+  if wait "$direct_probe"; then DIRECT_DNS_READY=true; fi
   # A process or TUN can disappear during a blocking DNS query.
   runtime_running && tunnel_ready || return 1
   [[ "$(monotonic_ms)" -le "$deadline" ]] || return 1
@@ -337,7 +346,7 @@ start_child() {
       fi
       local dns_attempt
       for dns_attempt in {1..8}; do
-        [[ $(( $(monotonic_ms) + 2000 )) -le "$deadline" ]] || break
+        [[ $(( $(monotonic_ms) + 1500 )) -le "$deadline" ]] || break
         if check_runtime_readiness "$deadline"; then
           DNS_MISSES=0
           log_event "tunnel DNS is ready on VPN and direct paths after $dns_attempt check(s)" "$dns_started"

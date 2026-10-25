@@ -3,8 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="1.4.1"
-BUILD_NUMBER="1421"
+export SDKROOT="$(/usr/bin/xcrun --sdk "${MATVEEV_MACOS_SDK:-macosx}" --show-sdk-path)"
+VERSION="1.4.2"
+BUILD_NUMBER="1422"
 SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-$(/usr/bin/tr -d '\n' < "$ROOT_DIR/Resources/sparkle-public-key.txt")}"
 SING_BOX_VERSION="1.14.0"
 SING_BOX_ARCHIVE_SHA256="a150c94012ff768b7261939cd236b9c8554127f45137230295d23a5660225cc9"
@@ -36,7 +37,7 @@ echo "Compiling matveevVpn $VERSION..."
 mkdir -p "$APP/Contents/Frameworks"
 /usr/bin/ditto "$ROOT_DIR/.build/sparkle/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 /usr/bin/ditto --noextattr --noqtn "$ROOT_DIR/Sources" "$WORK_DIR/Sources"
-/usr/bin/xcrun --sdk macosx swiftc \
+/usr/bin/xcrun --sdk "${MATVEEV_MACOS_SDK:-macosx}" swiftc \
   -parse-as-library \
   -O \
   -target arm64-apple-macos13.0 \

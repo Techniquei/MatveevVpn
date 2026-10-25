@@ -109,7 +109,8 @@ has been replaced by the tunnel endpoint, avoiding a circular DHCP lookup.
 For REALITY and XHTTP nodes, Xray-core owns only the VLESS transport on a loopback SOCKS
 endpoint because current servers can reject the legacy client version
 advertised by sing-box. sing-box still owns TUN, DNS and routing; an explicit
-process rule keeps the Xray uplink outside the tunnel. The primary configuration
+process rule keeps the Xray uplink outside the tunnel. Xray resolves that uplink
+with IPv4 only. The primary configuration
 contains a hash marker for the private Xray sidecar, preserving transaction identity.
 
 The runtime status file is a heartbeat in controller v2. A stale heartbeat is not
@@ -165,7 +166,10 @@ A healthy tunnel check clears a pending automatic-recovery error even when the c
 restored the connection itself; unrelated user-operation errors remain intact.
 A physical-network change after wake clears the delay and triggers the next startup
 attempt immediately. Every startup attempt shares one ten-second readiness budget
-across TUN and DNS, reserving time for each bounded DNS query. Exceeding that budget
+across TUN and DNS. VPN and direct DNS probes run concurrently,
+each allowing up to three seconds for cold DNS-over-HTTPS connections; the final
+round shortens its query timeout to fit the remaining budget. Background readiness
+checks allow four seconds for the same pair of probes. Exceeding the startup budget
 ends the foreground attempt; background waiting retains live engines for network/DNS delays. Both
 engines receive TERM together and share one five-second shutdown grace, polled every
 100 ms. User operations and each automatic-recovery cycle have one fifteen-second
