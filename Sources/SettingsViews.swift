@@ -135,7 +135,9 @@ struct ConnectionView: View {
         .preferredColorScheme(.dark)
         .buttonStyle(HoverButtonStyle())
         .disabled(controller.isBusy)
-        .background(WindowCloseControl(isBusy: controller.isBusy))
+        .background(WindowCloseControl(isBusy: controller.isBusy, onClose: {
+            controller.showConnection = false
+        }))
         .onAppear {
             controller.showConnection = true
             subscriptionFocused = controller.isInstalled && controller.candidateURL.isEmpty
@@ -383,9 +385,14 @@ struct SettingsView: View {
             HStack {
                 Text("Subscriptions").font(.headline)
                 Spacer()
-                Button("Add Subscription…") {
-                    controller.openSetup(adding: !controller.isInitialSetup)
-                    openWindow(id: "connection")
+                if controller.showConnection {
+                    Button("Open Subscription Editor") { openWindow(id: "connection") }
+                } else {
+                    Button("Add Subscription…") {
+                        controller.openSetup(adding: !controller.isInitialSetup)
+                        openWindow(id: "connection")
+                    }
+                    .disabled(controller.needsUpgrade)
                 }
             }
             if controller.isInitialSetup {
@@ -402,6 +409,7 @@ struct SettingsView: View {
                         controller.openSetup()
                         openWindow(id: "connection")
                     }
+                    .disabled(controller.showConnection || controller.needsUpgrade)
                     removeSubscriptionButton(nil, name: controller.state.activeSubscriptionName)
                 }
                 ForEach(controller.state.otherSubscriptions ?? []) { profile in
@@ -411,17 +419,20 @@ struct SettingsView: View {
                         Spacer()
                         Button("Switch") { controller.switchSubscription(to: profile.id) }
                             .accessibilityLabel("Switch to \(profile.displayName)")
+                            .disabled(controller.showConnection || controller.needsUpgrade)
                         removeSubscriptionButton(profile.id, name: profile.displayName)
                     }
                 }
             }
             if controller.isBusy {
                 ProgressView().controlSize(.small)
+            } else if controller.needsUpgrade {
+                Text("Update the VPN component using Repair service in Diagnostics to manage subscriptions.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else if !controller.failureReport.isEmpty && !controller.showConnection {
                 Text(controller.failureReport).font(.caption).foregroundStyle(.secondary)
             }
         }
-        .disabled(controller.showConnection || controller.needsUpgrade)
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
     }
@@ -433,6 +444,7 @@ struct SettingsView: View {
         } label: {
             Image(systemName: "trash")
         }
+        .disabled(controller.showConnection || controller.needsUpgrade)
         .help("Remove subscription")
         .accessibilityLabel("Remove \(name)")
     }

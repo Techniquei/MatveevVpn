@@ -1,18 +1,11 @@
 # Changelog
 
-## 1.4.3-beta.3
-
-- Show the VPN as connected with a warning when only the direct DNS check fails.
-
-## 1.4.3-beta.2
-
-- Add, name, remove and switch subscriptions in Settings.
-- Remember the selected server for each saved subscription and switch using cached servers.
-
 ## 1.4.3-beta.1
 
-- Keeps the system DNS override during server changes on the same network, leaving more time to check VPN readiness.
-- Reapplies the DNS override if the network changes during a restart. Uses system component 30.
+- Add, name, remove and switch subscriptions in Settings. Each subscription remembers its selected server.
+- Re-enable subscription controls when the editor closes and offer to reopen the editor while it is open.
+- Show the VPN as connected with a warning when only the direct DNS check fails.
+- Preserve the DNS override during same-network server changes and reapply it when the network changes. Uses system component 30.
 
 ## 1.4.2
 

@@ -25,8 +25,12 @@ import AppKit
         control.closingDisabled = false
         precondition(second.standardWindowButton(.closeButton)?.isEnabled == true)
         precondition(control.hitTest(.zero) == nil, "The bridge must not intercept input or window dragging")
+        var editorOpen = true
+        control.onClose = { editorOpen = false }
         first.close()
+        precondition(editorOpen, "Closing an unrelated window must preserve the editor state")
         second.close()
+        precondition(!editorOpen, "Closing the native editor window must clear its open state")
         print("window close control: attachment, busy state, reuse and input passthrough passed")
     }
 }
