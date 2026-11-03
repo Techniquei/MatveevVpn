@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.3-beta.2"
+    static let releaseVersion = "1.4.3-beta.3"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -97,17 +97,23 @@ final class VPNController: ObservableObject {
     // Service retrying is independent of a foreground UI operation. Keep its
     // progress visible without making the interface busy or disabling Disconnect.
     var isConnecting: Bool {
-        state.desiredOn && isInstalled && !isRunning && !needsUpgrade && state.selectedNodeID != nil
+        state.desiredOn && isInstalled && !hasVPNConnection && !needsUpgrade && state.selectedNodeID != nil
     }
 
+    var hasDirectDNSWarning: Bool {
+        state.desiredOn && isInstalled && !needsUpgrade && runtimeStatus == "waiting for direct DNS"
+    }
+
+    var hasVPNConnection: Bool { isRunning || hasDirectDNSWarning }
+
     var connectionStatusText: String {
+        if hasDirectDNSWarning { return "VPN connected. Direct DNS check failed." }
         if isRunning { return "Connected" }
         guard isConnecting else { return "Disconnected" }
         switch runtimeStatus {
         case "starting": return "Connecting…"
         case "recovering": return "Restoring VPN connection…"
         case "waiting for network": return "Waiting for network…"
-        case "waiting for direct DNS": return "VPN DNS is ready. Waiting for direct DNS…"
         case "waiting for VPN DNS": return "Direct DNS is ready. Waiting for VPN DNS…"
         case "waiting to retry": return "Waiting to retry automatically…"
         default: return "Waiting for the VPN service…"

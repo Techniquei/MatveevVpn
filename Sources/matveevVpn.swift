@@ -156,7 +156,7 @@ private struct TrafficSummaryView: View {
                 .font(.system(size: 18, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
-                .foregroundStyle(controller.isRunning ? activeColor : Color.secondary)
+                .foregroundStyle(controller.hasVPNConnection ? activeColor : Color.secondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -437,8 +437,14 @@ private struct BackgroundConnectionStatusView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-                .accessibilityHidden(true)
+            if controller.hasDirectDNSWarning {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+            } else {
+                ProgressView().controlSize(.small)
+                    .accessibilityHidden(true)
+            }
             Text(controller.connectionStatusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -516,7 +522,7 @@ private struct MainView: View {
                     controller: controller
                 )
 
-                if controller.isConnecting && !controller.isBusy {
+                if (controller.isConnecting || controller.hasDirectDNSWarning) && !controller.isBusy {
                     BackgroundConnectionStatusView(controller: controller)
                 }
 
@@ -535,7 +541,7 @@ private struct MainView: View {
                 }
 
                 HStack(spacing: 12) {
-                    ActionIconButton(systemName: "power", title: primaryActionTitle, active: controller.isRunning, loading: controller.isBusy) {
+                    ActionIconButton(systemName: "power", title: primaryActionTitle, active: controller.hasVPNConnection, loading: controller.isBusy) {
                         if !controller.isInstalled || controller.state.selectedNodeID == nil {
                             controller.openSetup()
                             openWindow(id: "connection")
@@ -649,7 +655,7 @@ struct MatveevVPNApp: App {
         }
         .windowStyle(.titleBar)
         .windowResizability(.contentSize)
-        MenuBarExtra("matveevVpn", systemImage: controller.isRunning ? "network.badge.shield.half.filled" : "network") {
+        MenuBarExtra("matveevVpn", systemImage: controller.hasVPNConnection ? "network.badge.shield.half.filled" : "network") {
             MenuContent(controller: controller)
         }
     }

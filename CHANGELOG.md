@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.3-beta.3
+
+- Show the VPN as connected with a warning when only the direct DNS check fails.
+
 ## 1.4.3-beta.2
 
 - Add, name, remove and switch subscriptions in Settings.

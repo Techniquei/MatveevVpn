@@ -81,8 +81,12 @@ import AppKit
             SystemService.runningValue = false
             SystemService.runtimeStatusValue = status
             controller.refresh()
-            precondition(controller.isConnecting && !controller.isBusy,
+            let directDNSUnavailable = status == "waiting for direct DNS"
+            precondition(controller.isConnecting == !directDNSUnavailable && !controller.isBusy,
                          "Service progress must not disable manual Disconnect")
+            precondition(controller.hasVPNConnection == directDNSUnavailable &&
+                         controller.hasDirectDNSWarning == directDNSUnavailable,
+                         "Working VPN DNS must show a connected VPN with a direct DNS warning")
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
             progressHost.frame = NSRect(origin: .zero, size: progressHost.fittingSize)
             progressHost.layoutSubtreeIfNeeded()
