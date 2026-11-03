@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3-beta.2
+
+- Add, name, remove and switch subscriptions in Settings.
+- Remember the selected server for each saved subscription and switch using cached servers.
+
 ## 1.4.3-beta.1
 
 - Keeps the system DNS override during server changes on the same network, leaving more time to check VPN readiness.

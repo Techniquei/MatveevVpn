@@ -232,6 +232,23 @@ enum Subscription {
     }
 }
 
+struct SavedSubscription: Codable, Identifiable {
+    let id: UUID
+    let name: String?
+    let url: String
+    let content: String
+    let selectedNodeID: String?
+    let lastRefresh: Date?
+    let happCompatibility: Bool?
+
+    static func displayName(_ name: String?, url: String) -> String {
+        if let name, !name.isEmpty { return name }
+        return URLComponents(string: url)?.host ?? "Subscription"
+    }
+
+    var displayName: String { Self.displayName(name, url: url) }
+}
+
 struct SavedState: Codable {
     var schemaVersion = 2
     var subscriptionURL = ""
@@ -241,6 +258,35 @@ struct SavedState: Codable {
     var desiredOn = false
     var lastRefresh: Date?
     var migratedFromV1 = false
+    // Optional fields let existing single-subscription settings load unchanged.
+    var subscriptionID: UUID?
+    var subscriptionName: String?
+    var subscriptionHappCompatibility: Bool?
+    var otherSubscriptions: [SavedSubscription]?
+
+    var activeSubscriptionName: String { SavedSubscription.displayName(subscriptionName, url: subscriptionURL) }
+
+    mutating func archiveActiveSubscription() {
+        guard !subscription.isEmpty else { return }
+        var saved = otherSubscriptions ?? []
+        saved.append(SavedSubscription(id: subscriptionID ?? UUID(), name: subscriptionName,
+                                       url: subscriptionURL, content: subscription,
+                                       selectedNodeID: selectedNodeID, lastRefresh: lastRefresh,
+                                       happCompatibility: subscriptionHappCompatibility))
+        otherSubscriptions = saved
+    }
+
+    mutating func activateSubscription(_ profile: SavedSubscription?) {
+        subscriptionID = profile?.id
+        subscriptionName = profile?.name
+        subscriptionHappCompatibility = profile?.happCompatibility
+        subscriptionURL = profile?.url ?? ""
+        subscription = profile?.content ?? ""
+        selectedNodeID = profile?.selectedNodeID ?? (try? Subscription.nodes(subscription))?.first?.id
+        lastRefresh = profile?.lastRefresh
+        if let profile { otherSubscriptions?.removeAll { $0.id == profile.id } }
+        else { desiredOn = false }
+    }
 }
 
 struct StateStore {

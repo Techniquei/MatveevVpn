@@ -155,6 +155,65 @@ import Foundation
         try await wait(existing)
         let replacementSaved = try existingStore.load()
         precondition(replacementSaved.selectedNodeID == nodes[0].id)
+
+        SystemService.reset()
+        SystemService.installedValue = true
+        SystemService.runningValue = true
+        let profilesStore = makeStore("subscriptions")
+        var legacyProfile = old
+        legacyProfile.desiredOn = true
+        legacyProfile.subscriptionHappCompatibility = false
+        try profilesStore.save(legacyProfile)
+        let profiles = model(profilesStore)
+        profiles.openSetup(adding: true)
+        precondition(profiles.candidateURL.isEmpty && profiles.candidateID == nil)
+        profiles.candidateURL = old.subscriptionURL
+        profiles.applySubscription()
+        try await wait(profiles)
+        precondition(profiles.showConnection && profiles.state.otherSubscriptions == nil && SystemService.deployments == 0)
+        SubscriptionFetcher.response = Data(first.utf8)
+        profiles.candidateURL = "https://another-provider.example.invalid/feed"
+        profiles.candidateName = " Travel "
+        profiles.setHappCompatibility(true)
+        profiles.applySubscription()
+        try await wait(profiles)
+        let added = try profilesStore.load()
+        precondition(added.activeSubscriptionName == "Travel" && added.selectedNodeID == nodes[0].id)
+        precondition(added.subscriptionHappCompatibility == true)
+        precondition(added.desiredOn && SystemService.runningValue && added.rules == old.rules)
+        guard let previousProfile = added.otherSubscriptions?.first else {
+            fatalError("Adding a subscription must retain the previous one")
+        }
+        precondition(previousProfile.url == old.subscriptionURL && previousProfile.selectedNodeID == nodes[1].id)
+        let requestsBeforeSwitch = SubscriptionFetcher.requests
+        profiles.switchSubscription(to: previousProfile.id)
+        try await wait(profiles)
+        let switched = try profilesStore.load()
+        precondition(switched.selectedNodeID == nodes[1].id && switched.otherSubscriptions?.first?.name == "Travel")
+        precondition(switched.subscriptionHappCompatibility == false && switched.otherSubscriptions?.first?.happCompatibility == true)
+        precondition(SubscriptionFetcher.requests == requestsBeforeSwitch, "Switching must use the saved servers")
+
+        profiles.removeSubscription(nil)
+        try await wait(profiles)
+        let afterRemovingActive = try profilesStore.load()
+        precondition(afterRemovingActive.activeSubscriptionName == "Travel" && afterRemovingActive.otherSubscriptions?.isEmpty == true)
+        precondition(afterRemovingActive.desiredOn && SystemService.runningValue)
+        profiles.openSetup(adding: true)
+        profiles.candidateURL = old.subscriptionURL
+        profiles.applySubscription()
+        try await wait(profiles)
+        let deploymentsBeforeRemovingInactive = SystemService.deployments
+        profiles.removeSubscription(afterRemovingActive.subscriptionID)
+        try await wait(profiles)
+        let afterRemovingInactive = try profilesStore.load()
+        precondition(afterRemovingInactive.otherSubscriptions?.isEmpty == true && afterRemovingInactive.subscriptionURL == old.subscriptionURL)
+        precondition(SystemService.deployments == deploymentsBeforeRemovingInactive, "Removing an inactive subscription must not reload the tunnel")
+        profiles.removeSubscription(nil)
+        try await wait(profiles)
+        let afterRemovingLast = try profilesStore.load()
+        precondition(afterRemovingLast.subscription.isEmpty && afterRemovingLast.selectedNodeID == nil)
+        precondition(!afterRemovingLast.desiredOn && !SystemService.runningValue && SystemService.actions.last == "off")
+
         SystemService.reset()
         SystemService.installedValue = true
         let selectionStore = makeStore("selection")

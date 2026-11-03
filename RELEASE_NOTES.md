@@ -1,10 +1,12 @@
-# matveevVpn 1.4.3-beta.1
+# matveevVpn 1.4.3-beta.2
 
-Switching VPN servers on the same network now keeps the existing DNS override.
-This avoids repeated system DNS changes and leaves more time for the connection
-check. If the active network changes during the restart, the controller applies
-DNS to the new network before confirming the connection.
+Use **Settings → Subscriptions** to add, name, switch or remove VPN
+subscriptions. The app remembers the selected server for each subscription and
+uses its saved server list when switching. Your existing subscription appears
+automatically, and routing rules are shared across subscriptions.
 
-Build **1423**, system component **30**. macOS requests administrator
-authorization to upgrade the system component. Requires an Apple Silicon Mac
-running macOS 13 or later. Available through the opt-in beta update channel.
+Removing the active subscription switches to the most recently used remaining
+subscription. Removing the last one disconnects the VPN.
+
+Build **1424**, system component **30**. Requires an Apple Silicon Mac running
+macOS 13 or later. Available through the opt-in beta update channel.

@@ -85,7 +85,7 @@ struct ConnectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             AppWindowHeader(
-                title: needsComponentInstallation ? "Prepare your Mac" : "Subscription",
+                title: needsComponentInstallation ? "Prepare your Mac" : (controller.addingSubscription ? "Add Subscription" : "Subscription"),
                 subtitle: controller.isInitialSetup ? (needsComponentInstallation ? "Step 1 of 2" : "Step 2 of 2") : "Connection settings",
                 icon: needsComponentInstallation ? "shippingbox" : "link"
             )
@@ -161,6 +161,7 @@ struct ConnectionView: View {
             if controller.isBusy { return "Installing…" }
             return controller.failureReport.isEmpty ? "Install component" : "Retry installation"
         }
+        if controller.addingSubscription && !controller.isInitialSetup { return "Add and Switch" }
         return controller.isInstalled ? (controller.isInitialSetup ? "Connect" : "Save") : "Install and Connect"
     }
 
@@ -168,6 +169,7 @@ struct ConnectionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
+                    TextField("Name (optional)", text: $controller.candidateName)
                     Text("Subscription link").font(.callout.weight(.semibold))
                     SecureField("Paste an HTTPS or VLESS link", text: $controller.candidateURL)
                         .textFieldStyle(.plain)
@@ -241,7 +243,7 @@ struct ConnectionView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .disclosureGroupStyle(AppDisclosureStyle())
-                if let date = controller.state.lastRefresh {
+                if !controller.addingSubscription, let date = controller.state.lastRefresh {
                     Text("Last saved: \(date.formatted())").font(.caption).foregroundStyle(.secondary)
                 }
                 if !controller.isBusy && !controller.failureReport.isEmpty {
@@ -264,6 +266,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmReset = false
     @State private var confirmRemoval = false
+    @State private var confirmSubscriptionRemoval = false
+    @State private var subscriptionToRemove: UUID?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             AppWindowHeader(title: "Settings", subtitle: "Preferences and diagnostics", icon: "gearshape")
@@ -284,16 +288,12 @@ struct SettingsView: View {
                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
 
+                    subscriptionsSection
+
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Subscription and updates").font(.headline)
-                        HStack {
-                            Button("Change subscription…") {
-                                controller.openSetup()
-                                openWindow(id: "connection")
-                            }
-                            Button("Check for updates…") { updater.check() }
-                                .disabled(!updater.available)
-                        }
+                        Text("Updates").font(.headline)
+                        Button("Check for updates…") { updater.check() }
+                            .disabled(!updater.available)
                         Toggle("Receive beta updates", isOn: Binding(
                             get: { updater.betaUpdatesEnabled },
                             set: { updater.setBetaUpdates($0) }
@@ -353,7 +353,19 @@ struct SettingsView: View {
         .disabled(controller.isBusy)
         .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
             Button("Reset All Settings", role: .destructive) { controller.resetSettings() }
-        } message: { Text("This disconnects the VPN and removes your saved subscription, node and rules.") }
+        } message: { Text("This disconnects the VPN and removes all saved subscriptions and routing rules.") }
+        .alert("Remove subscription?", isPresented: $confirmSubscriptionRemoval) {
+            Button("Remove", role: .destructive) { controller.removeSubscription(subscriptionToRemove) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if subscriptionToRemove != nil {
+                Text("Its saved link and servers will be removed from this Mac.")
+            } else if let replacement = controller.state.otherSubscriptions?.last {
+                Text("The app will switch to \(replacement.displayName).")
+            } else {
+                Text("The VPN will disconnect and the saved link and servers will be removed from this Mac.")
+            }
+        }
         .confirmationDialog("Uninstall matveevVpn?", isPresented: $confirmRemoval) {
             Button("Uninstall and Move to Trash", role: .destructive) { controller.runUninstall() }
             Button("Cancel", role: .cancel) { }
@@ -364,5 +376,64 @@ struct SettingsView: View {
         .onChange(of: controller.showConnection) { presented in
             if presented { openWindow(id: "connection") }
         }
+    }
+
+    private var subscriptionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Subscriptions").font(.headline)
+                Spacer()
+                Button("Add Subscription…") {
+                    controller.openSetup(adding: !controller.isInitialSetup)
+                    openWindow(id: "connection")
+                }
+            }
+            if controller.isInitialSetup {
+                Text("Add a subscription to see its servers.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(controller.state.activeSubscriptionName).lineLimit(1)
+                        Label("Active", systemImage: "checkmark.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Edit…") {
+                        controller.openSetup()
+                        openWindow(id: "connection")
+                    }
+                    removeSubscriptionButton(nil, name: controller.state.activeSubscriptionName)
+                }
+                ForEach(controller.state.otherSubscriptions ?? []) { profile in
+                    Divider()
+                    HStack {
+                        Text(profile.displayName).lineLimit(1)
+                        Spacer()
+                        Button("Switch") { controller.switchSubscription(to: profile.id) }
+                            .accessibilityLabel("Switch to \(profile.displayName)")
+                        removeSubscriptionButton(profile.id, name: profile.displayName)
+                    }
+                }
+            }
+            if controller.isBusy {
+                ProgressView().controlSize(.small)
+            } else if !controller.failureReport.isEmpty && !controller.showConnection {
+                Text(controller.failureReport).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(controller.showConnection || controller.needsUpgrade)
+        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func removeSubscriptionButton(_ id: UUID?, name: String) -> some View {
+        Button(role: .destructive) {
+            subscriptionToRemove = id
+            confirmSubscriptionRemoval = true
+        } label: {
+            Image(systemName: "trash")
+        }
+        .help("Remove subscription")
+        .accessibilityLabel("Remove \(name)")
     }
 }

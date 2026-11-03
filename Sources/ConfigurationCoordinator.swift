@@ -40,6 +40,15 @@ actor ConfigurationCoordinator {
             // Installing or repairing the component proves local readiness.
             // Connecting happens only after the admitted settings are saved.
             try await transport.install(config, desiredOn: false)
+        } else if next.subscription.isEmpty {
+            // The empty configuration cannot start a tunnel. Stop even if the
+            // previous runtime was still trying to reach readiness.
+            if previous.desiredOn || transport.running { try await transport.send("off", until: deadline) }
+            do { try await transport.deploy(config, until: deadline) }
+            catch {
+                if previous.desiredOn { try? await transport.send("on", until: deadline) }
+                throw error
+            }
         } else {
             try await transport.deploy(config, until: deadline)
             if next.desiredOn != transport.running { try await transport.send(next.desiredOn ? "on" : "off", until: deadline) }

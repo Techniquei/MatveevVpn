@@ -146,6 +146,23 @@ final class FakeTransport: ConfigurationTransport {
         precondition(provisionedTransport.active.isEmpty && !provisionedTransport.running && provisionedTransport.actions.last == "off",
                      "A failed first connection must restore the preinstalled, stopped configuration")
         precondition(!FileManager.default.fileExists(atPath: provisionedStore.pendingFile.path))
+
+        transport.currentVersion = SystemService.version
+        transport.running = true
+        transport.reject = true
+        transport.actions = []
+        do {
+            _ = try await coordinator.apply(SavedState(), previous: repaired)
+            fatalError("A rejected removal must not report success")
+        } catch {}
+        precondition(transport.actions == ["off", "on"] && transport.running)
+        let retainedAfterRejection = try store.load()
+        precondition(retainedAfterRejection.subscription == repaired.subscription)
+        transport.reject = false
+        transport.actions = []
+        _ = try await coordinator.apply(SavedState(), previous: repaired)
+        let removed = try store.load()
+        precondition(transport.actions == ["off"] && !transport.running && transport.active.isEmpty && removed.subscription.isEmpty)
         print("coordinator: rejected deployment, commit, cancelled install and first-run install passed")
     }
 }

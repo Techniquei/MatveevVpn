@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.3-beta.1"
+    static let releaseVersion = "1.4.3-beta.2"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -25,6 +25,8 @@ final class VPNController: ObservableObject {
     @Published var diagnostics = ""
     @Published var failureReport = ""
     @Published var candidateURL = ""
+    @Published var candidateName = ""
+    @Published private(set) var addingSubscription = false
     @Published var candidateNodes: [VPNNode] = []
     @Published var candidateID: String?
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -67,7 +69,6 @@ final class VPNController: ObservableObject {
         _ = AppUpdater.shared
         UserDefaults.standard.register(defaults: ["automaticFailover": true, "happSubscriptionCompatibility": false])
         autoFailoverEnabled = UserDefaults.standard.bool(forKey: "automaticFailover")
-        happCompatibilityEnabled = UserDefaults.standard.bool(forKey: "happSubscriptionCompatibility")
         do { state = try store.load() }
         catch {
             message = "Could not load settings: \(error.localizedDescription)"
@@ -157,8 +158,8 @@ final class VPNController: ObservableObject {
             scheduleAdBlockRefreshIfNeeded()
         }
     }
-    func openSetup() {
-        if !showConnection { prepareConnection() }
+    func openSetup(adding: Bool = false) {
+        if !showConnection { prepareConnection(adding: adding) }
         showConnection = true
     }
     var selectedNode: VPNNode? {
@@ -217,7 +218,9 @@ final class VPNController: ObservableObject {
                 let stage = try temporaryDirectory()
                 defer { try? FileManager.default.removeItem(at: stage) }
                 let config = try await self.service.generate(snapshot, at: stage, until: deadline)
-                guard !self.service.configurationMatches(config), !self.isBusy, !self.service.isConnecting else { return }
+                guard self.state.subscription == snapshot.subscription,
+                      self.state.selectedNodeID == snapshot.selectedNodeID, self.state.rules == snapshot.rules,
+                      !self.service.configurationMatches(config), !self.isBusy, !self.service.isConnecting else { return }
                 self.isBusy = true
                 self.message = "Updating the installed configuration…"
                 defer { self.isBusy = false; self.refresh() }
@@ -289,12 +292,15 @@ final class VPNController: ObservableObject {
             self.probeCandidateNode(id)
         }
     }
-    private func prepareConnection() {
-        candidateURL = state.subscriptionURL
-        loadedURL = state.subscriptionURL
-        candidateSubscription = state.subscription
-        candidateNodes = availableNodes
-        candidateID = state.selectedNodeID
+    private func prepareConnection(adding: Bool = false) {
+        addingSubscription = adding
+        happCompatibilityEnabled = adding ? false : state.subscriptionHappCompatibility ?? legacyHappCompatibility
+        candidateName = adding ? "" : state.subscriptionName ?? ""
+        candidateURL = adding ? "" : state.subscriptionURL
+        loadedURL = candidateURL
+        candidateSubscription = adding ? "" : state.subscription
+        candidateNodes = adding ? [] : availableNodes
+        candidateID = adding ? nil : state.selectedNodeID
     }
     var isInitialSetup: Bool { state.subscription.isEmpty }
 
@@ -346,7 +352,7 @@ final class VPNController: ObservableObject {
                 : "This provider requires Happ subscription compatibility. Enable it and reload the subscription."
             throw VPNError.message(message)
         }
-        let old = self.availableNodes.first { $0.id == self.state.selectedNodeID }
+        let old = addingSubscription ? nil : availableNodes.first { $0.id == state.selectedNodeID }
         let fallback = nodes.filter { $0.name == old?.name && $0.host == old?.host && $0.port == old?.port }
         let matched = nodes.first { $0.id == old?.id } ?? (fallback.count == 1 ? fallback.first : nil)
         self.candidateSubscription = decoded
@@ -357,8 +363,11 @@ final class VPNController: ObservableObject {
     }
     func setHappCompatibility(_ enabled: Bool) {
         happCompatibilityEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "happSubscriptionCompatibility")
         loadedURL = ""
+    }
+
+    private var legacyHappCompatibility: Bool {
+        UserDefaults.standard.bool(forKey: "happSubscriptionCompatibility")
     }
 
     private static func happDeviceID(for url: URL) -> String {
@@ -377,8 +386,13 @@ final class VPNController: ObservableObject {
     }
     func applySubscription() {
         let input = candidateURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = candidateName.trimmingCharacters(in: .whitespacesAndNewlines)
         let useHappCompatibility = happCompatibilityEnabled
         perform(isInstalled ? "Apply subscription" : "Install and connect") { deadline in
+            if (self.addingSubscription && input == self.state.subscriptionURL) ||
+                self.state.otherSubscriptions?.contains(where: { $0.url == input }) == true {
+                throw VPNError.message("This subscription is already saved.")
+            }
             if input != self.loadedURL || self.candidateSubscription.isEmpty {
                 try await self.loadCandidateSubscription(input, useHappCompatibility: useHappCompatibility)
             }
@@ -386,6 +400,15 @@ final class VPNController: ObservableObject {
                 throw VPNError.message("Your previous node is missing. Choose a replacement.")
             }
             var next = self.state
+            if self.addingSubscription {
+                if next.subscriptionHappCompatibility == nil {
+                    next.subscriptionHappCompatibility = self.legacyHappCompatibility
+                }
+                next.archiveActiveSubscription()
+                next.subscriptionID = UUID()
+            }
+            next.subscriptionName = name.isEmpty ? nil : name
+            next.subscriptionHappCompatibility = useHappCompatibility
             next.subscriptionURL = input
             next.subscription = self.candidateSubscription
             next.selectedNodeID = selectedID
@@ -395,6 +418,38 @@ final class VPNController: ObservableObject {
             try await self.commit(next, until: deadline)
             self.showConnection = false
             self.probeCandidateNode(selectedID)
+        }
+    }
+
+    func switchSubscription(to id: UUID) {
+        guard !showConnection, !needsUpgrade,
+              let profile = state.otherSubscriptions?.first(where: { $0.id == id }) else { return }
+        var next = state
+        next.archiveActiveSubscription()
+        next.activateSubscription(profile)
+        perform("Switch subscription") { deadline in
+            try await self.commit(next, until: deadline)
+            self.refresh()
+            self.probeCandidateNode(next.selectedNodeID)
+        }
+    }
+
+    // A nil ID refers to the active subscription, including older settings.
+    func removeSubscription(_ id: UUID?) {
+        guard !showConnection, !needsUpgrade, !isInitialSetup else { return }
+        var next = state
+        if let id {
+            guard next.otherSubscriptions?.contains(where: { $0.id == id }) == true else { return }
+            next.otherSubscriptions?.removeAll { $0.id == id }
+            perform("Remove subscription") { _ in
+                try self.store.save(next)
+                self.state = next
+            }
+        } else {
+            next.activateSubscription(next.otherSubscriptions?.last)
+            perform("Remove active subscription") { deadline in
+                try await self.commit(next, until: deadline)
+            }
         }
     }
     func setLogin(_ enabled: Bool) {
