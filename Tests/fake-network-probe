@@ -1,6 +1,8 @@
 #!/bin/bash
 if [[ -f "$MATVEEV_BASE_DIR/physical-offline" ]]; then
   printf 'offline\n'
+elif [[ -f "$MATVEEV_BASE_DIR/network-changed" ]]; then
+  printf 'test0|192.0.2.254|192.0.2.3\n'
 else
   printf 'test0|192.0.2.254|192.0.2.2\n'
 fi

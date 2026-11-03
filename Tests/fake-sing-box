@@ -13,6 +13,9 @@ case "${1:-}" in
     if [[ -f "$MATVEEV_BASE_DIR/ignore-term" ]]; then trap '' TERM; fi
     if [[ -f "$MATVEEV_BASE_DIR/tunnel-delay" ]]; then /bin/sleep "$(cat "$MATVEEV_BASE_DIR/tunnel-delay")"; fi
     if /usr/bin/grep -q 'delay_run' "${3:-}"; then /bin/sleep 4; fi
+    if /usr/bin/grep -q 'change_network_on_run' "${3:-}"; then
+      /usr/bin/touch "$MATVEEV_BASE_DIR/network-changed"
+    fi
     printf '%s\n' "$$" > "$MATVEEV_BASE_DIR/tunnel-ready"
     if [[ -f "${MATVEEV_BASE_DIR:-}/log-burst" ]]; then
       /bin/cat "$MATVEEV_BASE_DIR/log-burst"

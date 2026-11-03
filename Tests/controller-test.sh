@@ -132,6 +132,23 @@ wait_for_file_value "$CONTROL/runtime-status" "waiting to retry"
 [[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
 /bin/rm "$RUNTIME/node-unavailable"
 send_action on
+# Reloading a live tunnel must retain the DNS override and its original backup.
+# Repeated restore/apply calls are slow on some Macs and consume the DNS probe
+# budget, even though the physical network and resolver address have not changed.
+DNS_CALLS_BEFORE_RELOAD="$(wc -l < "$DNS_CALL_LOG")"
+/bin/cp "$RUNTIME/run/dns-state" "$RUNTIME/dns-state-before-reload"
+/usr/bin/printf '{"route":{"final":"direct"}}\n' > "$CONTROL/pending-config.json"
+send_action reload
+[[ "$(wc -l < "$DNS_CALL_LOG")" == "$DNS_CALLS_BEFORE_RELOAD" ]]
+/usr/bin/cmp "$RUNTIME/run/dns-state" "$RUNTIME/dns-state-before-reload"
+[[ "$(cat "$CONTROL/runtime-status")" == running ]]
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+# Change the physical network after stop_child decides to retain DNS.
+/usr/bin/printf '{"change_network_on_run":true}\n' > "$CONTROL/pending-config.json"
+send_action reload
+[[ -f "$RUNTIME/network-changed" ]]
+[[ "$(wc -l < "$DNS_CALL_LOG")" -gt "$DNS_CALLS_BEFORE_RELOAD" ]]
+/usr/bin/cmp "$RUNTIME/run/dns-state" "$RUNTIME/dns-state-before-reload"
 # A ready engine must reach DNS without the former fixed one-second pause.
 /usr/bin/ruby - "$RUNTIME/vpn.log" <<'RUBY'
 timing = File.read(ARGV[0]).lines.grep(/runtime launch: TUN ready; duration_ms=/).last

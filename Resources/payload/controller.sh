@@ -36,6 +36,7 @@ TUN_MISSES=0
 LAST_STATUS_PUBLISH=0
 LAST_WAKE_SIGNATURE=""
 DNS_CONFIGURED=false
+DNS_NETWORK_SIGNATURE=""
 READINESS_STATUS="starting"
 VPN_DNS_READY=false
 DIRECT_DNS_READY=false
@@ -231,8 +232,14 @@ routing_mode() {
 }
 
 configure_system_dns() {
-  [[ -x "$DNS_MANAGER" ]] || return 0
-  "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
+  local signature
+  signature="$(network_signature)"
+  [[ "$signature" != offline ]] || return 1
+  if [[ -x "$DNS_MANAGER" ]]; then
+    "$DNS_MANAGER" apply > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || return 1
+  fi
+  [[ "$(network_signature)" == "$signature" ]] || return 1
+  DNS_NETWORK_SIGNATURE="$signature"
   log_event "DNS policy: system override enabled for $(routing_mode) routing"
 }
 
@@ -284,6 +291,10 @@ check_runtime_readiness() {
   if wait "$direct_probe"; then DIRECT_DNS_READY=true; fi
   # A process or TUN can disappear during a blocking DNS query.
   runtime_running && tunnel_ready || return 1
+  if [[ "$(network_signature)" != "$DNS_NETWORK_SIGNATURE" ]]; then
+    READINESS_STATUS="waiting for network"
+    return 1
+  fi
   [[ "$(monotonic_ms)" -le "$deadline" ]] || return 1
   if [[ "$VPN_DNS_READY" == true && "$DIRECT_DNS_READY" == true ]]; then
     READINESS_STATUS="running"
@@ -334,7 +345,8 @@ start_child() {
     if tunnel_ready; then
       log_event "runtime launch: TUN ready" "$started"
       local dns_started="$(monotonic_ms)"
-      if [[ "$DNS_CONFIGURED" != true ]]; then
+      if [[ "$DNS_CONFIGURED" != true || "$(network_signature)" != "$DNS_NETWORK_SIGNATURE" ]]; then
+        DNS_CONFIGURED=false
         if ! configure_system_dns; then
           if ! physical_network_ready; then write_status "waiting for network"; return 1; fi
           log_event "could not apply the DNS policy"
@@ -403,6 +415,14 @@ cleanup_tunnel_state() {
 stop_child() {
   local started="$(monotonic_ms)"
   local final_status="${2:-stopped}"
+  local preserve_dns=false
+  # A configuration reload keeps the same resolver address. Retain the override
+  # and its original backup while replacing engines, unless the network changed.
+  # Failure cleanup and Disconnect always take the normal restoration path.
+  if [[ "${3:-}" == "preserve-dns" && "$DNS_CONFIGURED" == true && -n "$DNS_NETWORK_SIGNATURE" && "$DNS_NETWORK_SIGNATURE" != offline ]] &&
+      [[ "$(network_signature)" == "$DNS_NETWORK_SIGNATURE" ]]; then
+    preserve_dns=true
+  fi
   write_status "$final_status"
   local deadline=$((started + 5000))
   # Failed startup cleanup must not consume the caller's rollback reserve.
@@ -410,7 +430,7 @@ stop_child() {
   if [[ "${operation_deadline:-$deadline}" -lt "$deadline" ]]; then deadline="$operation_deadline"; fi
   local owned_interface
   owned_interface="$(tunnel_interface)"
-  if [[ -x "$DNS_MANAGER" ]]; then
+  if [[ "$preserve_dns" != true && -x "$DNS_MANAGER" ]]; then
     "$DNS_MANAGER" restore > >(bounded_logger "$LOG_FILE") 2> >(bounded_logger "$ERROR_FILE") || log_event "could not restore system DNS"
   fi
   # Both engines get the same five-second grace concurrently.
@@ -433,11 +453,18 @@ stop_child() {
   if [[ -z "${MATVEEV_BASE_DIR:-}" && -n "$owned_interface" ]]; then
     cleanup_tunnel_state "$owned_interface"
   fi
-  DNS_CONFIGURED=false
+  if [[ "$preserve_dns" != true ]]; then
+    DNS_CONFIGURED=false
+    DNS_NETWORK_SIGNATURE=""
+  fi
   DNS_MISSES=0
   READINESS_STATUS="$final_status"
   write_status "$final_status"
-  log_event "runtime stop: processes and DNS restored" "$started"
+  if [[ "$preserve_dns" == true ]]; then
+    log_event "runtime stop: processes stopped; DNS retained for configuration reload" "$started"
+  else
+    log_event "runtime stop: processes and DNS restored" "$started"
+  fi
 }
 
 set_desired() {
@@ -481,7 +508,7 @@ reload_config() {
   fi
   publish_config_hash || return 1
   if [[ "$(desired_state)" == "on" ]]; then
-    stop_child "${operation_deadline:-$(( $(monotonic_ms) + 5000 ))}" recovering
+    stop_child "${operation_deadline:-$(( $(monotonic_ms) + 5000 ))}" recovering preserve-dns
     # Reserve half the remaining command budget for rollback of a rejected runtime.
     local now="$(monotonic_ms)"
     local attempt_deadline=$((now + (${operation_deadline:-$((now + 20000))} - now) / 2))
@@ -627,8 +654,9 @@ run_watchdog() {
     if runtime_running && [[ "$recovered" == false ]]; then
       if tunnel_ready; then
         TUN_MISSES=0
-        if [[ "$DNS_CONFIGURED" != true ]] && physical_network_ready; then
-          if configure_system_dns; then DNS_CONFIGURED=true; fi
+        if [[ "$DNS_CONFIGURED" != true || "$signature" != "$DNS_NETWORK_SIGNATURE" ]]; then
+          DNS_CONFIGURED=false
+          if [[ "$signature" != offline ]] && configure_system_dns; then DNS_CONFIGURED=true; fi
         fi
         check_runtime_readiness || true
         if [[ "$READINESS_STATUS" == "running" ]]; then

@@ -100,7 +100,10 @@ sing-box 1.14 native TUN DNS hijacking installs the derived tunnel DNS endpoint.
 The controller temporarily assigns that endpoint to the active physical network
 service in both routing modes because native TUN DNS alone is intermittent in
 sing-box CLI mode on macOS. The previous DNS configuration is restored when the
-tunnel stops.
+tunnel stops. Configuration reloads on the same physical network retain the
+override and its original backup while replacing engines. This avoids repeated
+system DNS changes consuming the startup probe budget. A changed network, failed
+startup cleanup or explicit disconnect uses the normal DNS restoration path.
 After sniffing, hostnames selected for VPN routing are resolved through `dns-vpn`
 before the terminal outbound rule. This replaces locally filtered destination
 addresses. Other hostnames and the VPN server itself use a numeric direct

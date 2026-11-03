@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3-beta.1
+
+- Keeps the system DNS override during server changes on the same network, leaving more time to check VPN readiness.
+- Reapplies the DNS override if the network changes during a restart. Uses system component 30.
+
 ## 1.4.2
 
 - Allows DNS replies to take up to three seconds and probes VPN/direct DNS concurrently, preserving operation and rollback deadlines.
