@@ -37,14 +37,34 @@ final class AppUpdater: NSObject, ObservableObject {
         #endif
     }
     func check() {
+        AppLogger.shared.write("Update check requested; channel=\(betaUpdatesEnabled ? "stable+beta" : "stable")")
         #if canImport(Sparkle)
         controller?.checkForUpdates(nil)
         #endif
+    }
+
+    static func errorDetails(_ error: Error) -> String {
+        var details: [String] = []
+        var current: NSError? = error as NSError
+        // Bound the chain in case a framework supplies recursive error details.
+        for _ in 0..<8 {
+            guard let next = current else { break }
+            var description = "\(next.domain) (\(next.code)): \(next.localizedDescription)"
+            if let reason = next.localizedFailureReason { description += "; reason=\(reason)" }
+            if let suggestion = next.localizedRecoverySuggestion { description += "; recovery=\(suggestion)" }
+            details.append(description)
+            current = next.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return details.joined(separator: " <- ")
     }
 }
 
 #if canImport(Sparkle)
 extension AppUpdater: SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        AppLogger.shared.write("Update check aborted: \(Self.errorDetails(error))")
+    }
+
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
         updateChannels
     }

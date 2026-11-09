@@ -19,6 +19,16 @@ import Sparkle
         reopened.setBetaUpdates(false)
         precondition(reopened.updateChannels.isEmpty)
         precondition(!AppUpdater(defaults: defaults).betaUpdatesEnabled, "Opting out must persist")
+        let networkError = NSError(domain: NSURLErrorDomain, code: NSURLErrorBadServerResponse,
+                                   userInfo: [NSLocalizedDescriptionKey: "HTTP 504"])
+        let updateError = NSError(domain: "SUSparkleErrorDomain", code: 1002,
+                                  userInfo: [NSLocalizedDescriptionKey: "Update Error",
+                                             NSLocalizedFailureReasonErrorKey: "The feed could not be loaded",
+                                             NSUnderlyingErrorKey: networkError])
+        let details = AppUpdater.errorDetails(updateError)
+        precondition(details.contains("SUSparkleErrorDomain (1002)"))
+        precondition(details.contains("The feed could not be loaded"))
+        precondition(details.contains("NSURLErrorDomain (-1011): HTTP 504"), "Keep the underlying network cause in exported diagnostics")
         #if canImport(Sparkle)
         var terminationRequests = 0
         let relaunchPolicy = AppUpdater(defaults: defaults, terminateApplication: { terminationRequests += 1 })

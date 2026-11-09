@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.3-beta.4
+
+- Include Sparkle update errors and their underlying network causes in exported logs.
+- Record manual update checks and the selected stable/beta channel.
+- Keep system component 30 and the subscription and DNS improvements from the previous beta.
+
 ## 1.4.3-beta.1
 
 - Add, name, remove and switch subscriptions in Settings. Each subscription remembers its selected server.
