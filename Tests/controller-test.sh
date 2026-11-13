@@ -204,6 +204,16 @@ wait_for_file_value "$CONTROL/runtime-status" "waiting for direct DNS"
 [[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$PARTIAL_ENGINE_PID" ]]
 /bin/rm "$RUNTIME/direct-unavailable"
 wait_for_file_value "$CONTROL/runtime-status" "running"
+# When both resolvers fail with the same physical network, return DNS to the
+# system during the retry delay and reconnect without another user command.
+/usr/bin/touch "$RUNTIME/direct-unavailable" "$RUNTIME/node-unavailable"
+wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
+wait_for_file_text "$CONTROL/last-error.log" 'restoring system DNS before retry'
+[[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
+[[ "$(cat "$RUNTIME/run/desired-state")" == on ]]
+/bin/rm "$RUNTIME/direct-unavailable" "$RUNTIME/node-unavailable"
+wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
 # A slow retry without sleep must retain the new engine without another restart.
 /usr/bin/printf '3\n' > "$RUNTIME/tunnel-delay"
 /bin/kill -KILL "$(cat "$RUNTIME/run/sing-box.pid")"

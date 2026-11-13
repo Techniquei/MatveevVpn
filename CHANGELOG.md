@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.3-beta.5
+
+- Restore system DNS and retry automatically when both DNS paths repeatedly fail. Uses system component 31.
+
 ## 1.4.3-beta.4
 
 - Include Sparkle update errors and their underlying network causes in exported logs.

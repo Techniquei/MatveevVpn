@@ -664,10 +664,19 @@ run_watchdog() {
           START_FAILURES=0
           NEXT_START_ATTEMPT=0
           DNS_MISSES=0
-        elif [[ "$READINESS_STATUS" == "waiting for VPN DNS" ]]; then
+        elif [[ "$READINESS_STATUS" == "waiting for VPN DNS" || "$READINESS_STATUS" == "waiting for network" ]]; then
           DNS_MISSES=$((DNS_MISSES + 1))
           if [[ "$DNS_MISSES" -ge 3 ]]; then
-            recover_child "VPN DNS failures with working direct DNS"
+            if [[ "$READINESS_STATUS" == "waiting for network" ]]; then
+              # Leave the system resolver usable during the retry delay if
+              # neither path through the TUN can resolve names.
+              log_event "DNS unavailable on both paths or physical network lost; restoring system DNS before retry" "$tick"
+              stop_child "$(( $(monotonic_ms) + 5000 ))" "waiting for network"
+              publish_recent_errors || true
+              NEXT_START_ATTEMPT=$(( $(/bin/date +%s) + START_RETRY_SECONDS ))
+            else
+              recover_child "VPN DNS failures with working direct DNS"
+            fi
             recovered=true
           fi
         else
