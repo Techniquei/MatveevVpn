@@ -38,7 +38,8 @@ struct SystemService {
     // Component 28 owns runtime retries and publishes readiness on both DNS paths.
     // Component 29 allows slow DNS replies while probing both paths concurrently.
     // Component 31 restores system DNS before retrying when both paths fail.
-    static let version = "31"
+    // Component 32 records DNS probe results and connection transitions.
+    static let version = "32"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -198,6 +199,16 @@ struct SystemService {
 
     func recentRuntimeErrors() -> String {
         recentRuntimeErrorDetails() ?? "The VPN runtime did not provide an error log."
+    }
+
+    var connectionDiagnostics: String? {
+        let sources = [("Latest DNS check", "last-dns-check"), ("Recent connection events", "connection-events")]
+        let sections = sources.compactMap { title, name -> String? in
+            guard let text = try? String(contentsOf: control.appendingPathComponent(name), encoding: .utf8) else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : "\(title)\n\(trimmed)"
+        }
+        return sections.isEmpty ? nil : sections.joined(separator: "\n\n")
     }
 
     func recentRuntimeErrorDetails() -> String? {

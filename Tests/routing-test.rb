@@ -27,6 +27,14 @@ Dir.mktmpdir('matveev-routing') do |dir|
     raise 'wrong DNS final' unless value['dns']['final'] == (mode == 'all' ? 'dns-vpn' : 'dns-direct')
     direct_dns = value['dns']['servers'].find { |server| server['tag'] == 'dns-direct' }
     raise 'direct DNS must use HTTPS with a numeric address outside the overridden system resolver' unless direct_dns && direct_dns['type'] == 'https' && direct_dns['server'] == '8.8.8.8' && direct_dns['server_port'] == 443 && direct_dns['detour'] == 'direct'
+    backup_dns = value['dns']['servers'].find { |server| server['tag'] == 'dns-direct-backup' }
+    raise 'backup DNS must use direct HTTPS with the correct TLS server name' unless backup_dns && backup_dns.values_at('type', 'server', 'server_port', 'detour') == ['https', '1.1.1.1', 443, 'direct'] && backup_dns.dig('tls', 'server_name') == 'cloudflare-dns.com'
+    dns_rules = value['dns']['rules']
+    direct_probe = dns_rules.select { |rule| rule['domain'] == ['api64.ipify.org'] }
+    raise 'direct health check must try both upstreams without using the cache' unless direct_probe.map { |rule| rule.values_at('action', 'server', 'disable_cache') } == [['evaluate', 'dns-direct', true], ['route', 'dns-direct-backup', true]]
+    final_direct = dns_rules.select { |rule| rule['server'] == 'dns-direct-backup' && !rule.key?('domain') }
+    raise 'direct backup must only apply to ordinary DNS in selective mode' unless final_direct.size == (mode == 'selective' ? 1 : 0)
+    raise 'direct DNS should preserve authoritative negative replies' unless dns_rules.any? { |rule| rule.values_at('match_response', 'response_rcode', 'action') == [true, 'NXDOMAIN', 'respond'] }
     raise 'recursive local DNS bootstrap was reintroduced' if value['dns']['servers'].any? { |server| server['type'] == 'local' }
     raise 'VPN server must use the independent direct HTTPS resolver' unless value['outbounds'][0]['domain_resolver']['server'] == 'dns-direct'
     raise 'obsolete duplicate bootstrap resolver was retained' if value['dns']['servers'].any? { |server| server['tag'] == 'dns-bootstrap' }
@@ -62,6 +70,7 @@ Dir.mktmpdir('matveev-routing') do |dir|
   File.write(rules, JSON.generate({domains: [], mode: 'selective', automaticRoutingEnabled: true, automaticServices: preset_services, adBlockingEnabled: true}))
   raise 'preset generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   generated_presets = JSON.parse(File.read(config))
+  raise 'legacy DNS rule strategy is incompatible with response matching' if generated_presets.dig('dns', 'rules').any? { |rule| rule.key?('strategy') }
   raise 'preset refresh events must be visible to the controller' unless generated_presets.dig('log', 'level') == 'info'
   rule_sets = generated_presets.fetch('route').fetch('rule_set')
   tags = rule_sets.map { |rule| rule.fetch('tag') }

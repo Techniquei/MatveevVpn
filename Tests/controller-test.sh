@@ -190,6 +190,9 @@ send_action reload
 send_action_expect on pending
 wait_for_file_value "$CONTROL/runtime-status" "waiting for direct DNS"
 PARTIAL_ENGINE_PID="$(cat "$RUNTIME/run/sing-box.pid")"
+wait_for_file_text "$CONTROL/last-dns-check" 'VPN DNS: OK (30 ms)'
+wait_for_file_text "$CONTROL/last-dns-check" 'Direct DNS: Timed out (3 s)'
+wait_for_file_text "$CONTROL/connection-events" 'Status: waiting for direct DNS'
 /bin/sleep 2.5
 [[ "$(cat "$CONTROL/runtime-status")" == "waiting for direct DNS" ]]
 send_action_expect on pending
@@ -197,6 +200,9 @@ send_action_expect on pending
 /bin/rm "$RUNTIME/direct-unavailable"
 wait_for_file_value "$CONTROL/runtime-status" "running"
 [[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$PARTIAL_ENGINE_PID" ]]
+wait_for_file_text "$CONTROL/last-dns-check" 'Direct DNS: OK (30 ms)'
+wait_for_file_text "$CONTROL/connection-events" 'Direct DNS: Timed out (3 s)'
+wait_for_file_text "$CONTROL/connection-events" 'Direct DNS: OK (30 ms)'
 
 # Losing direct DNS after running must revoke readiness without engine churn.
 /usr/bin/touch "$RUNTIME/direct-unavailable"
@@ -206,8 +212,13 @@ wait_for_file_value "$CONTROL/runtime-status" "waiting for direct DNS"
 wait_for_file_value "$CONTROL/runtime-status" "running"
 # When both resolvers fail with the same physical network, return DNS to the
 # system during the retry delay and reconnect without another user command.
+/usr/bin/printf 'unrelated private file\n' > "$RUNTIME/run/private-file"
+/bin/ln -sf "$RUNTIME/run/private-file" "$CONTROL/connection-events"
 /usr/bin/touch "$RUNTIME/direct-unavailable" "$RUNTIME/node-unavailable"
 wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
+wait_for_file_text "$CONTROL/connection-events" 'VPN DNS: SERVFAIL (45 ms)'
+[[ ! -L "$CONTROL/connection-events" ]]
+if /usr/bin/grep -q 'unrelated private file' "$CONTROL/connection-events"; then exit 1; fi
 wait_for_file_text "$CONTROL/last-error.log" 'restoring system DNS before retry'
 [[ "$(cat "$CURRENT_DNS")" == "9.9.9.9" ]]
 [[ "$(cat "$RUNTIME/run/desired-state")" == on ]]

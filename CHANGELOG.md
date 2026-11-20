@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3-beta.7
+
+- Retry direct DNS queries with Cloudflare DNS over HTTPS when Google DNS times out or reports a resolver failure.
+- Show DNS response times, errors and recent connection events under Settings → Diagnostics → Connection details. Include this history in log exports. Uses system component 32.
+
 ## 1.4.3-beta.6
 
 - Add an opt-in sing-box engine for compatible TCP REALITY profiles so users can compare VPN and DNS behavior with Xray.

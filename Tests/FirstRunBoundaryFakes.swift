@@ -43,7 +43,7 @@ enum Command {
 }
 
 struct SystemService {
-    static let version = "31"
+    static let version = "32"
     static var operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -123,6 +123,7 @@ struct SystemService {
     func configurationMatches(_ config: URL) -> Bool { true }
     func recentRuntimeErrors() -> String { "" }
     func recentRuntimeErrorDetails() -> String? { nil }
+    var connectionDiagnostics: String? { nil }
     static func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     static func reset() {
         installedValue = false; runningValue = false; cancelInstall = false

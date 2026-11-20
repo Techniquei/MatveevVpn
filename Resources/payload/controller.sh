@@ -15,6 +15,9 @@ PENDING_CONFIG="$CONTROL_DIR/pending-config.json"
 PENDING_XRAY_CONFIG="$CONTROL_DIR/pending-xray.json"
 COMMAND_FILE="$CONTROL_DIR/command"
 STATUS_FILE="$CONTROL_DIR/runtime-status"
+DNS_CHECK_FILE="$CONTROL_DIR/last-dns-check"
+DIAGNOSTIC_EVENTS_FILE="$CONTROL_DIR/connection-events"
+DIAGNOSTIC_EVENTS_HISTORY="$RUN_DIR/connection-events"
 DESIRED_FILE="$RUN_DIR/desired-state"
 PID_FILE="$RUN_DIR/sing-box.pid"
 XRAY_PID_FILE="$RUN_DIR/xray.pid"
@@ -41,6 +44,8 @@ READINESS_STATUS="starting"
 VPN_DNS_READY=false
 DIRECT_DNS_READY=false
 DNS_MISSES=0
+PREVIOUS_DNS_FAILURE=false
+PUBLISHED_STATUS=""
 START_FAILURES=0
 NEXT_START_ATTEMPT=0
 
@@ -147,6 +152,7 @@ record_unexpected_exit() {
     exit_status=$?
   fi
   bounded_log_line "$ERROR_FILE" "$(/bin/date '+%Y-%m-%d %H:%M:%S') controller: $process_name exited unexpectedly (pid=$pid, status=$exit_status)"
+  record_diagnostic_event "$process_name exited unexpectedly (status $exit_status)"
   write_status "recovering"
   publish_recent_errors || true
 }
@@ -158,7 +164,45 @@ write_status() {
   temporary="$(/usr/bin/mktemp "$CONTROL_DIR/.runtime-status.XXXXXX")" || return 1
   /usr/bin/printf '%s\n' "$value" > "$temporary"
   /bin/chmod 644 "$temporary"
-  /bin/mv -f "$temporary" "$STATUS_FILE"
+  /bin/mv -f "$temporary" "$STATUS_FILE" || return 1
+  if [[ "$PUBLISHED_STATUS" != "$value" ]]; then
+    PUBLISHED_STATUS="$value"
+    record_diagnostic_event "Status: $value" || true
+  fi
+}
+
+record_diagnostic_event() {
+  local temporary preview
+  # Only read back history from the root-owned runtime directory. The app user
+  # owns the control directory and can replace the exported snapshot.
+  temporary="$(/usr/bin/mktemp "$RUN_DIR/.connection-events.XXXXXX")" || return 0
+  {
+    if [[ -f "$DIAGNOSTIC_EVENTS_HISTORY" ]]; then /usr/bin/tail -n 23 "$DIAGNOSTIC_EVENTS_HISTORY"; fi
+    /usr/bin/printf '%s  %s\n' "$(/bin/date '+%Y-%m-%d %H:%M:%S %z')" "$1"
+  } > "$temporary"
+  /bin/mv -f "$temporary" "$DIAGNOSTIC_EVENTS_HISTORY" || return 0
+  preview="$(/usr/bin/mktemp "$RUN_DIR/.connection-preview.XXXXXX")" || return 0
+  /bin/cat "$DIAGNOSTIC_EVENTS_HISTORY" > "$preview" &&
+    /bin/chmod 644 "$preview" &&
+    /bin/mv -fh "$preview" "$DIAGNOSTIC_EVENTS_FILE" ||
+    /bin/rm -f "$preview"
+}
+
+publish_dns_check() {
+  local report="VPN DNS: $1 | Direct DNS: $2" interface="${3%%|*}" engine="sing-box" temporary
+  if [[ -f "$XRAY_CONFIG_FILE" ]]; then engine="Xray"; fi
+  temporary="$(/usr/bin/mktemp "$RUN_DIR/.last-dns-check.XXXXXX")" || return 0
+  /usr/bin/printf '%s  %s · %s\nVPN DNS: %s\nDirect DNS: %s\n' \
+    "$(/bin/date '+%Y-%m-%d %H:%M:%S %z')" "$engine" "$interface" "$1" "$2" > "$temporary"
+  /bin/chmod 644 "$temporary"
+  /bin/mv -fh "$temporary" "$DNS_CHECK_FILE" || /bin/rm -f "$temporary"
+  if [[ "$VPN_DNS_READY" != true || "$DIRECT_DNS_READY" != true ]]; then
+    PREVIOUS_DNS_FAILURE=true
+    record_diagnostic_event "$report ($engine, $interface)"
+  elif [[ "$PREVIOUS_DNS_FAILURE" == true ]]; then
+    PREVIOUS_DNS_FAILURE=false
+    record_diagnostic_event "$report ($engine, $interface)"
+  fi
 }
 
 write_response() {
@@ -243,9 +287,26 @@ configure_system_dns() {
   log_event "DNS policy: system override enabled for $(routing_mode) routing"
 }
 
-tunnel_dns_ready() {
-  "${MATVEEV_DIG:-/usr/bin/dig}" +time="${2:-3}" +tries=1 +short @198.18.0.2 "${1:-api4.ipify.org}" A 2>/dev/null |
-    /usr/bin/awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/ { found=1 } END { exit !found }'
+probe_dns() {
+  local domain="$1" timeout="$2"
+  "${MATVEEV_DIG:-/usr/bin/dig}" +time="$timeout" +tries=1 +noall +comments +answer +stats \
+    @198.18.0.2 "$domain" A 2>&1 | /usr/bin/awk -v timeout="$timeout" '
+    $4 == "A" && $5 ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}$/ { answer = 1 }
+    /status: [A-Z0-9]+/ {
+      match($0, /status: [A-Z0-9]+/)
+      rcode = substr($0, RSTART + 8, RLENGTH - 8)
+    }
+    /^;; Query time: [0-9]+ msec/ { timing = " (" $4 " ms)" }
+    /timed out/ { timed_out = 1 }
+    /connection refused|Connection refused/ { refused = 1 }
+    END {
+      if (rcode == "NOERROR" && answer) print "OK" timing
+      else if (rcode == "NOERROR") print "No IPv4 answer" timing
+      else if (rcode != "") print rcode timing
+      else if (timed_out) print "Timed out (" timeout " s)"
+      else if (refused) print "Connection refused"
+      else print "No DNS response"
+    }'
 }
 
 check_engine_config() {
@@ -272,7 +333,9 @@ check_runtime_readiness() {
     READINESS_STATUS="starting"
     return 1
   fi
-  if ! physical_network_ready; then READINESS_STATUS="waiting for network"; return 1; fi
+  local signature
+  signature="$(network_signature)"
+  if [[ "$signature" == offline ]]; then READINESS_STATUS="waiting for network"; return 1; fi
   # Probe both paths concurrently so a cold VPN resolver gets up to three
   # seconds without doubling the command budget. Leave time for bookkeeping,
   # and shorten the final round to fit the existing operation/rollback deadline.
@@ -282,13 +345,14 @@ check_runtime_readiness() {
   VPN_DNS_READY=false
   DIRECT_DNS_READY=false
   READINESS_STATUS="starting"
-  local vpn_probe direct_probe
-  tunnel_dns_ready api4.ipify.org "$query_timeout" &
-  vpn_probe=$!
-  tunnel_dns_ready api64.ipify.org "$query_timeout" &
-  direct_probe=$!
-  if wait "$vpn_probe"; then VPN_DNS_READY=true; fi
-  if wait "$direct_probe"; then DIRECT_DNS_READY=true; fi
+  local vpn_result direct_result
+  {
+    IFS= read -r vpn_result <&3 || vpn_result="Probe interrupted"
+    IFS= read -r direct_result <&4 || direct_result="Probe interrupted"
+  } 3< <(probe_dns api4.ipify.org "$query_timeout") 4< <(probe_dns api64.ipify.org "$query_timeout")
+  if [[ "$vpn_result" == OK* ]]; then VPN_DNS_READY=true; fi
+  if [[ "$direct_result" == OK* ]]; then DIRECT_DNS_READY=true; fi
+  publish_dns_check "$vpn_result" "$direct_result" "$signature"
   # A process or TUN can disappear during a blocking DNS query.
   runtime_running && tunnel_ready || return 1
   if [[ "$(network_signature)" != "$DNS_NETWORK_SIGNATURE" ]]; then
@@ -586,6 +650,7 @@ tunnel_ready() {
 recover_child() {
   local reason="$1"
   log_event "restarting VPN after $reason"
+  record_diagnostic_event "Restarting VPN after $reason"
   stop_child "$(( $(monotonic_ms) + 5000 ))" recovering
   NEXT_START_ATTEMPT=0
   start_with_retry || true
@@ -636,6 +701,7 @@ run_watchdog() {
     default_route="$(default_route_signature)"
     if [[ -n "$LAST_DEFAULT_ROUTE_SIGNATURE" && "$default_route" != "$LAST_DEFAULT_ROUTE_SIGNATURE" ]]; then
       log_event "default route changed: $LAST_DEFAULT_ROUTE_SIGNATURE -> $default_route"
+      record_diagnostic_event "Default route changed (interface: ${default_route%%|*})"
     fi
     LAST_DEFAULT_ROUTE_SIGNATURE="$default_route"
     if [[ -n "$LAST_NETWORK_SIGNATURE" && "$signature" != "$LAST_NETWORK_SIGNATURE" && "$signature" != "offline" ]]; then
@@ -767,6 +833,8 @@ process_command() {
       set_desired "off"
       stop_child
       /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG" "$PENDING_CONFIG" "$PENDING_XRAY_CONFIG" "$CONTROL_DIR/config-sha256" "$CONTROL_DIR/last-error.log" "$CONTROL_DIR/routing-updated-at"
+      /bin/rm -f "$DNS_CHECK_FILE" "$DIAGNOSTIC_EVENTS_FILE" "$DIAGNOSTIC_EVENTS_HISTORY"
+      PREVIOUS_DNS_FAILURE=false
       write_response "$token" "ok"
       ;;
     *)

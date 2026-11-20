@@ -334,6 +334,25 @@ struct SettingsView: View {
                                 .padding(10)
                                 .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
                         }
+                        DisclosureGroup("Connection details") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(controller.connectionStatusText)
+                                    .font(.callout)
+                                if let details = controller.connectionDiagnostics {
+                                    Text(details)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                } else {
+                                    Text("Connection history appears after the VPN service starts.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                        }
+                        .accessibilityIdentifier("settings.connection-details")
                         if !controller.message.isEmpty {
                             Text(controller.message).font(.caption).foregroundStyle(.secondary)
                         }

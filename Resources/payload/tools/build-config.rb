@@ -246,12 +246,22 @@ diagnostic_vpn_domains = ["api4.ipify.org"]
 diagnostic_direct_domains = ["api64.ipify.org"]
 ad_block_update_domains = ["raw.githubusercontent.com"]
 
+def direct_dns_rules(match, cache: true)
+  options = cache ? {} : { "disable_cache" => true }
+  [
+    match.merge(options, "action" => "evaluate", "server" => "dns-direct", "timeout" => "1200ms"),
+    { "match_response" => true, "response_rcode" => "NOERROR", "action" => "respond" },
+    { "match_response" => true, "response_rcode" => "NXDOMAIN", "action" => "respond" },
+    match.merge(options, "action" => "route", "server" => "dns-direct-backup", "timeout" => "1400ms")
+  ]
+end
+
 # Health checks must reach the resolver rather than accept an old cached answer.
 dns_rules = [
-  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4", "disable_cache" => true },
-  { "domain" => diagnostic_direct_domains, "action" => "route", "server" => "dns-direct", "strategy" => "prefer_ipv4", "disable_cache" => true }
+  { "domain" => diagnostic_vpn_domains, "action" => "route", "server" => "dns-vpn", "disable_cache" => true }
 ]
-dns_rules << { "domain" => ad_block_update_domains, "action" => "route", "server" => "dns-vpn", "strategy" => "prefer_ipv4" } if ad_blocking_enabled
+dns_rules.concat(direct_dns_rules({ "domain" => diagnostic_direct_domains }, cache: false))
+dns_rules << { "domain" => ad_block_update_domains, "action" => "route", "server" => "dns-vpn" } if ad_blocking_enabled
 dns_rules << { "rule_set" => ["ad-block"], "action" => "reject" } if ad_blocking_enabled
 unless routed_domains.empty?
   dns_rules << { "domain_suffix" => routed_domains, "action" => "route", "server" => "dns-vpn" }
@@ -259,6 +269,7 @@ end
 unless domain_rule_set_tags.empty?
   dns_rules << { "rule_set" => domain_rule_set_tags, "action" => "route", "server" => "dns-vpn" }
 end
+dns_rules.concat(direct_dns_rules({})) unless full
 
 route_rules = [
   { "process_name" => ["sing-box", "xray"], "action" => "route", "outbound" => "direct" }
@@ -297,6 +308,15 @@ config = {
         "server_port" => 443,
         "path" => "/dns-query",
         "tls" => { "enabled" => true, "server_name" => "dns.google" },
+        "detour" => "direct"
+      },
+      {
+        "type" => "https",
+        "tag" => "dns-direct-backup",
+        "server" => "1.1.1.1",
+        "server_port" => 443,
+        "path" => "/dns-query",
+        "tls" => { "enabled" => true, "server_name" => "cloudflare-dns.com" },
         "detour" => "direct"
       },
       {

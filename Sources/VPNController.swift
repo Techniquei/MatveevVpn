@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.3-beta.6"
+    static let releaseVersion = "1.4.3-beta.7"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -105,6 +105,7 @@ final class VPNController: ObservableObject {
     }
 
     var hasVPNConnection: Bool { isRunning || hasDirectDNSWarning }
+    var connectionDiagnostics: String? { service.connectionDiagnostics }
 
     var connectionStatusText: String {
         if hasDirectDNSWarning { return "VPN connected. Direct DNS check failed." }
@@ -812,7 +813,7 @@ final class VPNController: ObservableObject {
             let (direct, vpn, dns, tunnelDNS) = await (directIPv4, vpnIPv4, resolver, tunnelResolver)
             guard !Task.isCancelled else { return }
             let path = direct != "unavailable" && vpn != "unavailable" ? (direct == vpn ? "same" : "different") : "unavailable"
-            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nTunnel: \(self.service.running ? "running" : "stopped")\nSystem DNS: \(dns)\nTunnel DNS: \(tunnelDNS)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nService presets: \(snapshot.rules.automaticRoutingEnabled ? snapshot.rules.automaticServices.count : 0)\nAd blocking: \(snapshot.rules.adBlockingEnabled ? "on" : "off")\nDomain rules: \(snapshot.rules.domains.count)\nWhile connected, Tunnel DNS should be reachable. The two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
+            self.diagnostics = "Checked: \(Date().formatted())\nApp: \(Self.releaseVersion)\nController: \(self.service.currentVersion)\nSettings schema: \(snapshot.schemaVersion)\nMode: \(snapshot.rules.mode.rawValue)\nConnection status: \(self.service.runtimeStatus)\nSystem DNS: \(dns)\nVPN DNS: \(tunnelDNS)\nDirect IPv4: \(direct)\nVPN IPv4: \(vpn)\nVPN path: \(path)\nIPv6: disabled for compatibility\nService presets: \(snapshot.rules.automaticRoutingEnabled ? snapshot.rules.automaticServices.count : 0)\nAd blocking: \(snapshot.rules.adBlockingEnabled ? "on" : "off")\nDomain rules: \(snapshot.rules.domains.count)\nThe two IPv4 probes are explicitly routed through different outbounds and should normally report different addresses."
         }
     }
     private nonisolated static func publicIP(endpoint: String) async -> String {
@@ -847,6 +848,9 @@ final class VPNController: ObservableObject {
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
             var contents = AppLogger.shared.contents()
+            if let connectionDiagnostics = service.connectionDiagnostics {
+                contents += "\nConnection diagnostics\n================================================\nCurrent controller status: \(service.runtimeStatus)\n\n\(connectionDiagnostics)\n"
+            }
             if let runtime = service.recentRuntimeErrorDetails() {
                 if !contents.hasSuffix("\n") { contents += "\n" }
                 contents += "\nPrivileged VPN runtime diagnostics\n================================================\n\(runtime)\n"
