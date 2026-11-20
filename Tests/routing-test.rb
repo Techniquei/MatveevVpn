@@ -110,8 +110,18 @@ Dir.mktmpdir('matveev-routing') do |dir|
   marker = reality_main.fetch('route').fetch('rules').first.fetch('process_name').first
   raise 'sidecar transaction marker is missing' unless marker.start_with?('matveev-xray-config-')
 
+  raise 'native REALITY generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules, '--sing-box-reality')
+  native = JSON.parse(File.read(config)).fetch('outbounds').find { |outbound| outbound['tag'] == 'vpn' }
+  raise 'native REALITY still uses Xray' if File.exist?(config + '.xray.json') || native['type'] != 'vless'
+  raise 'native REALITY changed the server or VLESS flow' unless native.values_at('server', 'server_port', 'flow') == ['reality.example.com', 443, 'xtls-rprx-vision']
+  expected_tls = {'enabled' => true, 'server_name' => 'cover.example.com',
+                  'utls' => {'enabled' => true, 'fingerprint' => 'chrome'},
+                  'reality' => {'enabled' => true, 'public_key' => reality_key, 'short_id' => '0123456789abcdef'}}
+  raise 'native REALITY lost handshake fields' unless native['tls'] == expected_tls
+
   xhttp_extra = {xPaddingBytes: '100-1000', noGRPCHeader: false}
   File.write(sub, "vless://11111111-1111-1111-1111-111111111111@xhttp.example.com:443?type=xhttp&security=reality&encryption=none&flow=xtls-rprx-vision&fp=chrome&sni=cover.example.com&pbk=#{reality_key}&sid=0123456789abcdef&path=%2Fhidden&host=cdn.example.com&mode=stream-up&extra=#{URI.encode_www_form_component(JSON.generate(xhttp_extra))}#XHTTP-Reality\n")
+  raise 'XHTTP accepted by native REALITY mode' if system(RbConfig.ruby, builder, sub, config, '1', rules, '--sing-box-reality', out: File::NULL, err: File::NULL)
   raise 'XHTTP REALITY generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   xhttp_reality = JSON.parse(File.read(config + '.xray.json')).fetch('outbounds').first.fetch('streamSettings')
   raise 'XHTTP transport was not generated' unless xhttp_reality['network'] == 'xhttp'

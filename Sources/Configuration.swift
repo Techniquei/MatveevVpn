@@ -75,6 +75,7 @@ struct VPNNode: Identifiable, Hashable {
     let host: String
     let port: Int
     let index: Int
+    let supportsSingBoxReality: Bool
 }
 
 enum Subscription {
@@ -223,11 +224,19 @@ enum Subscription {
                 throw VPNError.diagnostic("Invalid VLESS node on line \(offset + 1).", "The node is missing a valid UUID, hostname or port. Credentials and addresses were omitted from this report.")
             }
             let name = parts.fragment.flatMap { $0.isEmpty ? nil : $0 } ?? "\(host):\(port)"
+            var query: [String: String] = [:]
+            for item in parts.queryItems ?? [] { query[item.name] = item.value ?? "" }
             parts.fragment = nil
             parts.host = host.lowercased()
             parts.queryItems = parts.queryItems?.sorted { ($0.name, $0.value ?? "") < ($1.name, $1.value ?? "") }
             let id = SHA256.hash(data: Data((parts.string ?? "").utf8)).map { String(format: "%02x", $0) }.joined()
-            return VPNNode(id: id, name: name, host: host, port: port, index: offset + 1)
+            let supportsSingBoxReality = query["security"] == "reality"
+                && ["", "tcp", "raw"].contains(query["type"] ?? "")
+                && ["", "none"].contains(query["encryption"] ?? "")
+                && ["", "xtls-rprx-vision"].contains(query["flow"] ?? "")
+                && (query["pqv"] ?? "").isEmpty
+            return VPNNode(id: id, name: name, host: host, port: port, index: offset + 1,
+                           supportsSingBoxReality: supportsSingBoxReality)
         }.filter { seen.insert($0.id).inserted }
     }
 }
@@ -263,6 +272,7 @@ struct SavedState: Codable {
     var subscriptionName: String?
     var subscriptionHappCompatibility: Bool?
     var otherSubscriptions: [SavedSubscription]?
+    var preferSingBoxReality: Bool?
 
     var activeSubscriptionName: String { SavedSubscription.displayName(subscriptionName, url: subscriptionURL) }
 

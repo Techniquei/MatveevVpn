@@ -285,6 +285,14 @@ struct SettingsView: View {
                             .modifier(InteractiveHover())
                         Text("Reconnects or switches servers when the connection fails.")
                             .font(.caption).foregroundStyle(.secondary)
+                        Toggle("Use sing-box for TCP REALITY (Beta)", isOn: Binding(
+                            get: { controller.state.preferSingBoxReality == true },
+                            set: { controller.setPreferSingBoxReality($0) }
+                        ))
+                        .modifier(InteractiveHover())
+                        .disabled(!controller.isInstalled || controller.needsUpgrade || controller.selectedNode == nil)
+                        Text("Uses sing-box for compatible REALITY servers. XHTTP and other REALITY profiles still use Xray.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     .toggleStyle(.checkbox)
                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)

@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.3-beta.5"
+    static let releaseVersion = "1.4.3-beta.6"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -226,6 +226,7 @@ final class VPNController: ObservableObject {
                 let config = try await self.service.generate(snapshot, at: stage, until: deadline)
                 guard self.state.subscription == snapshot.subscription,
                       self.state.selectedNodeID == snapshot.selectedNodeID, self.state.rules == snapshot.rules,
+                      self.state.preferSingBoxReality == snapshot.preferSingBoxReality,
                       !self.service.configurationMatches(config), !self.isBusy, !self.service.isConnecting else { return }
                 self.isBusy = true
                 self.message = "Updating the installed configuration…"
@@ -275,6 +276,15 @@ final class VPNController: ObservableObject {
     func changeMode(_ mode: RoutingMode) {
         var next = state; next.rules.mode = mode
         perform { deadline in try await self.commit(next, until: deadline) }
+    }
+    func setPreferSingBoxReality(_ enabled: Bool) {
+        guard isInstalled, !needsUpgrade, state.selectedNodeID != nil,
+              enabled != (state.preferSingBoxReality == true) else { return }
+        var next = state
+        next.preferSingBoxReality = enabled ? true : nil
+        perform("Change REALITY engine") { deadline in
+            try await self.commit(next, until: deadline)
+        }
     }
     func applyRoutingRules(automaticRoutingEnabled: Bool, automaticServices: Set<String>, adBlockingEnabled: Bool, domains: [String]) {
         var next = state
@@ -900,7 +910,8 @@ final class VPNController: ObservableObject {
         let transportValue = query["type"].flatMap { $0.isEmpty ? nil : $0 } ?? "raw"
         let transport = transportValue == "splithttp" ? "xhttp" : transportValue
         let security = query["security"].flatMap { $0.isEmpty ? nil : $0 } ?? "none"
-        let core = security == "reality" || transport == "xhttp" ? "Xray" : "sing-box"
+        let useSingBoxReality = state.preferSingBoxReality == true && node.supportsSingBoxReality
+        let core = !useSingBoxReality && (security == "reality" || transport == "xhttp") ? "Xray" : "sing-box"
         return """
         Selected node: \(node.name)
         Endpoint: \(node.host):\(node.port)

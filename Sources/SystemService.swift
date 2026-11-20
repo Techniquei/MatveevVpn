@@ -110,13 +110,16 @@ struct SystemService {
         let started = ProcessInfo.processInfo.systemUptime
         try state.rules.validate()
         let index: Int
+        let useSingBoxReality: Bool
         if state.subscription.isEmpty && state.selectedNodeID == nil && !state.desiredOn {
             // Index zero provisions the stopped component before a subscription exists.
             index = 0
+            useSingBoxReality = false
         } else {
             let nodes = try Subscription.nodes(state.subscription)
             guard let node = nodes.first(where: { $0.id == state.selectedNodeID }) else { throw VPNError.message("Choose a node before applying changes.") }
             index = node.index
+            useSingBoxReality = state.preferSingBoxReality == true && node.supportsSingBoxReality
         }
         let subscription = stage.appendingPathComponent("subscription")
         let rules = stage.appendingPathComponent("rules.json")
@@ -129,7 +132,9 @@ struct SystemService {
                 bundledFile: payload.appendingPathComponent("rules/hagezi-pro-mini.txt")
             )
         }
-        let generated = await Command.run("/usr/bin/ruby", [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(index), rules.path], timeout: deadline.timeIntervalSinceNow)
+        var arguments = [payload.appendingPathComponent("tools/build-config.rb").path, subscription.path, config.path, String(index), rules.path]
+        if useSingBoxReality { arguments.append("--sing-box-reality") }
+        let generated = await Command.run("/usr/bin/ruby", arguments, timeout: deadline.timeIntervalSinceNow)
         try Self.checkDeadline(deadline)
         AppLogger.shared.write("configuration generation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))")
         guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and the selected server.", generated.output) }

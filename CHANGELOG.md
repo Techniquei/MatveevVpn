@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3-beta.6
+
+- Add an opt-in sing-box engine for compatible TCP REALITY profiles so users can compare VPN and DNS behavior with Xray.
+- Include the selected runtime engine in connection diagnostics. Uses system component 31.
+
 ## 1.4.3-beta.5
 
 - Restore system DNS and retry automatically when both DNS paths repeatedly fail. Uses system component 31.

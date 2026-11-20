@@ -34,6 +34,16 @@ import Foundation
         let decodedHapp = try Subscription.decode(Data(happJSON.utf8), allowHappJSON: true)
         let happComponents = URLComponents(string: decodedHapp.trimmingCharacters(in: .whitespacesAndNewlines))!
         let happQuery = Dictionary(uniqueKeysWithValues: happComponents.queryItems!.map { ($0.name, $0.value ?? "") })
+        let happNodes = try Subscription.nodes(decodedHapp)
+        precondition(happNodes.first?.supportsSingBoxReality == true)
+        for incompatible in [
+            decodedHapp.replacingOccurrences(of: "type=tcp", with: "type=xhttp"),
+            decodedHapp.replacingOccurrences(of: "#", with: "&pqv=verification#"),
+            decodedHapp.replacingOccurrences(of: "encryption=none", with: "encryption=custom")
+        ] {
+            let parsed = try Subscription.nodes(incompatible)
+            precondition(parsed.first?.supportsSingBoxReality == false)
+        }
         precondition(happComponents.host == "happ.example.com" && happComponents.port == 443)
         precondition(happComponents.fragment == "Happ Test")
         precondition(happQuery["type"] == "tcp" && happQuery["security"] == "reality")

@@ -4,9 +4,9 @@ require "json"
 require "digest"
 require "uri"
 
-abort "usage: build-config.rb SUBSCRIPTION OUTPUT INDEX RULES" unless ARGV.length == 4
+abort "usage: build-config.rb SUBSCRIPTION OUTPUT INDEX RULES [--sing-box-reality]" unless ARGV.length == 4 || (ARGV.length == 5 && ARGV.last == "--sing-box-reality")
 
-subscription_path, output_path, index_text, rules_path = ARGV
+subscription_path, output_path, index_text, rules_path, reality_mode = ARGV
 File.delete(output_path + ".xray.json") if File.exist?(output_path + ".xray.json")
 index = Integer(index_text, 10)
 lines = File.readlines(subscription_path, chomp: true).reject(&:empty?)
@@ -42,13 +42,24 @@ vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
 xray_config = nil
 requested_network = query["type"].to_s
 xhttp = %w[xhttp splithttp].include?(requested_network)
-if query["security"] == "reality" || xhttp
-  if query["security"] == "reality"
-    abort "REALITY requires pbk" if query["pbk"].to_s.empty?
-    abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
-    abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
-  end
+reality = query["security"] == "reality"
+if reality
+  abort "REALITY requires pbk" if query["pbk"].to_s.empty?
+  abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
+  abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
+end
 
+if reality_mode
+  abort "sing-box REALITY requires TCP, unencrypted VLESS framing and no PQ verification" unless reality &&
+    ["", "tcp", "raw"].include?(requested_network) && ["", "none"].include?(query["encryption"].to_s) &&
+    ["", "xtls-rprx-vision"].include?(query["flow"].to_s) && query["pqv"].to_s.empty?
+  vpn_outbound["tls"] = {
+    "enabled" => true,
+    "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+    "utls" => { "enabled" => true, "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"] },
+    "reality" => { "enabled" => true, "public_key" => query["pbk"], "short_id" => query["sid"].to_s }
+  }
+elsif reality || xhttp
   network = requested_network
   network = "xhttp" if xhttp
   network = "raw" if network.empty? || %w[tcp raw].include?(network)

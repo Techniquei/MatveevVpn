@@ -1,9 +1,9 @@
-# matveevVpn 1.4.3-beta.5
+# matveevVpn 1.4.3-beta.6
 
-If both DNS paths stop responding, matveevVpn restores the Mac's previous DNS
-settings and stops the tunnel after three failed checks. It then retries the VPN
-automatically. Exported diagnostics include the recovery event.
+This beta adds **Settings → Use sing-box for TCP REALITY (Beta)**. Enable it to
+test the same compatible TCP REALITY profile with sing-box handling the VPN
+connection and DNS. Turn it off to switch back to Xray. XHTTP and other REALITY
+profiles continue to use Xray.
 
-Build **1428**, system component **31**. Requires an Apple Silicon Mac running
-macOS 13 or later. Approve the macOS administrator prompt to install the updated
-system component.
+Build **1429**, system component **31**. Requires an Apple Silicon Mac running
+macOS 13 or later.
