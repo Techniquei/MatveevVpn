@@ -1,6 +1,6 @@
 # matveevVpn
 
-Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
+Native VLESS and Hysteria 2 VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 
 ## Features
 
@@ -9,21 +9,26 @@ Native VLESS VPN client for Apple Silicon Macs. Requires macOS 13 or newer.
 - Optional DNS-level advertising and tracker blocking.
 - All Traffic mode with private and local networks kept direct.
 - Native TUN, DNS interception and VPN-side DNS re-resolution.
-- HTTPS subscriptions or direct VLESS links, measured node latency and settings that survive app updates.
+- HTTPS subscriptions or direct VLESS and Hysteria 2 links, measured node latency and settings that survive app updates.
 - Modern REALITY and XHTTP through Xray-core; sing-box handles TUN and routing.
 - Connection diagnostics, traffic graphs, menu-bar controls and launch at login.
 - Atomic configuration reload, automatic rollback and bounded node failover.
 - A private application event log capped at 3 MB, exported with a sortable date-and-time filename together with the latest available privileged runtime diagnostics.
 - Signed Sparkle update feed.
 
-## Supported VLESS links
+## Supported connection links
 
 Subscriptions may contain plain, standard Base64 or URL-safe Base64-encoded
-`vless://` links. Supported VLESS entries are imported from mixed protocol lists.
+`vless://`, `hysteria2://` and `hy2://` links, including mixed lists.
 The optional **Happ subscription compatibility** setting requests a Happ-specific
-response and extracts VLESS outbounds from Happ/Xray JSON subscriptions. It does
+response and extracts VLESS and Hysteria 2 outbounds from Happ/Xray JSON subscriptions. It does
 so with a stable random device identifier scoped to the provider domain; it does
 not use hardware identifiers or import provider-specific routing.
+
+Hysteria 2 supports password or username/password authentication, a single UDP port,
+SNI, certificate fingerprints (`pinSHA256`) and Salamander or Gecko obfuscation.
+
+### VLESS parameters
 
 | Area | Supported values and parameters |
 | --- | --- |
@@ -46,7 +51,7 @@ Download the latest DMG from [Releases](https://github.com/Techniquei/MatveevVpn
 drag `matveevVpn` to Applications and open it. First-run setup automatically
 installs the system component and displays progress while macOS requests your
 administrator password. It remains stopped, without a tunnel or DNS changes.
-Then paste an HTTPS subscription or direct VLESS link and select **Connect**.
+Then paste an HTTPS subscription or a direct VLESS or Hysteria 2 link and select **Connect**.
 The app loads the subscription and selects its first server automatically, without
 a second installation prompt. You can change the server on the main screen.
 

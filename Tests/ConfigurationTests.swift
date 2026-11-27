@@ -28,6 +28,30 @@ import Foundation
         precondition(decodedMixed == text)
         let decodedDirect = try Subscription.decode(Data(a.utf8))
         precondition(decodedDirect == a + "\n")
+        let pin = String(repeating: "ab", count: 32)
+        let hy2 = "hysteria2://test%3Apass@192.0.2.1:27017?pinSHA256=\(pin)&sni=192.0.2.1#🇨🇦 Канада"
+        let mixedHysteria = "trojan://unsupported\r\n" + a + "\r\n" + hy2
+        let hy2Encoded = Data(mixedHysteria.utf8).base64EncodedString()
+        let decodedHy2 = try Subscription.decode(Data(hy2Encoded.utf8))
+        let hy2Nodes = try Subscription.nodes(decodedHy2)
+        precondition(hy2Nodes.map(\.vpnProtocol) == [.vless, .hysteria2])
+        precondition(hy2Nodes[1].name == "🇨🇦 Канада" && hy2Nodes[1].port == 27017 && hy2Nodes[1].index == 2)
+        precondition(hy2Nodes[0].id == nodes[0].id && !hy2Nodes[1].supportsSingBoxReality)
+        let equivalentHy2 = "HY2://test%3Apass@192.0.2.1:27017/?sni=192.0.2.1&pinSHA256=\(pin)#Renamed"
+        let equivalentNodes = try Subscription.nodes(equivalentHy2)
+        precondition(equivalentNodes.first?.id == hy2Nodes[1].id)
+        let defaultPort = try Subscription.nodes("hy2://password@[2001:db8::1]")
+        precondition(defaultPort.first?.port == 443 && defaultPort.first?.host == "2001:db8::1")
+        for invalid in ["hy2://example.com:443", "hy2://password@example.com:0", "hy2://password@example.com?pinSHA256="] {
+            do { _ = try Subscription.decode(Data(invalid.utf8)); fatalError("Invalid Hysteria 2 URI accepted") } catch {}
+        }
+        let happHy2 = """
+        {"remarks":"Happ Hysteria 2","outbounds":[{"protocol":"hysteria","settings":{"version":2,"address":"happ.example.com","port":27017},"streamSettings":{"network":"hysteria","security":"tls","hysteriaSettings":{"version":2,"auth":"user:pass"},"tlsSettings":{"serverName":"cover.example.com","pinnedPeerCertSha256":"\(pin)"}}}]}
+        """
+        let happHy2Link = try Subscription.decode(Data(happHy2.utf8), allowHappJSON: true)
+        let happHy2Parts = URLComponents(string: happHy2Link.trimmingCharacters(in: .newlines))
+        precondition(happHy2Parts?.scheme == "hysteria2" && happHy2Parts?.user == "user:pass")
+        precondition(happHy2Parts?.queryItems?.first(where: { $0.name == "pinSHA256" })?.value == pin)
         let happJSON = """
         [{"remarks":"Happ Test","outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"happ.example.com","port":443,"users":[{"id":"33333333-3333-3333-3333-333333333333","encryption":"none","flow":"xtls-rprx-vision"}]}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverName":"cover.example.com","fingerprint":"chrome","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","shortId":"0123456789abcdef","spiderX":"/"}}},{"tag":"direct","protocol":"freedom"}]}]
         """

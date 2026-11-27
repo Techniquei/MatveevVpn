@@ -90,6 +90,21 @@ import Foundation
         precondition(directSaved.selectedNodeID == nodes.first?.id)
         precondition(SubscriptionFetcher.requests == 0, "Direct VLESS links must not require an HTTP fetch")
 
+        for useSubscription in [false, true] {
+            SystemService.reset()
+            let hy2Store = makeStore(useSubscription ? "https-hysteria" : "direct-hysteria")
+            let hy2 = model(hy2Store)
+            let link = "hysteria2://test-password@vpn.example.invalid:27017?pinSHA256=\(String(repeating: "ab", count: 32))#Canada"
+            SubscriptionFetcher.response = Data(Data(link.utf8).base64EncodedString().utf8)
+            hy2.candidateURL = useSubscription ? "https://subscription.example.invalid/miniapp/sub/example" : link
+            hy2.applySubscription()
+            try await wait(hy2)
+            let saved = try hy2Store.load()
+            precondition(saved.desiredOn && saved.subscription == link + "\n")
+            precondition(hy2.selectedNode?.vpnProtocol == .hysteria2 && hy2.failureReport.isEmpty)
+            precondition(SubscriptionFetcher.requests == (useSubscription ? 1 : 0))
+        }
+
         SystemService.reset()
         let retryStore = makeStore("retry")
         let retry = model(retryStore)

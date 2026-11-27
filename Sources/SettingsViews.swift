@@ -172,13 +172,13 @@ struct ConnectionView: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
                     TextField("Name (optional)", text: $controller.candidateName)
-                    Text("Subscription link").font(.callout.weight(.semibold))
-                    SecureField("Paste an HTTPS or VLESS link", text: $controller.candidateURL)
+                    Text("Connection link").font(.callout.weight(.semibold))
+                    SecureField("HTTPS, VLESS or Hysteria 2", text: $controller.candidateURL)
                         .textFieldStyle(.plain)
                         .padding(12)
                         .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(subscriptionFocused ? AppPalette.blue.opacity(0.8) : .white.opacity(0.08), lineWidth: 1))
-                        .accessibilityLabel("Subscription URL or VLESS link")
+                        .accessibilityLabel("HTTPS subscription URL, VLESS link or Hysteria 2 link")
                         .focused($subscriptionFocused)
                         .modifier(InteractiveHover())
                     Text(controller.isInitialSetup

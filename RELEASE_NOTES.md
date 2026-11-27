@@ -1,11 +1,7 @@
-# matveevVpn 1.4.3-beta.7
+# matveevVpn 1.4.3-beta.8
 
-Direct DNS uses Cloudflare DNS over HTTPS as a backup when Google DNS times out
-or reports a resolver failure. VPN-routed DNS continues to use the VPN.
+Paste a direct `hysteria2://` or `hy2://` link, or import an HTTPS subscription containing Hysteria 2 servers. Subscriptions can mix VLESS and Hysteria 2, and the Happ compatibility setting also imports Hysteria 2 from Happ JSON.
 
-Open **Settings → Diagnostics → Connection details** to see the latest
-response times and errors for each DNS path, the active transport engine and
-recent connection events. **Export logs…** includes the same history.
+Hysteria 2 connects over QUIC and verifies the server certificate against `pinSHA256` when the link includes a fingerprint. This beta bundles sing-box 1.15.0-alpha.14 for certificate fingerprint support.
 
-Build **1430**, system component **32**. Requires an Apple Silicon Mac running
-macOS 13 or later.
+Build **1431**, system component **33**. macOS asks for administrator approval to update the system component.

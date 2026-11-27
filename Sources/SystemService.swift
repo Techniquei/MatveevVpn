@@ -38,8 +38,8 @@ struct SystemService {
     // Component 28 owns runtime retries and publishes readiness on both DNS paths.
     // Component 29 allows slow DNS replies while probing both paths concurrently.
     // Component 31 restores system DNS before retrying when both paths fail.
-    // Component 32 records DNS probe results and connection transitions.
-    static let version = "32"
+    // Component 33 bundles the core that verifies Hysteria 2 certificate fingerprints.
+    static let version = "33"
     static let operationTimeout: TimeInterval = 15
     static func checkDeadline(_ deadline: Date) throws {
         guard Date() < deadline else { throw VPNError.message("The operation exceeded its 15-second limit.") }
@@ -138,7 +138,7 @@ struct SystemService {
         let generated = await Command.run("/usr/bin/ruby", arguments, timeout: deadline.timeIntervalSinceNow)
         try Self.checkDeadline(deadline)
         AppLogger.shared.write("configuration generation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - started) * 1000))")
-        guard generated.status == 0 else { throw VPNError.diagnostic("Invalid routing rule or unsupported VLESS transport. Check domain patterns and the selected server.", generated.output) }
+        guard generated.status == 0 else { throw VPNError.diagnostic("Could not generate the VPN configuration. Check the selected server and routing rules.", generated.output) }
         let validationStarted = ProcessInfo.processInfo.systemUptime
         defer { AppLogger.shared.write("configuration validation: duration_ms=\(Int((ProcessInfo.processInfo.systemUptime - validationStarted) * 1000))") }
         let checked = await Command.run(payload.appendingPathComponent("sing-box").path, ["check", "-c", config.path], timeout: deadline.timeIntervalSinceNow)

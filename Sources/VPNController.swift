@@ -7,7 +7,7 @@ import CryptoKit
 
 @MainActor
 final class VPNController: ObservableObject {
-    static let releaseVersion = "1.4.3-beta.7"
+    static let releaseVersion = "1.4.3-beta.8"
     @Published var isBusy = false
     @Published private(set) var isRecovering = false
     @Published private(set) var isStoppingRecovery = false
@@ -348,11 +348,11 @@ final class VPNController: ObservableObject {
     private func loadCandidateSubscription(_ input: String, useHappCompatibility: Bool) async throws {
         message = "Loading subscription…"
         let data: Data
-        if input.hasPrefix("vless://") {
+        if Subscription.linkProtocol(input) != nil {
             data = Data(input.utf8)
         } else {
             guard let url = URL(string: input), url.scheme == "https", url.host != nil else {
-                throw VPNError.message("Enter an HTTPS subscription URL or a VLESS link.")
+                throw VPNError.message("Enter an HTTPS subscription URL, VLESS link or Hysteria 2 link.")
             }
             let deviceID = useHappCompatibility ? Self.happDeviceID(for: url) : nil
             data = try await SubscriptionFetcher.fetch(
@@ -745,7 +745,7 @@ final class VPNController: ObservableObject {
             try SystemService.checkDeadline(deadline)
             probeResults[candidate.id] = probe
             AppLogger.shared.write("failover candidate \(candidate.id.prefix(8)) probe: \(probe.displayText)")
-            guard probe.isReachable else { continue }
+            guard probe.isReachable || probe.outcome == .unverified else { continue }
             guard service.runtimeStatus == "waiting to retry" else { return }
             guard consumeNodeSwitchBudget() else {
                 throw VPNError.message("Automatic failover stopped: the limit of three node switches in 10 minutes was reached.")
@@ -905,6 +905,16 @@ final class VPNController: ObservableObject {
     private func selectedNodeContext() -> String {
         guard let id = state.selectedNodeID,
               let node = availableNodes.first(where: { $0.id == id }) else { return "Selected node: unavailable" }
+        if node.vpnProtocol == .hysteria2 {
+            return """
+            Selected node: \(node.name)
+            Endpoint: \(node.host):\(node.port)
+            Protocol: Hysteria 2
+            Transport: QUIC over UDP
+            Security: TLS
+            Runtime core: sing-box
+            """
+        }
         let lines = state.subscription.split(whereSeparator: \.isNewline)
         guard node.index > 0, node.index <= lines.count else { return "Selected node: \(node.name)" }
         let raw = String(lines[node.index - 1])

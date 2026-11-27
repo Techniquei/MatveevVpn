@@ -2,7 +2,8 @@ matveevVpn for macOS (Apple Silicon)
 ==================================
 
 Move matveevVpn to Applications and open it. First-run setup installs the
-system component, then asks for an HTTPS subscription URL or a direct VLESS link.
+system component, then asks for an HTTPS subscription URL or a direct VLESS or
+Hysteria 2 link.
 Choose Connect; the app loads the subscription and selects the first server.
 macOS requests administrator permission to install or repair the system service.
 After an app update, an outdated component is updated automatically at launch.
@@ -27,5 +28,5 @@ Change your subscription in Settings and choose a server in the main window. Uni
 removes the system service and moves the app to Trash, preserving user settings.
 Reset All Settings explicitly clears saved settings.
 
-Includes sing-box 1.14.0, Xray-core 26.3.27 and Sparkle 2.9.6.
+Includes sing-box 1.15.0-alpha.14, Xray-core 26.3.27 and Sparkle 2.9.6.
 This development build is ad-hoc signed and is not notarized by Apple.

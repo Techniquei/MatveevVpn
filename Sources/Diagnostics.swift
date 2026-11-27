@@ -1,7 +1,7 @@
 import Foundation
 
 struct NodeProbeResult: Equatable, Sendable {
-    enum Outcome: Equatable, Sendable { case reachable, unreachable, timedOut, noDirectInterface, cancelled }
+    enum Outcome: Equatable, Sendable { case reachable, unreachable, timedOut, unverified, noDirectInterface, cancelled }
     enum Method: Equatable, Sendable { case icmp, tcp }
 
     let outcome: Outcome
@@ -15,6 +15,7 @@ struct NodeProbeResult: Equatable, Sendable {
             return latencyMilliseconds.map { "\($0) ms" } ?? "Reachable"
         case .unreachable: return "Unreachable"
         case .timedOut: return "Timed out"
+        case .unverified: return "Latency unavailable"
         case .noDirectInterface: return "No direct interface"
         case .cancelled: return "Cancelled"
         }
@@ -36,11 +37,17 @@ enum NodeProbe {
             "-n", "-q", "-b", interface, "-c", "3", "-i", "0.2",
             "-W", "700", "-t", String(pingTimeout), node.host
         ], timeout: deadline.timeIntervalSinceNow)
-        if Date() >= deadline { return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil) }
+        if Task.isCancelled { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
+        if node.vpnProtocol == .vless && Date() >= deadline {
+            return NodeProbeResult(outcome: .timedOut, latencyMilliseconds: nil, method: nil)
+        }
         if let average = averagePingMilliseconds(ping.output) {
             return NodeProbeResult(outcome: .reachable, latencyMilliseconds: average, method: .icmp)
         }
-        if Task.isCancelled { return NodeProbeResult(outcome: .cancelled, latencyMilliseconds: nil, method: nil) }
+        // A TCP probe cannot establish reachability for a QUIC server.
+        if node.vpnProtocol == .hysteria2 {
+            return NodeProbeResult(outcome: .unverified, latencyMilliseconds: nil, method: nil)
+        }
 
         let started = Date()
         let tcp = await Command.run("/usr/bin/nc", [

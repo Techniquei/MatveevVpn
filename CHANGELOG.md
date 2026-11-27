@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3-beta.8
+
+- Import direct Hysteria 2 links and HTTPS subscriptions with Hysteria 2 or mixed VLESS/Hysteria 2 servers, including Happ JSON.
+- Verify Hysteria 2 server certificates using the fingerprint supplied in the link. The beta bundles sing-box 1.15.0-alpha.14 and updates the system component to 33.
+
 ## 1.4.3-beta.7
 
 - Retry direct DNS queries with Cloudflare DNS over HTTPS when Google DNS times out or reports a resolver failure.

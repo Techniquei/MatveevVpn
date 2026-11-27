@@ -61,6 +61,8 @@ final class AppLogger: @unchecked Sendable {
     private static func redactingConnectionURIs(in text: String) -> String {
         text.replacingOccurrences(of: #"vless://[^\s]+"#, with: "[VLESS connection redacted]",
                                   options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"(?:hysteria2|hy2)://[^\s]+"#, with: "[Hysteria 2 connection redacted]",
+                                  options: [.regularExpression, .caseInsensitive])
     }
 
     private func writeBounded(_ data: Data) throws {

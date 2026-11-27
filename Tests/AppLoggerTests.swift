@@ -11,10 +11,11 @@ import Foundation
         let logger = AppLogger(file: file)
         let upgradedLog = try String(contentsOf: file, encoding: .utf8)
         precondition(!upgradedLog.contains("test-credential"), "Old logs must be sanitized on upgrade")
-        logger.write("new diagnostic: \(secret.uppercased())\nRuntime core: sing-box")
+        logger.write("new diagnostic: \(secret.uppercased()) HYSTERIA2://hy-secret@example.invalid HY2://alias-secret@example.invalid\nRuntime core: sing-box")
         let sanitized = logger.contents()
         precondition(!sanitized.localizedCaseInsensitiveContains("test-credential"))
         precondition(!sanitized.localizedCaseInsensitiveContains("vless://"))
+        precondition(!sanitized.contains("hy-secret") && !sanitized.contains("alias-secret"))
         precondition(sanitized.contains("Runtime core: sing-box"))
 
         for index in 0..<80 {

@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 
+require "base64"
 require "json"
 require "digest"
 require "uri"
@@ -21,166 +22,219 @@ if index.zero? && lines.empty?
 end
 abort "server index is out of range" unless index.between?(1, lines.length)
 
-uri = URI.parse(lines[index - 1])
-abort "only vless:// subscriptions are supported" unless uri.scheme == "vless"
+def hysteria2_outbound(uri, query)
+  host = uri.hostname
+  port = uri.port || 443
+  abort "Invalid Hysteria 2 hostname or port" unless host && !host.empty? && port.between?(1, 65_535)
+  abort "Unsupported Hysteria 2 path" unless ["", "/"].include?(uri.path)
 
-query = URI.decode_www_form(uri.query.to_s).to_h
-alpn = query["alpn"].to_s.split(",").map(&:strip).reject(&:empty?)
-vpn_outbound = {
-  "type" => "vless",
-  "tag" => "vpn",
-  "server" => uri.host,
-  "server_port" => uri.port,
-  "uuid" => URI.decode_www_form_component(uri.user.to_s),
-  "domain_resolver" => {
-    "server" => "dns-direct",
-    "strategy" => "prefer_ipv4"
+  # User info is URI-escaped, so a literal plus is part of the credential.
+  password = URI::DEFAULT_PARSER.unescape(uri.userinfo.to_s)
+  abort "Hysteria 2 requires authentication" if password.empty?
+  tls = { "enabled" => true, "server_name" => query["sni"].to_s.empty? ? host : query["sni"] }
+  if query.key?("pinSHA256")
+    pin = query.fetch("pinSHA256")
+    abort "Invalid Hysteria 2 certificate fingerprint" unless pin.match?(/\A(?:[0-9a-f]{64}|(?:[0-9a-f]{2}:){31}[0-9a-f]{2})\z/i)
+    # Hysteria pins the entire leaf certificate, rather than its public key.
+    tls["certificate_sha256"] = [Base64.strict_encode64([pin.delete(":")].pack("H*"))]
+  elsif query["insecure"] == "1"
+    tls["insecure"] = true
+  end
+
+  outbound = {
+    "type" => "hysteria2",
+    "tag" => "vpn",
+    "server" => host,
+    "server_port" => port,
+    "password" => password,
+    "tls" => tls,
+    "domain_resolver" => { "server" => "dns-direct", "strategy" => "prefer_ipv4" }
   }
-}
-vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
-
-xray_config = nil
-requested_network = query["type"].to_s
-xhttp = %w[xhttp splithttp].include?(requested_network)
-reality = query["security"] == "reality"
-if reality
-  abort "REALITY requires pbk" if query["pbk"].to_s.empty?
-  abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
-  abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
+  unless query["obfs"].to_s.empty?
+    abort "Unsupported Hysteria 2 obfuscation" unless %w[salamander gecko].include?(query["obfs"])
+    abort "Hysteria 2 obfuscation requires a password" if query["obfs-password"].to_s.empty?
+    outbound["obfs"] = { "type" => query["obfs"], "password" => query["obfs-password"] }
+  end
+  abort "Hysteria 2 port hopping is unsupported" unless query["mport"].to_s.empty?
+  abort "Hysteria 2 ECH is unsupported" unless query["ech"].to_s.empty?
+  outbound
 end
 
-if reality_mode
-  abort "sing-box REALITY requires TCP, unencrypted VLESS framing and no PQ verification" unless reality &&
-    ["", "tcp", "raw"].include?(requested_network) && ["", "none"].include?(query["encryption"].to_s) &&
-    ["", "xtls-rprx-vision"].include?(query["flow"].to_s) && query["pqv"].to_s.empty?
-  vpn_outbound["tls"] = {
-    "enabled" => true,
-    "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"],
-    "utls" => { "enabled" => true, "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"] },
-    "reality" => { "enabled" => true, "public_key" => query["pbk"], "short_id" => query["sid"].to_s }
-  }
-elsif reality || xhttp
-  network = requested_network
-  network = "xhttp" if xhttp
-  network = "raw" if network.empty? || %w[tcp raw].include?(network)
-  security = query["security"].to_s
-  security = "none" if security.empty?
-  abort "unsupported VLESS XHTTP security: #{security}" unless %w[none tls reality].include?(security)
-  stream = { "network" => network, "security" => security }
-  case network
-  when "raw"
-  when "xhttp"
-    host = query["host"].to_s
-    abort "XHTTP host is invalid" if host.match?(/[\s\/?#@]/)
-    mode = query["mode"].to_s.empty? ? "auto" : query["mode"]
-    abort "unsupported XHTTP mode: #{mode}" unless %w[auto packet-up stream-up stream-one].include?(mode)
-    xhttp_settings = {
-      "host" => host,
-      "path" => query["path"].to_s.empty? ? "/" : query["path"],
-      "mode" => mode
+def vless_outbound(uri, query, output_path, reality_mode)
+  alpn = query["alpn"].to_s.split(",").map(&:strip).reject(&:empty?)
+  vpn_outbound = {
+    "type" => "vless",
+    "tag" => "vpn",
+    "server" => uri.host,
+    "server_port" => uri.port,
+    "uuid" => URI.decode_www_form_component(uri.user.to_s),
+    "domain_resolver" => {
+      "server" => "dns-direct",
+      "strategy" => "prefer_ipv4"
     }
-    unless query["extra"].to_s.empty?
-      begin
-        extra = JSON.parse(query["extra"])
-      rescue JSON::ParserError
-        abort "XHTTP extra must be valid JSON"
+  }
+  vpn_outbound["flow"] = query["flow"] unless query["flow"].to_s.empty?
+
+  xray_config = nil
+  requested_network = query["type"].to_s
+  xhttp = %w[xhttp splithttp].include?(requested_network)
+  reality = query["security"] == "reality"
+  if reality
+    abort "REALITY requires pbk" if query["pbk"].to_s.empty?
+    abort "REALITY public key is invalid" unless query["pbk"].match?(/\A[A-Za-z0-9_-]{43}\z/)
+    abort "REALITY short ID is invalid" unless query["sid"].to_s.match?(/\A(?:[0-9a-fA-F]{2}){0,8}\z/)
+  end
+
+  if reality_mode
+    abort "sing-box REALITY requires TCP, unencrypted VLESS framing and no PQ verification" unless reality &&
+      ["", "tcp", "raw"].include?(requested_network) && ["", "none"].include?(query["encryption"].to_s) &&
+      ["", "xtls-rprx-vision"].include?(query["flow"].to_s) && query["pqv"].to_s.empty?
+    vpn_outbound["tls"] = {
+      "enabled" => true,
+      "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+      "utls" => { "enabled" => true, "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"] },
+      "reality" => { "enabled" => true, "public_key" => query["pbk"], "short_id" => query["sid"].to_s }
+    }
+  elsif reality || xhttp
+    network = requested_network
+    network = "xhttp" if xhttp
+    network = "raw" if network.empty? || %w[tcp raw].include?(network)
+    security = query["security"].to_s
+    security = "none" if security.empty?
+    abort "unsupported VLESS XHTTP security: #{security}" unless %w[none tls reality].include?(security)
+    stream = { "network" => network, "security" => security }
+    case network
+    when "raw"
+    when "xhttp"
+      host = query["host"].to_s
+      abort "XHTTP host is invalid" if host.match?(/[\s\/?#@]/)
+      mode = query["mode"].to_s.empty? ? "auto" : query["mode"]
+      abort "unsupported XHTTP mode: #{mode}" unless %w[auto packet-up stream-up stream-one].include?(mode)
+      xhttp_settings = {
+        "host" => host,
+        "path" => query["path"].to_s.empty? ? "/" : query["path"],
+        "mode" => mode
+      }
+      unless query["extra"].to_s.empty?
+        begin
+          extra = JSON.parse(query["extra"])
+        rescue JSON::ParserError
+          abort "XHTTP extra must be valid JSON"
+        end
+        abort "XHTTP extra must be a JSON object" unless extra.is_a?(Hash)
+        xhttp_settings["extra"] = extra
       end
-      abort "XHTTP extra must be a JSON object" unless extra.is_a?(Hash)
-      xhttp_settings["extra"] = extra
+      stream["xhttpSettings"] = xhttp_settings
+    when "ws"
+      stream["wsSettings"] = {
+        "path" => query["path"].to_s.empty? ? "/" : query["path"],
+        "headers" => query["host"].to_s.empty? ? {} : { "Host" => query["host"] }
+      }
+    when "grpc"
+      stream["grpcSettings"] = { "serviceName" => query["serviceName"].to_s }
+    else
+      abort "unsupported VLESS REALITY transport: #{query["type"]}"
     end
-    stream["xhttpSettings"] = xhttp_settings
+    if security == "reality"
+      reality = {
+        "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+        "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"],
+        "password" => query["pbk"],
+        "shortId" => query["sid"].to_s,
+        "spiderX" => query["spx"].to_s
+      }
+      reality["mldsa65Verify"] = query["pqv"] unless query["pqv"].to_s.empty?
+      stream["realitySettings"] = reality
+    elsif security == "tls"
+      tls = {
+        "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
+        "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"]
+      }
+      tls["alpn"] = alpn unless alpn.empty?
+      stream["tlsSettings"] = tls
+    end
+    user = {
+      "id" => URI.decode_www_form_component(uri.user.to_s),
+      "encryption" => query["encryption"].to_s.empty? ? "none" : query["encryption"]
+    }
+    user["flow"] = query["flow"] unless query["flow"].to_s.empty?
+    xray_config = {
+      "log" => { "loglevel" => "warning" },
+      "inbounds" => [{
+        "tag" => "matveev-reality-in",
+        "listen" => "127.0.0.1",
+        "port" => 18_443,
+        "protocol" => "socks",
+        "settings" => { "udp" => true }
+      }],
+      "outbounds" => [{
+        "tag" => "reality",
+        "protocol" => "vless",
+        "settings" => {
+          "vnext" => [{ "address" => uri.host, "port" => uri.port, "users" => [user] }],
+          "domainStrategy" => "UseIPv4"
+        },
+        "streamSettings" => stream
+      }]
+    }
+    xray_path = output_path + ".xray.json"
+    xray_json = JSON.pretty_generate(xray_config) + "\n"
+    File.write(xray_path, xray_json, mode: "w", perm: 0o600)
+    File.chmod(0o600, xray_path)
+    vpn_outbound = {
+      "type" => "socks",
+      "tag" => "vpn",
+      "server" => "127.0.0.1",
+      "server_port" => 18_443,
+      "version" => "5"
+    }
+  end
+
+  if query["security"] == "tls" && xray_config.nil?
+    tls = {
+      "enabled" => true,
+      "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"]
+    }
+    unless query["fp"].to_s.empty?
+      tls["utls"] = { "enabled" => true, "fingerprint" => query["fp"] }
+    end
+    tls["alpn"] = alpn unless alpn.empty?
+    vpn_outbound["tls"] = tls
+  end
+
+  case xray_config ? nil : query["type"]
+  when nil, "", "tcp", "raw"
   when "ws"
-    stream["wsSettings"] = {
+    vpn_outbound["transport"] = {
+      "type" => "ws",
       "path" => query["path"].to_s.empty? ? "/" : query["path"],
       "headers" => query["host"].to_s.empty? ? {} : { "Host" => query["host"] }
     }
   when "grpc"
-    stream["grpcSettings"] = { "serviceName" => query["serviceName"].to_s }
+    vpn_outbound["transport"] = {
+      "type" => "grpc",
+      "service_name" => query["serviceName"].to_s
+    }
   else
-    abort "unsupported VLESS REALITY transport: #{query["type"]}"
+    abort "unsupported VLESS transport: #{query["type"]}"
   end
-  if security == "reality"
-    reality = {
-      "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
-      "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"],
-      "password" => query["pbk"],
-      "shortId" => query["sid"].to_s,
-      "spiderX" => query["spx"].to_s
-    }
-    reality["mldsa65Verify"] = query["pqv"] unless query["pqv"].to_s.empty?
-    stream["realitySettings"] = reality
-  elsif security == "tls"
-    tls = {
-      "serverName" => query["sni"].to_s.empty? ? uri.host : query["sni"],
-      "fingerprint" => query["fp"].to_s.empty? ? "chrome" : query["fp"]
-    }
-    tls["alpn"] = alpn unless alpn.empty?
-    stream["tlsSettings"] = tls
-  end
-  user = {
-    "id" => URI.decode_www_form_component(uri.user.to_s),
-    "encryption" => query["encryption"].to_s.empty? ? "none" : query["encryption"]
-  }
-  user["flow"] = query["flow"] unless query["flow"].to_s.empty?
-  xray_config = {
-    "log" => { "loglevel" => "warning" },
-    "inbounds" => [{
-      "tag" => "matveev-reality-in",
-      "listen" => "127.0.0.1",
-      "port" => 18_443,
-      "protocol" => "socks",
-      "settings" => { "udp" => true }
-    }],
-    "outbounds" => [{
-      "tag" => "reality",
-      "protocol" => "vless",
-      "settings" => {
-        "vnext" => [{ "address" => uri.host, "port" => uri.port, "users" => [user] }],
-        "domainStrategy" => "UseIPv4"
-      },
-      "streamSettings" => stream
-    }]
-  }
-  xray_path = output_path + ".xray.json"
-  xray_json = JSON.pretty_generate(xray_config) + "\n"
-  File.write(xray_path, xray_json, mode: "w", perm: 0o600)
-  File.chmod(0o600, xray_path)
-  vpn_outbound = {
-    "type" => "socks",
-    "tag" => "vpn",
-    "server" => "127.0.0.1",
-    "server_port" => 18_443,
-    "version" => "5"
-  }
+  [vpn_outbound, xray_config]
 end
 
-if query["security"] == "tls" && xray_config.nil?
-  tls = {
-    "enabled" => true,
-    "server_name" => query["sni"].to_s.empty? ? uri.host : query["sni"]
-  }
-  unless query["fp"].to_s.empty?
-    tls["utls"] = { "enabled" => true, "fingerprint" => query["fp"] }
-  end
-  tls["alpn"] = alpn unless alpn.empty?
-  vpn_outbound["tls"] = tls
+begin
+  uri = URI.parse(lines[index - 1])
+  query = URI.decode_www_form(uri.query.to_s).to_h
+rescue URI::Error, ArgumentError
+  abort "Invalid VPN link"
 end
 
-case xray_config ? nil : query["type"]
-when nil, "", "tcp", "raw"
-when "ws"
-  vpn_outbound["transport"] = {
-    "type" => "ws",
-    "path" => query["path"].to_s.empty? ? "/" : query["path"],
-    "headers" => query["host"].to_s.empty? ? {} : { "Host" => query["host"] }
-  }
-when "grpc"
-  vpn_outbound["transport"] = {
-    "type" => "grpc",
-    "service_name" => query["serviceName"].to_s
-  }
+case uri.scheme
+when "vless"
+  vpn_outbound, xray_config = vless_outbound(uri, query, output_path, reality_mode)
+when "hysteria2", "hy2"
+  vpn_outbound = hysteria2_outbound(uri, query)
 else
-  abort "unsupported VLESS transport: #{query["type"]}"
+  abort "Unsupported VPN link protocol"
 end
 
 rules_data = JSON.parse(File.read(rules_path))
@@ -343,7 +397,6 @@ config = {
       "strict_route" => true,
       "dns_mode" => "hijack",
       "dns_address" => ["198.18.0.2"],
-      "stack" => "mixed",
       "mtu" => 1500,
       "route_exclude_address" => [
         "10.0.0.0/8",

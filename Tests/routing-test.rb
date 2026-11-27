@@ -157,5 +157,22 @@ Dir.mktmpdir('matveev-routing') do |dir|
   raise 'WebSocket TLS generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
   ws_tls = JSON.parse(File.read(config)).fetch('outbounds').first
   raise 'TLS ALPN was not applied to WebSocket' unless ws_tls.fetch('transport')['type'] == 'ws' && ws_tls.fetch('tls')['alpn'] == ['http/1.1']
+
+  pin = Array.new(32, 'ab').join(':')
+  File.write(sub, "hy2://user%3Apass+word@[2001:db8::1]/?pinSHA256=#{pin}&sni=cover.example.com&insecure=1&obfs=salamander&obfs-password=test%2Bkey#Canada\n")
+  File.write(config + '.xray.json', 'stale')
+  raise 'Hysteria 2 generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  hy2 = JSON.parse(File.read(config)).fetch('outbounds').first
+  raise 'Hysteria 2 endpoint or credential changed' unless hy2.values_at('type', 'server', 'server_port', 'password') == ['hysteria2', '2001:db8::1', 443, 'user:pass+word']
+  raise 'Hysteria 2 obfuscation parameters changed' unless hy2['obfs'] == {'type' => 'salamander', 'password' => 'test+key'}
+  expected_pin = [['ab' * 32].pack('H*')].pack('m0')
+  expected_tls = {'enabled' => true, 'server_name' => 'cover.example.com', 'certificate_sha256' => [expected_pin]}
+  raise 'Hysteria 2 must pin the whole leaf certificate' unless hy2['tls'] == expected_tls
+  raise 'stale Xray sidecar was retained for Hysteria 2' if File.exist?(config + '.xray.json')
+  File.write(sub, "hysteria2://password@vpn.example.com:27017?pinSHA256=typo&insecure=1\n")
+  raise 'invalid Hysteria 2 pin was accepted' if system(RbConfig.ruby, builder, sub, config, '1', rules, out: File::NULL, err: File::NULL)
+  File.write(sub, "hysteria2://password@vpn.example.com:27017\n")
+  raise 'Hysteria 2 with standard TLS generation failed' unless system(RbConfig.ruby, builder, sub, config, '1', rules)
+  raise 'Hysteria 2 should verify TLS by default' unless JSON.parse(File.read(config)).dig('outbounds', 0, 'tls') == {'enabled' => true, 'server_name' => 'vpn.example.com'}
 end
-puts 'routing: domains, legacy application fields, presets, ad blocking, modes, secure DNS, Xray transports and TLS aliases passed'
+puts 'routing: domains, legacy application fields, presets, ad blocking, modes, secure DNS, VLESS and Hysteria 2 transports passed'

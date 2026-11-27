@@ -69,45 +69,74 @@ struct RoutingRules: Codable, Equatable {
     }
 }
 
+enum VPNProtocol: String {
+    case vless
+    case hysteria2
+
+    init?(scheme: String) {
+        let scheme = scheme.lowercased()
+        self.init(rawValue: scheme == "hy2" ? "hysteria2" : scheme)
+    }
+
+    var title: String { self == .vless ? "VLESS" : "Hysteria 2" }
+}
+
 struct VPNNode: Identifiable, Hashable {
     let id: String
     let name: String
     let host: String
     let port: Int
     let index: Int
+    let vpnProtocol: VPNProtocol
     let supportsSingBoxReality: Bool
 }
 
 enum Subscription {
+    static func linkProtocol(_ link: String) -> VPNProtocol? {
+        guard let separator = link.range(of: "://") else { return nil }
+        return VPNProtocol(scheme: String(link[..<separator.lowerBound]))
+    }
+
     static func decode(_ data: Data, allowHappJSON: Bool = false) throws -> String {
         guard data.count <= 4_194_304, let raw = String(data: data, encoding: .utf8) else {
             throw VPNError.message("The subscription is too large or is not text.")
         }
-        let cleaned = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}")))
-        if allowHappJSON, let links = happVLESSLinks(cleaned), !links.isEmpty {
+        let trim = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}"))
+        let cleaned = raw.trimmingCharacters(in: trim)
+        if allowHappJSON, let links = happLinks(cleaned), !links.isEmpty {
             let result = links.joined(separator: "\n") + "\n"
             _ = try nodes(result)
             return result
         }
-        let compact = cleaned.components(separatedBy: .whitespacesAndNewlines).joined()
-        let padded = compact + String(repeating: "=", count: (4 - compact.count % 4) % 4)
-        let base64 = padded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        let decoded = cleaned.contains("vless://") ? cleaned : String(data: Data(base64Encoded: base64) ?? Data(), encoding: .utf8) ?? ""
-        let lines = decoded.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}"))) }
-            .filter { $0.hasPrefix("vless://") }
+        func supportedLines(in text: String) -> [String] {
+            text.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: trim) }
+                .filter { linkProtocol($0) != nil }
+        }
+        var lines = supportedLines(in: cleaned)
+        var base64Data: Data?
+        if lines.isEmpty {
+            let compact = cleaned.components(separatedBy: .whitespacesAndNewlines).joined()
+            let padded = compact + String(repeating: "=", count: (4 - compact.count % 4) % 4)
+            let base64 = padded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            base64Data = Data(base64Encoded: base64)
+            lines = supportedLines(in: base64Data.flatMap { String(data: $0, encoding: .utf8) } ?? "")
+        }
         guard !lines.isEmpty else {
             throw VPNError.diagnostic(
-                "The subscription must contain VLESS links.",
-                "Received bytes: \(data.count)\nText encoding: UTF-8\nDirect VLESS content: \(cleaned.contains("vless://") ? "yes" : "no")\nBase64 decoding: \(Data(base64Encoded: base64) == nil ? "failed" : "succeeded")"
+                "The subscription must contain VLESS or Hysteria 2 links.",
+                "Received bytes: \(data.count)\nText encoding: UTF-8\nBase64 decoding: \(base64Data == nil ? "failed" : "succeeded")"
             )
         }
-        let result = lines.joined(separator: "\n") + "\n"
+        let urlCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%")
+        let result = lines.map { line in
+            linkProtocol(line) == .hysteria2 ? line.addingPercentEncoding(withAllowedCharacters: urlCharacters) ?? line : line
+        }.joined(separator: "\n") + "\n"
         _ = try nodes(result)
         return result
     }
 
-    private static func happVLESSLinks(_ text: String) -> [String]? {
+    private static func happLinks(_ text: String) -> [String]? {
         guard let data = text.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data) else { return nil }
         let configurations: [[String: Any]]
@@ -123,8 +152,17 @@ enum Subscription {
         for configuration in configurations {
             let remarks = configuration["remarks"] as? String
             let outbounds = configuration["outbounds"] as? [[String: Any]] ?? []
-            let vlessOutbounds = outbounds.filter { ($0["protocol"] as? String)?.lowercased() == "vless" }
-            for (outboundIndex, outbound) in vlessOutbounds.enumerated() {
+            let supported = outbounds.filter {
+                ["vless", "hysteria"].contains(($0["protocol"] as? String)?.lowercased() ?? "")
+            }
+            let vlessCount = supported.filter { ($0["protocol"] as? String)?.lowercased() == "vless" }.count
+            var vlessIndex = 0
+            for outbound in supported {
+                if (outbound["protocol"] as? String)?.lowercased() == "hysteria" {
+                    if let link = happHysteriaLink(outbound, remarks: remarks) { links.append(link) }
+                    continue
+                }
+                vlessIndex += 1
                 guard let settings = outbound["settings"] as? [String: Any],
                       let vnext = settings["vnext"] as? [[String: Any]] else { continue }
                 for (serverIndex, server) in vnext.enumerated() {
@@ -187,9 +225,9 @@ enum Subscription {
 
                         components.queryItems = query
                         let tag = string(outbound["tag"])
-                        let suffixNeeded = vlessOutbounds.count > 1 || vnext.count > 1 || users.count > 1
+                        let suffixNeeded = vlessCount > 1 || vnext.count > 1 || users.count > 1
                         let fallbackName = tag ?? "Happ VLESS"
-                        let suffix = suffixNeeded ? " \(outboundIndex + 1).\(serverIndex + 1)" : ""
+                        let suffix = suffixNeeded ? " \(vlessIndex).\(serverIndex + 1)" : ""
                         components.fragment = (remarks?.isEmpty == false ? remarks! : fallbackName) + suffix
                         if let link = components.string { links.append(link) }
                     }
@@ -197,6 +235,30 @@ enum Subscription {
             }
         }
         return links
+    }
+
+    private static func happHysteriaLink(_ outbound: [String: Any], remarks: String?) -> String? {
+        guard let settings = outbound["settings"] as? [String: Any], integer(settings["version"]) == 2,
+              let host = string(settings["address"]), !host.isEmpty,
+              let port = integer(settings["port"]), (1...65535).contains(port),
+              let stream = outbound["streamSettings"] as? [String: Any],
+              stream["network"] as? String == "hysteria", stream["security"] as? String == "tls",
+              let hysteria = stream["hysteriaSettings"] as? [String: Any],
+              let auth = string(hysteria["auth"]), !auth.isEmpty else { return nil }
+
+        var link = URLComponents()
+        link.scheme = "hysteria2"
+        link.host = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        link.port = port
+        link.user = auth
+        link.fragment = remarks.flatMap { $0.isEmpty ? nil : $0 } ?? string(outbound["tag"]) ?? "Hysteria 2"
+        let tls = stream["tlsSettings"] as? [String: Any] ?? [:]
+        var query: [URLQueryItem] = []
+        append(string(tls["serverName"]), named: "sni", to: &query)
+        append(string(tls["pinnedPeerCertSha256"]), named: "pinSHA256", to: &query)
+        if tls["allowInsecure"] as? Bool == true { query.append(URLQueryItem(name: "insecure", value: "1")) }
+        if !query.isEmpty { link.queryItems = query }
+        return link.string
     }
 
     private static func string(_ value: Any?) -> String? {
@@ -218,24 +280,38 @@ enum Subscription {
     static func nodes(_ text: String) throws -> [VPNNode] {
         var seen = Set<String>()
         return try text.split(whereSeparator: \.isNewline).enumerated().map { offset, line in
-            guard var parts = URLComponents(string: String(line)), parts.scheme == "vless",
-                  let host = parts.host, !host.isEmpty, let port = parts.port, (1...65535).contains(port),
-                  let user = parts.user, UUID(uuidString: user) != nil else {
-                throw VPNError.diagnostic("Invalid VLESS node on line \(offset + 1).", "The node is missing a valid UUID, hostname or port. Credentials and addresses were omitted from this report.")
+            let protocolKind = linkProtocol(String(line))
+            guard let protocolKind, var parts = URLComponents(string: String(line)),
+                  let host = parts.host, !host.isEmpty,
+                  let port = parts.port ?? (protocolKind == .hysteria2 ? 443 : nil), (1...65535).contains(port),
+                  let user = parts.user,
+                  protocolKind == .vless ? UUID(uuidString: user) != nil : !user.isEmpty && ["", "/"].contains(parts.path) else {
+                throw VPNError.diagnostic("Invalid \(protocolKind?.title ?? "VPN") node on line \(offset + 1).", "Check the credentials, hostname and port.")
             }
+            let displayHost = protocolKind == .hysteria2 && host.hasPrefix("[") && host.hasSuffix("]")
+                ? String(host.dropFirst().dropLast()) : host
             let name = parts.fragment.flatMap { $0.isEmpty ? nil : $0 } ?? "\(host):\(port)"
             var query: [String: String] = [:]
             for item in parts.queryItems ?? [] { query[item.name] = item.value ?? "" }
             parts.fragment = nil
             parts.host = host.lowercased()
+            parts.scheme = protocolKind.rawValue
+            if protocolKind == .hysteria2 {
+                parts.port = port
+                parts.path = ""
+                if let pin = query["pinSHA256"],
+                   pin.range(of: #"\A(?:[0-9a-fA-F]{64}|(?:[0-9a-fA-F]{2}:){31}[0-9a-fA-F]{2})\z"#, options: .regularExpression) == nil {
+                    throw VPNError.message("Invalid Hysteria 2 certificate fingerprint on line \(offset + 1).")
+                }
+            }
             parts.queryItems = parts.queryItems?.sorted { ($0.name, $0.value ?? "") < ($1.name, $1.value ?? "") }
             let id = SHA256.hash(data: Data((parts.string ?? "").utf8)).map { String(format: "%02x", $0) }.joined()
-            let supportsSingBoxReality = query["security"] == "reality"
+            let supportsSingBoxReality = protocolKind == .vless && query["security"] == "reality"
                 && ["", "tcp", "raw"].contains(query["type"] ?? "")
                 && ["", "none"].contains(query["encryption"] ?? "")
                 && ["", "xtls-rprx-vision"].contains(query["flow"] ?? "")
                 && (query["pqv"] ?? "").isEmpty
-            return VPNNode(id: id, name: name, host: host, port: port, index: offset + 1,
+            return VPNNode(id: id, name: name, host: displayHost, port: port, index: offset + 1, vpnProtocol: protocolKind,
                            supportsSingBoxReality: supportsSingBoxReality)
         }.filter { seen.insert($0.id).inserted }
     }
