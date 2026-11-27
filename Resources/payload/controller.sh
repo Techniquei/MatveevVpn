@@ -49,8 +49,6 @@ PUBLISHED_STATUS=""
 START_FAILURES=0
 NEXT_START_ATTEMPT=0
 
-/bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
-
 bounded_log_line() {
   printf '%s\n' "$2" | bounded_logger "$1"
 }
@@ -122,9 +120,6 @@ prepare_log() {
   fi
   /bin/chmod 600 "$file" 2>/dev/null || true
 }
-
-prepare_log "$LOG_FILE"
-prepare_log "$ERROR_FILE"
 
 publish_recent_errors() {
   local temporary owner_uid owner_gid
@@ -375,7 +370,8 @@ check_runtime_readiness() {
 
 start_child() {
   local started="$(monotonic_ms)"
-  local deadline="${1:-$((started + 10000))}"
+  local deadline=$((started + 10000))
+  if [[ "${1:-$deadline}" -lt "$deadline" ]]; then deadline="$1"; fi
   if [[ "${operation_deadline:-$deadline}" -lt "$deadline" ]]; then deadline="$operation_deadline"; fi
   if [[ "$started" -ge "$deadline" ]]; then write_status "error"; return 1; fi
   if [[ ! -x "$SING_BOX" || ! -f "$CONFIG_FILE" ]]; then write_status "error"; return 1; fi
@@ -572,10 +568,10 @@ reload_config() {
   fi
   publish_config_hash || return 1
   if [[ "$(desired_state)" == "on" ]]; then
-    stop_child "${operation_deadline:-$(( $(monotonic_ms) + 5000 ))}" recovering preserve-dns
+    stop_child "$deadline" recovering preserve-dns
     # Reserve half the remaining command budget for rollback of a rejected runtime.
     local now="$(monotonic_ms)"
-    local attempt_deadline=$((now + (${operation_deadline:-$((now + 20000))} - now) / 2))
+    local attempt_deadline=$((now + (deadline - now) / 2))
     if start_child "$attempt_deadline"; then
       /bin/rm -f "$ROLLBACK_CONFIG" "$ROLLBACK_XRAY_CONFIG"
       return 0
@@ -591,8 +587,8 @@ reload_config() {
       publish_config_hash || return 1
       /bin/rm -f "$ROLLBACK_CONFIG"
       /bin/rm -f "$ROLLBACK_XRAY_CONFIG"
-      stop_child "${operation_deadline:-$(( $(monotonic_ms) + 5000 ))}" recovering
-      start_child || true
+      stop_child "$deadline" recovering
+      start_child "$deadline" || true
     else
       /bin/rm -f "$CONFIG_FILE" "$XRAY_CONFIG_FILE" "$CONTROL_DIR/config-sha256"
     fi
@@ -847,6 +843,12 @@ shutdown() {
   stop_child
   exit 0
 }
+
+# Let the controller tests source the functions without running the service.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+/bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
+prepare_log "$LOG_FILE"
+prepare_log "$ERROR_FILE"
 trap shutdown TERM INT HUP
 publish_config_hash
 LAST_WAKE_SIGNATURE="$(wake_signature)"

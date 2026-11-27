@@ -7,6 +7,7 @@ RUNTIME="$(/usr/bin/mktemp -d /private/tmp/matveev-controller-test.XXXXXX)"
 CONTROL="$RUNTIME/control"
 CURRENT_DNS="$RUNTIME/current-dns"
 DNS_CALL_LOG="$RUNTIME/dns-calls"
+CONTROLLER="$TEST_DIR/../Resources/payload/controller.sh"
 
 /bin/mkdir -p "$RUNTIME/bin" "$RUNTIME/run" "$CONTROL"
 /bin/cp "$TEST_DIR/fake-sing-box" "$RUNTIME/bin/sing-box"
@@ -38,7 +39,7 @@ MATVEEV_IFCONFIG="$RUNTIME/bin/ifconfig" \
 MATVEEV_DEFAULT_INTERFACE="test0" \
 MATVEEV_FAKE_DNS="$CURRENT_DNS" \
 MATVEEV_FAKE_LOG="$DNS_CALL_LOG" \
-  "$TEST_DIR/../Resources/payload/controller.sh" &
+  "$CONTROLLER" &
 CONTROLLER_PID=$!
 
 cleanup() {
@@ -92,9 +93,45 @@ send_action_expect() {
   /usr/bin/printf '%s %s %s\n' "$action" "$token" "$expiry" > "$CONTROL/.command-test"
   /bin/mv -f "$CONTROL/.command-test" "$CONTROL/command"
   wait_for_file_value "$CONTROL/response-$token" "$expected"
-  LAST_COMMAND_EXPIRY="$expiry"
-  LAST_COMMAND_RESPONSE="$CONTROL/response-$token"
 }
+
+# Model how the reload and rollback share one command deadline without depending
+# on how fast the runner can start processes, restore DNS or write a response.
+(
+  export MATVEEV_BASE_DIR="$RUNTIME/rollback-deadline"
+  source "$CONTROLLER"
+  /bin/mkdir -p "$CONTROL_DIR" "$RUN_DIR"
+  /bin/cp "$TEST_DIR/config.json" "$CONFIG_FILE"
+  /usr/bin/printf '{"revision":"candidate"}\n' > "$PENDING_CONFIG"
+  /usr/bin/printf 'on\n' > "$DESIRED_FILE"
+
+  operation_deadline=8000
+  clock_ms=2000
+  start_deadlines=()
+  stop_deadlines=()
+  monotonic_ms() { printf '%s\n' "$clock_ms"; }
+  log_event() { :; }
+  check_engine_config() { [[ "$1" == "$operation_deadline" ]]; }
+  stop_child() { stop_deadlines+=("$1"); }
+  start_child() {
+    start_deadlines+=("${1:-missing}")
+    if [[ "${#start_deadlines[@]}" == 1 ]]; then
+      clock_ms=5000
+      return 1
+    fi
+    return 0
+  }
+
+  if reload_config; then
+    echo "Reload accepted a rejected runtime" >&2
+    exit 1
+  fi
+  if [[ "${start_deadlines[*]}" != "5000 8000" || "${stop_deadlines[*]}" != "8000 8000" ]]; then
+    echo "Reload deadlines changed: started with [${start_deadlines[*]}], stopped with [${stop_deadlines[*]}]" >&2
+    exit 1
+  fi
+  /usr/bin/cmp "$TEST_DIR/config.json" "$CONFIG_FILE"
+)
 
 # Launching before DHCP must not create engines or alter system DNS.
 wait_for_file_value "$CONTROL/runtime-status" "waiting for network"
@@ -335,35 +372,32 @@ ENGINE_BEFORE_EXPIRY="$(cat "$RUNTIME/run/sing-box.pid")"
 send_action_expect off error -1
 [[ "$(cat "$RUNTIME/run/desired-state")" == on ]]
 [[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
-# A stuck privileged validation must be killed before the same deadline.
+# A stuck privileged validation must leave the pending config unapplied.
 /usr/bin/printf '{"delay_check":true}\n' > "$CONTROL/pending-config.json"
-send_action_expect reload error 2
-/usr/bin/ruby - "$LAST_COMMAND_RESPONSE" "$LAST_COMMAND_EXPIRY" <<'RUBY'
-abort 'Privileged configuration check outlived the operation' unless File.mtime(ARGV[0]).to_f * 1000 < ARGV[1].to_i
-RUBY
-[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
-# A short remaining budget still restores configuration before rejecting reload.
-/usr/bin/printf '{"delay_run":true}\n' > "$CONTROL/pending-config.json"
-# Six seconds forces the delayed new runtime to fail while allowing fixed
-# rollback work on CI. Use response mtime so test polling/tool startup is excluded.
-send_action_expect reload error 6
-/usr/bin/ruby - "$LAST_COMMAND_RESPONSE" "$LAST_COMMAND_EXPIRY" <<'RUBY'
-abort 'Rollback received a fresh operation budget' unless File.mtime(ARGV[0]).to_f * 1000 < ARGV[1].to_i
-RUBY
-if /usr/bin/grep -q delay_run "$RUNTIME/config.json"; then
-  echo 'Deadline rejection did not restore the prior configuration' >&2
+send_action_expect reload error 4
+CHECKER_PID="$(cat "$RUNTIME/checker-pid")"
+[[ "$CHECKER_PID" =~ ^[0-9]+$ ]]
+if /bin/kill -0 "$CHECKER_PID" 2>/dev/null; then
+  echo "Timed-out configuration checker is still running" >&2
   exit 1
 fi
-wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ -f "$CONTROL/pending-config.json" ]]
+[[ "$(cat "$RUNTIME/run/sing-box.pid")" == "$ENGINE_BEFORE_EXPIRY" ]]
+
+# A rejected runtime must restore the exact previous configurations and DNS.
+/bin/cp "$RUNTIME/config.json" "$RUNTIME/config-before-reload"
+/bin/cp "$RUNTIME/xray.json" "$RUNTIME/xray-before-reload"
+/bin/cp "$CONTROL/config-sha256" "$RUNTIME/hash-before-reload"
 /usr/bin/printf '{"fail_run":true}\n' > "$CONTROL/pending-config.json"
 send_action_expect reload error
-wait_for_file_value "$CONTROL/runtime-status" "running"
 [[ -f "$CONTROL/last-error.log" ]]
 /usr/bin/grep -q 'Controller status:' "$CONTROL/last-error.log"
-if /usr/bin/grep -q 'fail_run' "$RUNTIME/config.json"; then
-  echo "Failed configuration was not rolled back." >&2
-  exit 1
-fi
+/usr/bin/cmp "$RUNTIME/config-before-reload" "$RUNTIME/config.json"
+/usr/bin/cmp "$RUNTIME/xray-before-reload" "$RUNTIME/xray.json"
+/usr/bin/cmp "$RUNTIME/hash-before-reload" "$CONTROL/config-sha256"
+wait_for_file_value "$CONTROL/runtime-status" "running"
+[[ "$(cat "$CURRENT_DNS")" == "198.18.0.2" ]]
+[[ -f "$RUNTIME/run/xray.pid" ]]
 
 echo "controller protocol: ok"
 send_action off
